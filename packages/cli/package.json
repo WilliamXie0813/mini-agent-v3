@@ -1,0 +1,18 @@
+{
+	"name": "@mini-agent/cli",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "node --experimental-strip-types src/index.ts",
+		"check": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@mini-agent/ai": "workspace:*",
+		"@mini-agent/core": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/node": "22.19.19",
+		"typescript": "5.9.3"
+	}
+}
