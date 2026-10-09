@@ -47,4 +47,4 @@
 ## 实施中发现的计划/环境偏差（留档）
 
 - **pnpm v12.3.4 不认 `onlyBuiltDependencies`**：安装时报 `ERR_PNPM_IGNORED_BUILDS` 并自动写入 `allowBuilds` 占位块。解法：`pnpm-workspace.yaml` 改用 `allowBuilds: { esbuild: true }`。
-- **`readline/promises` 的 `question()` 不能配合一次性管道输入**：所有行在第一次 `question` 时一次性到达，未被等待的行被丢弃，随后挂起（unsettled TLA）。验证 CLI 时要逐行延时喂入，或用真实 TTY。
+- **`readline/promises` 的 `question()` 在 stdin EOF / 管道输入结束时 promise 永不 settle**：Node 23+ 会将未 settle 的顶层 await 视为错误报错退出（exit 13，打印 `unsettled top-level await`）。用户在 TTY 按 Ctrl+D 或通过管道喂入数据均会触发。解法：改用 `for await (const line of rl)` 异步迭代器，可正确消费所有缓冲行并在 EOF 时干净退出。

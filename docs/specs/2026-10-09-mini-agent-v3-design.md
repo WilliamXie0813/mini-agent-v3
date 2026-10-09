@@ -784,7 +784,7 @@ cli（保留）        server（新增，~150 行）
 ```
 mini-agent-v3/
   package.json            private；scripts 用 pnpm -r 转发
-  pnpm-workspace.yaml     packages/*, onlyBuiltDependencies: [esbuild]
+  pnpm-workspace.yaml     packages/*, allowBuilds: { esbuild: true }
   tsconfig.base.json      target ES2022, strict, noEmit, erasableSyntaxOnly,
                           allowImportingTsExtensions, skipLibCheck
   .gitignore              node_modules, .env, .mini-agent/

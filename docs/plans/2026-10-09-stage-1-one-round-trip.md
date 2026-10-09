@@ -83,11 +83,11 @@ spec 是愿景文档，它没写的输入不等于可以崩。以下是本阶段
 ```yaml
 packages:
   - "packages/*"
-onlyBuiltDependencies:
-  - esbuild
+allowBuilds:
+  esbuild: true
 ```
 
-`onlyBuiltDependencies` 里的 `esbuild` 是 vitest 的依赖（spec §7.1 已定）。**不要**加 `node-linker` 字段——见上方「已验证的环境假设」第二条。
+`allowBuilds` 里的 `esbuild` 是 vitest 的依赖（pnpm v12 语法）。**不要**加 `node-linker` 字段——见上方「已验证的环境假设」第二条。
 
 - [ ] **Step 3: 写 `tsconfig.base.json`**
 

@@ -15,8 +15,8 @@ const rl = readline.createInterface({ input: process.stdin, output: process.stdo
 console.log("mini-agent (stage 1) — type /exit to quit");
 
 try {
-	while (true) {
-		const line = await rl.question("> ");
+	process.stdout.write("> ");
+	for await (const line of rl) {
 		if (line.trim() === "/exit") break;
 		// 空白行由 agentLoop 提前返回，CLI 不重复判空（两处规则会分叉）。
 		// 但「没追加新消息就别打印」必须由 CLI 自己保证——否则空行会重印上一轮的回复。
@@ -30,6 +30,7 @@ try {
 				.join("");
 			console.log(text);
 		}
+		process.stdout.write("> ");
 	}
 } finally {
 	rl.close();
