@@ -19,9 +19,11 @@ try {
 		const line = await rl.question("> ");
 		if (line.trim() === "/exit") break;
 		// 空白行由 agentLoop 提前返回，CLI 不重复判空（两处规则会分叉）。
+		// 但「没追加新消息就别打印」必须由 CLI 自己保证——否则空行会重印上一轮的回复。
+		const before = messages.length;
 		await agentLoop({ prompt: line, messages, system });
 		const last = messages.at(-1);
-		if (last?.role === "assistant") {
+		if (messages.length > before && last?.role === "assistant") {
 			const text = last.content
 				.filter((c) => c.type === "text")
 				.map((c) => c.text)
