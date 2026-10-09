@@ -1,0 +1,10 @@
+{
+	"name": "mini-agent-v3",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "pnpm --filter @mini-agent/cli run dev",
+		"test": "pnpm -r run test",
+		"check": "pnpm -r run check"
+	}
+}
