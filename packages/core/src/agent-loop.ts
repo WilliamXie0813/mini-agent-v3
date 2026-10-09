@@ -30,6 +30,8 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 	// 单层循环（双层 follow-up 是阶段 13）：每轮 = 一次 streamFn 往返 + 一批工具执行。
 	// 收敛条件只有一个——模型返回的消息里没有 toolCall。
 	for (let turn = 0; turn < maxTurns; turn++) {
+		// 中止只检查事件边界：进入新一轮前不再问模型（length 保护的 continue 可能带着已中止的 signal 回到这里）。
+		if (options.signal?.aborted) return options.messages;
 		const context: StreamContext = {
 			system: { role: "system", content: options.system },
 			messages: [...options.messages], // 快照：provider 拿到的是本次请求那一刻的历史

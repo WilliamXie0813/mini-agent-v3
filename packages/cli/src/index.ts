@@ -8,7 +8,7 @@ import type { ContentBlock, Message } from "@mini-agent/ai";
 // 阶段 7 接真实模型时，从输出就能判断切换是否成功。
 setDefaultStreamFn(createFakeStreamFn(["Hello from the deterministic fake model."]));
 
-// content 是块数组；渲染只关心文字。三处要用（渲染 text、提取错误信息），提成函数。
+// content 是块数组；错误分支需要可读文本，只提 text 块拼起来（渲染 text 走 block.text，不经这里）。
 function textOf(content: ContentBlock[]): string {
 	return content
 		.filter((c) => c.type === "text")
@@ -20,7 +20,7 @@ const system = "You are a minimal teaching agent.";
 const messages: Message[] = []; // 跨轮累积，肉眼可见历史增长；阶段 9 持久化的雏形
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-console.log("mini-agent (stage 1) — type /exit to quit");
+console.log("mini-agent (stage 2) — type /exit to quit");
 
 try {
 	process.stdout.write("> ");

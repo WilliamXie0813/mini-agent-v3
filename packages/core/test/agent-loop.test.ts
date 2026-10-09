@@ -159,4 +159,25 @@ describe("agentLoop (stage 2: tool loop)", () => {
 			streamFn: createFakeStreamFn(["never"]) });
 		expect(messages).toHaveLength(0);
 	});
+
+	it("stops at the top of the loop instead of re-asking the model after an abort between turns", async () => {
+		const controller = new AbortController();
+		const inner = createFakeStreamFn([
+			[{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "x" } }],
+			// 第二轮带 stopReason "length"：走 continue 路径回到循环顶部——abort 检查点就在那里。
+			{ content: [{ type: "toolCall", id: "c2", name: "echo", arguments: { text: "y" } }], stopReason: "length" },
+		]);
+		let modelCalls = 0;
+		const streamFn: typeof inner = (context, signal) => {
+			modelCalls++;
+			if (modelCalls === 2) controller.abort();
+			return inner(context, signal);
+		};
+		const messages = await agentLoop({
+			...base(), prompt: "go", tools: [echoTool], signal: controller.signal, streamFn,
+		});
+		expect(modelCalls).toBe(2); // 没有第三次请求
+		// history 以配对的 toolResult 收尾：两条 assistant toolCall 都不悬空
+		expect(messages.at(-1)).toMatchObject({ role: "toolResult", toolCallId: "c2" });
+	});
 });
