@@ -30,11 +30,14 @@ export type Message = SystemMessage | UserMessage | AssistantMessage | ToolResul
 
 export interface Usage { inputTokens: number; outputTokens: number }
 
+// 手写 JSON Schema。本阶段只用到 required 与 properties 的 type 字段；完整校验在阶段 5。
+export type JSONSchema = Record<string, unknown>;
+
 // 本阶段只是声明，不实现执行；阶段 2 换成 JSONSchema 类型并接进循环。
 export interface Tool {
 	name: string;
 	description: string;
-	parameters: Record<string, unknown>;
+	parameters: JSONSchema;
 }
 
 export interface StreamContext { system: SystemMessage; messages: Message[]; tools: Tool[] }
