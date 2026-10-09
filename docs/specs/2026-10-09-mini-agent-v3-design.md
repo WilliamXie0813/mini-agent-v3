@@ -265,7 +265,9 @@ type StopReason = "pending" | "stop" | "length" | "toolUse" | "error" | "aborted
 | **Pi 对应** | `ai/src/types.ts:541-639`；`agent/src/stream-fn.ts`（20 行）；`agent/src/types.ts:33` |
 | **决策点** | 为什么 `StreamFn` 是函数而不是 `interface Provider`？为什么 core 不 `import` 任何 provider？ |
 
-**范围**：建立 workspace（根 `package.json` / `pnpm-workspace.yaml` / `tsconfig.base.json`），创建三个包。`packages/ai`：`types.ts`（消息 IR 最小集）、`stream-fn.ts`（20 行插槽）。`packages/core`：`agent-loop.ts`（极简版，只处理无工具的单轮）。`packages/cli`：readline 循环（无流式）。`packages/core/test/fake-model.ts`：确定性假模型（测试替身）。
+**范围**：建立 workspace（根 `package.json` / `pnpm-workspace.yaml` / `tsconfig.base.json`），创建三个包。`packages/ai`：`types.ts`（消息 IR 最小集）、`stream-fn.ts`（20 行插槽）、`fake.ts`（确定性假模型）。`packages/core`：`agent-loop.ts`（极简版，只处理无工具的单轮）。`packages/cli`：readline 循环（无流式）。
+
+**假模型为什么住在 `ai` 而不是 `core/test`**：它是 `StreamFn` 的一个**合法实现**，与阶段 7 的 `anthropic.ts` 同层同契约，只是确定性。放在 `core/test/` 会让 `pnpm dev`（生产入口）不得不 import 另一个包的测试目录，并且掩盖了关键事实——`cli` 与 `core` 都**不认识**任何 provider 实现，只通过插槽安装。假模型属于 provider 层，这是结构性的，不是权宜。
 
 **假模型的设计**：不是"随机返回文本"，而是**从预设脚本表读取事件序列**。调用 `streamFn` 时按 `messages` 的轮次索引返回对应脚本。这样测试完全确定，且第 2 阶段的工具调用能在同一机制上扩展。
 
@@ -791,7 +793,8 @@ mini-agent-v3/
       package.json        @mini-agent/ai，exports "./src/index.ts"
       src/types.ts        消息 IR + AssistantMessageEvent + Tool 声明
       src/stream-fn.ts    20 行注入插槽（import type from ./types.ts）
-      src/anthropic.ts    真实适配器（阶段 7 起）
+      src/fake.ts         确定性假模型（阶段 1-6 的默认 provider）
+      src/anthropic.ts    真实适配器（阶段 7 起，与 fake.ts 同层）
       test/
       fixtures/           SSE 录制样本（阶段 7）
     core/                 运行时
@@ -800,7 +803,6 @@ mini-agent-v3/
       src/tools.ts        工具定义与实现
       src/agent.ts        Agent 类（阶段 4 起）
       test/*.test.ts      vitest 测试
-      test/fake-model.ts  确定性假模型（测试替身，非生产代码）
     cli/                  终端入口
       package.json        @mini-agent/cli，依赖 core
       src/index.ts        readline + 事件渲染
