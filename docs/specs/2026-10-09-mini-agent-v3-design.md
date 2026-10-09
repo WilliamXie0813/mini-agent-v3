@@ -57,7 +57,7 @@ v3 的目标不是"再写一个更好的 agent"，而是**用一条单线、无�
 | `env`（SSH 远程执行） | 需要真实远端环境，教学收益低 |
 | `codemode` / `mcp` | 独立能力，不属于核心链路 |
 | `tui`（差分渲染） | 第 4-11 阶段用朴素 stdout；第 12 阶段用 React。不做终端组件库 |
-| `evals` | 第 1-13 阶段用 Node 内建测试运行器承担 |
+| `evals` | 第 1-13 阶段用 vitest 承担 |
 | `package-manager` / `model-resolver` / `settings-manager` | 产品复杂度，非架构 |
 | session 树形 UI（`/tree` 选择器） | 第 9 阶段实现树的**数据层**与 `branch(id)`，不做交互式选择器 |
 
@@ -72,9 +72,9 @@ v3 的目标不是"再写一个更好的 agent"，而是**用一条单线、无�
 | 运行时 | Node 22+（内建 `fetch` / Web Streams / `AbortController` / **类型擦除**） | |
 | 语言 | TypeScript，`strict: true`、`erasableSyntaxOnly: true` | 只能用可擦除语法（见 §7.1） |
 | 模块 | ESM（`"type": "module"`），`moduleResolution: NodeNext` | |
-| 工程 | pnpm workspaces（`packages/*`），**零构建**：直接用 `node --experimental-strip-types` 跑 TS | 借自 v2；无 build 步骤，改完即跑 |
-| 测试 | **Node 内建测试运行器**（`node --test`） | 少一个依赖、少一套配置。代价：无内建 spy/mock |
-| 运行时依赖 | **零** | 教学原则：所有机制可见。`node_modules` 只有 devDependencies（`typescript`、`@types/node`） |
+| 工程 | pnpm workspaces（`packages/*`），**零构建**：脚本用 `node --experimental-strip-types` 直接跑 TS | 无 build 步骤，改完即跑 |
+| 测试 | **vitest** | 自带 TS 转换（因此不需要 `tsx`）、内建 spy/mock（阶段 5 需要）、`--watch` 体验好 |
+| 运行时依赖 | **零** | 教学原则：所有机制可见。`dependencies` 全空；devDependencies 只有 `typescript`、`@types/node`、`vitest` |
 | Provider | Anthropic Messages API 协议，走 `ANTHROPIC_BASE_URL`（默认 `https://api.kimi.com/coding/`），模型 `kimi-for-coding` | 环境变量已配置可用；协议格式与 Pi 的 `AssistantMessageEvent` 映射天然对齐 |
 | 编辑器风格 | tab 缩进；每个 `src` 文件 < 200 行 | 与 Pi 一致；超限即信号，说明职责该拆了 |
 
@@ -799,6 +799,7 @@ mini-agent-v3/
       src/agent-loop.ts   循环
       src/tools.ts        工具定义与实现
       src/agent.ts        Agent 类（阶段 4 起）
+      test/*.test.ts      vitest 测试
       test/fake-model.ts  确定性假模型（测试替身，非生产代码）
     cli/                  终端入口
       package.json        @mini-agent/cli，依赖 core
@@ -819,7 +820,15 @@ cli → core → ai
 
 **为什么不是"先单包，后面再拆"**：第 7 阶段才拆包的话，会同时发生两件事——加真实 provider + 改目录结构，两个变化叠在一起，看不出缝到底起没起作用。拆包成本在第 1 阶段几乎为零（三个 package.json + 一个 workspace 文件），越早越便宜。
 
-**为什么不用 v2 的 vitest**：v2 用了 vitest，Pi 是用 vitest 的，但 v3 用 **Node 内建测试运行器**（`node --experimental-strip-types --test`）。理由：少一个依赖、少一套配置，且内建 runner 的 `describe/it/assert` 足够覆盖本项目的断言需求。**代价**：没有内建的 spy/mock（阶段 5 的「断言 `execute` 从未被调用」需要手写计数器），这个代价可接受且教学上更透明。
+**为什么用 vitest 而不是内建 runner**：vitest 自带 TS 转换，因此**不需要 `tsx`**——dev 与 test 两条路都零构建，依赖数并没有增加。更重要的是阶段 5 需要 `vi.fn()` 断言"`execute` 从未被调用"，手写计数器能做但啰嗦。Pi 也用 vitest，便于对照（`packages/*/vitest.config.ts`）。
+
+**`pnpm test` / `pnpm check` / `pnpm dev` 的分工**：
+
+| 命令 | 实现 |
+|---|---|
+| `pnpm test` | `vitest run`（各包；`pnpm -r run test`） |
+| `pnpm check` | `tsc --noEmit`（各包） |
+| `pnpm dev` | `node --experimental-strip-types src/index.ts`（不走 vitest，保持真实进程语义——阶段 9 要 kill 进程测恢复，阶段 4 要测 Ctrl+C） |
 
 **`erasableSyntaxOnly` 的约束**：`node --experimental-strip-types` 只做类型擦除，不做转换。因此**禁止**：`enum`、构造函数参数属性（`constructor(private x: T)`）、`namespace`。必须用 `import type` 导入类型。**这一条是真实约束而非风格偏好**——违反会在运行时直接报错。第 7 阶段的 SSE 解析尤其要注意不能用 `enum` 表示状态，改用字符串联合类型。
 
@@ -842,6 +851,8 @@ cli → core → ai
 | 纯函数（压缩阈值、切点、重放） | 直接单测，含边界值 |
 | 持久化 | 真实临时目录 + kill 进程模拟 |
 | 真实 API 联调 | **手动，不进 CI**（网络测试不可重复） |
+
+**vitest 配置**：每个包一个 `vitest.config.ts`，`include: ["test/**/*.test.ts"]`。用 `vi.fn()` 做 spy（阶段 5 的 `beforeToolCall` 拦截断言依赖它）；用 `vi.useFakeTimers()` 控制阶段 6 的并行时序断言（**只在必要时用**，优先靠确定性假工具的固定 sleep + 宽松阈值断言，避免过度工程）。
 
 **每个阶段的"先写测试"指的是先写验收测试**——即 §5 里各阶段的"验收"条目，先写成失败的测试。
 
