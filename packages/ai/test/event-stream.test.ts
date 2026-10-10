@@ -57,7 +57,7 @@ describe("AssistantMessageEventStream", () => {
 	it("stamps durationMs on the done message", async () => {
 		const stream = createAssistantMessageEventStream();
 		const message = textMessage("hi");
-		stream.push({ type: "start", message: { ...message } });
+		stream.push({ type: "start", partial: { ...message } });
 		await new Promise((resolve) => setTimeout(resolve, 12));
 		stream.push({ type: "done", message });
 		stream.end(message);

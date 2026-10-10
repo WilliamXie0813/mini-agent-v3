@@ -42,7 +42,13 @@ export interface Tool {
 
 export interface StreamContext { system: SystemMessage; messages: Message[]; tools: Tool[] }
 
-// 阶段 3 在 start 与 done 之间插入 delta 变体。
+// 流式事件协议（spec §5 阶段 3）。本阶段只有文本 delta——
+// thinking_* 与 toolcall_* 是阶段 7 随真实 SSE 一起加。
+//
+// 字段名两种：delta 类变体用 partial（"到目前为止攒出来的东西"，不是快照——
+// text 块靠 *_delta 增长，只有 done 里那份才是权威），done 用 message。
+// 阶段 4 的 message_update 会把 partial 原样透出，验收 #4 因此现在就该成立。
 export type AssistantMessageEvent =
-	| { type: "start"; message: AssistantMessage }
+	| { type: "start"; partial: AssistantMessage }
+	| { type: "text_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
 	| { type: "done"; message: AssistantMessage };
