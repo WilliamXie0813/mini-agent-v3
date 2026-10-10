@@ -1,5 +1,12 @@
 import { getDefaultStreamFn } from "@mini-agent/ai";
-import type { AssistantMessage, ContentBlock, Message, StreamContext, StreamFn, ToolResultMessage } from "@mini-agent/ai";
+import type {
+	AssistantMessage,
+	ContentBlock,
+	Message,
+	StreamContext,
+	StreamFn,
+	ToolResultMessage,
+} from "@mini-agent/ai";
 import { executeToolCalls } from "./execute-tool-calls.ts";
 import { toToolDeclarations } from "./tool.ts";
 import type { ToolDef } from "./tool.ts";
@@ -25,7 +32,10 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 	const tools = options.tools ?? [];
 	const maxTurns = options.maxTurns ?? 10;
 
-	options.messages.push({ role: "user", content: [{ type: "text", text: options.prompt }] });
+	options.messages.push({
+		role: "user",
+		content: [{ type: "text", text: options.prompt }],
+	});
 
 	// 单层循环（双层 follow-up 是阶段 13）：每轮 = 一次 streamFn 往返 + 一批工具执行。
 	// 收敛条件只有一个——模型返回的消息里没有 toolCall。
@@ -66,28 +76,40 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 	// 才知道模型在反复调什么。不合成 assistant 消息——熔断本身就是异常路径。
 	// 注意不能直接看 at(-1)：每轮的最后一条是 toolResult，工具名在往前一条的 assistant 里。
 	const lastCaller = options.messages.findLast(
-		(m) => m.role === "assistant" && m.content.some((c) => c.type === "toolCall"),
+		(m) =>
+			m.role === "assistant" && m.content.some((c) => c.type === "toolCall"),
 	);
-	const called = lastCaller?.role === "assistant"
-		? lastCaller.content.filter((c) => c.type === "toolCall").map((c) => c.name).join(", ")
-		: "unknown";
-	throw new Error(`agent loop hit maxTurns (${maxTurns}) without the model stopping; last tool calls: ${called}`);
+	const called =
+		lastCaller?.role === "assistant"
+			? lastCaller.content
+					.filter((c) => c.type === "toolCall")
+					.map((c) => c.name)
+					.join(", ")
+			: "unknown";
+	throw new Error(
+		`agent loop hit maxTurns (${maxTurns}) without the model stopping; last tool calls: ${called}`,
+	);
 }
 
 // 不导出：只服务 length 保护这一个分支；文案是给模型看的，必须包含「怎么办」。
 // 收 ContentBlock[] 而非收窄后的 toolCall 块：调用方虽然已过滤，但这里不假设——
 // 与 executeToolCalls 不收窄签名是同一个理由。
-function truncatedBatchFailures(toolCalls: ContentBlock[], tools: ToolDef<any>[]): ToolResultMessage[] {
+function truncatedBatchFailures(
+	toolCalls: ContentBlock[],
+	tools: ToolDef<any>[],
+): ToolResultMessage[] {
 	return toolCalls.map((block) => {
 		const name = block.type === "toolCall" ? block.name : "unknown";
 		return {
 			role: "toolResult",
 			toolCallId: block.type === "toolCall" ? block.id : "unknown",
 			toolName: name,
-			content: [{
-				type: "text",
-				text: `Tool "${name}" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.`,
-			}],
+			content: [
+				{
+					type: "text",
+					text: `Tool "${name}" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.`,
+				},
+			],
 			isError: true,
 		};
 	});

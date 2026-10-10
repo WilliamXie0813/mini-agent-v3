@@ -8,10 +8,17 @@ export interface ToolDef<P = Record<string, unknown>> extends Tool {
 	execute: (params: P, signal?: AbortSignal) => Promise<ToolResult>;
 }
 
-export interface ToolResult { content: ContentBlock[]; isError?: boolean }
+export interface ToolResult {
+	content: ContentBlock[];
+	isError?: boolean;
+}
 
 // provider 只该看到 name/description/parameters。把 ToolDef 直接交给 streamFn 会
 // 让 provider 层拿到 execute 闭包——那是运行时对象，不是协议的一部分。
 export function toToolDeclarations(tools: ToolDef<any>[]): Tool[] {
-	return tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters as JSONSchema }));
+	return tools.map((t) => ({
+		name: t.name,
+		description: t.description,
+		parameters: t.parameters as JSONSchema,
+	}));
 }
