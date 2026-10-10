@@ -35,6 +35,8 @@
 
 ## 决策点（供回测）
 
+> 答案见 [`01-回测答案.md`](./01-回测答案.md)。**先自己答，再对答案**——对答案的收益远小于自己答错的收益。
+
 1. 为什么 `StreamFn` 是函数而不是 `interface Provider`？
 2. 为什么 core 不 `import` 任何 provider？（答案要能用 `grep` 证明，不是用嘴说）
 3. 为什么假模型住在 `ai/src/fake.ts` 而不是 `core/test/`？
