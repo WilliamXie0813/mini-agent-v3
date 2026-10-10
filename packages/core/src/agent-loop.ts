@@ -1,9 +1,9 @@
-import { getDefaultStreamFn } from "@mini-agent/ai";
+import { consumeAssistantMessage, getDefaultStreamFn } from "@mini-agent/ai";
 import type {
-	AssistantMessage,
 	ContentBlock,
 	Message,
 	StreamContext,
+	StreamDeltaHandler,
 	StreamFn,
 	ToolResultMessage,
 } from "@mini-agent/ai";
@@ -17,6 +17,7 @@ export interface AgentLoopOptions {
 	system: string; // 本阶段是纯字符串；阶段 8 改为 SystemMessage
 	streamFn?: StreamFn; // 缺省 fallback 到 getDefaultStreamFn()
 	signal?: AbortSignal;
+	onDelta?: StreamDeltaHandler; // 流式增量只给 UI 看；入历史的永远是 done 携带的那条消息
 	tools?: ToolDef<any>[]; // 缺省 []：无工具的调用走一轮就收敛，与阶段 1 行为一致
 	maxTurns?: number; // 缺省 10：模型反复要工具时的熔断，防止无限烧 token
 }
@@ -48,13 +49,9 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 			tools: toToolDeclarations(tools),
 		};
 
-		// 只有 done 携带的完整消息才进历史（v1 约定，阶段 3 起 done 才是权威）。
-		// for await 块只看 done——delta 分支是阶段 3 的事。
-		let doneMessage: AssistantMessage | undefined;
-		for await (const event of streamFn(context, options.signal)) {
-			if (event.type === "done") doneMessage = event.message;
-		}
-		const message = doneMessage!;
+		// 只有 done 携带的完整消息才进历史：delta 是传输层的碎块，
+		// 一次响应的 40 个 delta 共同描述的是 1 条 assistant 消息（spec §5 阶段 3）。
+		const message = await consumeAssistantMessage(streamFn(context, options.signal), options.onDelta);
 		options.messages.push(message);
 
 		// length 保护：参数 JSON 被 token 上限截断，半截参数「解析成功但不完整」，

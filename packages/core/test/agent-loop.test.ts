@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { agentLoop } from "../src/agent-loop.ts";
-import { setDefaultStreamFn, createFakeStreamFn } from "@mini-agent/ai";
-import type { Message, ToolResultMessage } from "@mini-agent/ai";
+import { setDefaultStreamFn, createFakeStreamFn, createAssistantMessageEventStream } from "@mini-agent/ai";
+import type { Message, StreamFn, ToolResultMessage } from "@mini-agent/ai";
 import type { ToolDef } from "../src/tool.ts";
 
 // 工厂而非共享对象：agentLoop 就地追加 messages（验收要求同一引用），
@@ -179,5 +179,39 @@ describe("agentLoop (stage 2: tool loop)", () => {
 		expect(modelCalls).toBe(2); // 没有第三次请求
 		// history 以配对的 toolResult 收尾：两条 assistant toolCall 都不悬空
 		expect(messages.at(-1)).toMatchObject({ role: "toolResult", toolCallId: "c2" });
+	});
+});
+
+describe("agentLoop (stage 3: streaming)", () => {
+	beforeEach(() => setDefaultStreamFn(undefined));
+
+	it("keeps one assistant message per response no matter how many deltas", async () => {
+		const messages = await agentLoop({
+			...base(), prompt: "hi", streamFn: createFakeStreamFn(["forty characters long string, give or take"]),
+		});
+		expect(messages).toHaveLength(2);
+		expect(messages[1]).toMatchObject({ role: "assistant" });
+		expect(messages[1].content).toEqual([{ type: "text", text: "forty characters long string, give or take" }]);
+	});
+
+	it("forwards every delta to onDelta in order, and the joined deltas equal the stored text", async () => {
+		const deltas: string[] = [];
+		const messages = await agentLoop({
+			...base(), prompt: "hi", onDelta: (d) => deltas.push(d),
+			streamFn: createFakeStreamFn(["hello"]),
+		});
+		expect(deltas).toEqual(["h", "e", "l", "l", "o"]);
+		expect((messages[1].content[0] as { text: string }).text).toBe(deltas.join(""));
+	});
+
+	it("throws a named error when a provider ends the stream without a done event", async () => {
+		const broken: StreamFn = () => {
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => stream.end());
+			return stream;
+		};
+		await expect(agentLoop({ ...base(), prompt: "hi", streamFn: broken })).rejects.toThrow(
+			/without a done event/,
+		);
 	});
 });
