@@ -1,6 +1,5 @@
-import { consumeAssistantMessage, getDefaultStreamFn } from "@mini-agent/ai";
+import { getDefaultStreamFn } from "@mini-agent/ai";
 import type {
-	AssistantMessage,
 	ContentBlock,
 	Message,
 	StreamContext,
@@ -8,7 +7,9 @@ import type {
 	StreamFn,
 	ToolResultMessage,
 } from "@mini-agent/ai";
+import type { AgentEventSink } from "./agent-event.ts";
 import { executeToolCalls } from "./execute-tool-calls.ts";
+import { streamAssistantMessage } from "./stream-assistant.ts";
 import { toToolDeclarations } from "./tool.ts";
 import type { ToolDef } from "./tool.ts";
 
@@ -19,6 +20,7 @@ export interface AgentLoopOptions {
 	streamFn?: StreamFn; // 缺省 fallback 到 getDefaultStreamFn()
 	signal?: AbortSignal;
 	onDelta?: StreamDeltaHandler; // 流式增量只给 UI 看；入历史的永远是 done 携带的那条消息
+	emit?: AgentEventSink;
 	tools?: ToolDef<any>[]; // 缺省 []：无工具的调用走一轮就收敛，与阶段 1 行为一致
 	maxTurns?: number; // 缺省 10：模型反复要工具时的熔断，防止无限烧 token
 }
@@ -33,17 +35,25 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 	const streamFn = options.streamFn ?? getDefaultStreamFn();
 	const tools = options.tools ?? [];
 	const maxTurns = options.maxTurns ?? 10;
+	const emit = options.emit ?? (() => {});
+	const newMessages: Message[] = [];
 
-	options.messages.push({
+	const userMessage: Message = {
 		role: "user",
 		content: [{ type: "text", text: options.prompt }],
-	});
+	};
+	await emit({ type: "agent_start" });
+	await emit({ type: "turn_start" });
+	options.messages.push(userMessage);
+	newMessages.push(userMessage);
+	await emit({ type: "message_start", message: userMessage });
+	await emit({ type: "message_end", message: userMessage });
 
 	// 单层循环（双层 follow-up 是阶段 13）：每轮 = 一次 streamFn 往返 + 一批工具执行。
 	// 收敛条件只有一个——模型返回的消息里没有 toolCall。
 	for (let turn = 0; turn < maxTurns; turn++) {
-		// 中止只检查事件边界：进入新一轮前不再问模型（length 保护的 continue 可能带着已中止的 signal 回到这里）。
-		if (options.signal?.aborted) return options.messages;
+		if (turn > 0) await emit({ type: "turn_start" });
+		if (options.signal?.aborted) throw new Error("agent loop aborted");
 		const context: StreamContext = {
 			system: { role: "system", content: options.system },
 			messages: [...options.messages], // 快照：provider 拿到的是本次请求那一刻的历史
@@ -52,37 +62,43 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 
 		// 只有 done 携带的完整消息才进历史：delta 是传输层的碎块，
 		// 一次响应的 40 个 delta 共同描述的是 1 条 assistant 消息（spec §5 阶段 3）。
-		let message: AssistantMessage;
-		try {
-			message = await consumeAssistantMessage(
-				streamFn(context, options.signal),
-				(event) => {
-					if (event.type === "text_delta") options.onDelta?.(event.delta);
-				},
-			);
-		} catch (error) {
-			// 流内中止让 provider 停在半路、收不到 done——但那不是 provider 坏了，是用户按了停。
-			// 与循环顶部和工具执行后两处检查点保持同一语义：abort 是 return，不是 throw。
-			// 半截消息不进历史（它不满足「只有 done 进历史」），用户那轮 prompt 保留，
-			// 下一条 prompt 照常接上——已打印的 delta 留在终端上，历史里没有对应的半条。
-			if (options.signal?.aborted) return options.messages;
-			throw error;
-		}
+		const message = await streamAssistantMessage(
+			streamFn(context, options.signal),
+			async (event) => {
+				if (
+					event.type === "message_update" &&
+					event.assistantMessageEvent.type === "text_delta"
+				) {
+					options.onDelta?.(event.assistantMessageEvent.delta);
+				}
+				await emit(event);
+			},
+		);
 		options.messages.push(message);
+		newMessages.push(message);
 
 		// length 保护：参数 JSON 被 token 上限截断，半截参数「解析成功但不完整」，
 		// 执行它可能删错文件。整批判失败回喂，模型可重发。
 		const toolCalls = message.content.filter((c) => c.type === "toolCall");
-		if (toolCalls.length === 0) return options.messages;
-		if (message.stopReason === "length") {
-			options.messages.push(...truncatedBatchFailures(toolCalls, tools));
-			continue;
+		if (toolCalls.length === 0) {
+			await emit({ type: "turn_end", message, toolResults: [] });
+			await emit({ type: "agent_end", messages: newMessages });
+			return options.messages;
 		}
-
-		const batch = await executeToolCalls(toolCalls, tools, options.signal);
-		options.messages.push(...batch.messages);
-		// 工具执行后的 abort 检查放在结果之后：中止不能让已经执行的工具结果丢失。
-		if (options.signal?.aborted) return options.messages;
+		let toolResults: ToolResultMessage[];
+		if (message.stopReason === "length") {
+			toolResults = truncatedBatchFailures(toolCalls, tools);
+		} else {
+			const batch = await executeToolCalls(toolCalls, tools, options.signal);
+			toolResults = batch.messages;
+		}
+		options.messages.push(...toolResults);
+		newMessages.push(...toolResults);
+		await emit({ type: "turn_end", message, toolResults });
+		if (options.signal?.aborted) {
+			await emit({ type: "turn_start" });
+			throw new Error("agent loop aborted");
+		}
 	}
 
 	// 错误信息带最后一轮的工具名：否则使用者看到 hit maxTurns 还得自己去翻历史

@@ -2,11 +2,20 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { agentLoop } from "../src/agent-loop.ts";
 import { setDefaultStreamFn, createFakeStreamFn, createAssistantMessageEventStream } from "@mini-agent/ai";
 import type { Message, StreamFn, ToolResultMessage } from "@mini-agent/ai";
+import type { AgentEvent } from "../src/agent-event.ts";
 import type { ToolDef } from "../src/tool.ts";
 
 // 工厂而非共享对象：agentLoop 就地追加 messages（验收要求同一引用），
 // 共享数组会让测试间互相污染。
 const base = () => ({ messages: [] as Message[], system: "you are a test" });
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+	let resolve = () => {};
+	const promise = new Promise<void>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+}
 
 describe("agentLoop (stage 1: single round trip)", () => {
 	beforeEach(() => setDefaultStreamFn(undefined));
@@ -160,8 +169,9 @@ describe("agentLoop (stage 2: tool loop)", () => {
 		expect(messages).toHaveLength(0);
 	});
 
-	it("stops at the top of the loop instead of re-asking the model after an abort between turns", async () => {
+	it("rejects between turns without re-asking the model after an abort", async () => {
 		const controller = new AbortController();
+		const messages: Message[] = [];
 		const inner = createFakeStreamFn([
 			[{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "x" } }],
 			// 第二轮带 stopReason "length"：走 continue 路径回到循环顶部——abort 检查点就在那里。
@@ -173,9 +183,10 @@ describe("agentLoop (stage 2: tool loop)", () => {
 			if (modelCalls === 2) controller.abort();
 			return inner(context, signal);
 		};
-		const messages = await agentLoop({
-			...base(), prompt: "go", tools: [echoTool], signal: controller.signal, streamFn,
-		});
+		await expect(agentLoop({
+			...base(), messages, prompt: "go", tools: [echoTool],
+			signal: controller.signal, streamFn,
+		})).rejects.toThrow(/agent loop aborted/);
 		expect(modelCalls).toBe(2); // 没有第三次请求
 		// history 以配对的 toolResult 收尾：两条 assistant toolCall 都不悬空
 		expect(messages.at(-1)).toMatchObject({ role: "toolResult", toolCallId: "c2" });
@@ -194,14 +205,32 @@ describe("agentLoop (stage 3: streaming)", () => {
 		expect(messages[1].content).toEqual([{ type: "text", text: "forty characters long string, give or take" }]);
 	});
 
-	it("forwards every delta to onDelta in order, and the joined deltas equal the stored text", async () => {
+	it("emits every delta in order, and the joined deltas equal the stored text", async () => {
+		const events: AgentEvent[] = [];
 		const deltas: string[] = [];
 		const messages = await agentLoop({
-			...base(), prompt: "hi", onDelta: (d) => deltas.push(d),
+			...base(), prompt: "hi",
+			emit: (event) => {
+				events.push(event);
+				if (
+					event.type === "message_update" &&
+					event.assistantMessageEvent.type === "text_delta"
+				) {
+					deltas.push(event.assistantMessageEvent.delta);
+				}
+			},
 			streamFn: createFakeStreamFn(["hello"]),
 		});
 		expect(deltas).toEqual(["h", "e", "l", "l", "o"]);
-		expect((messages[1].content[0] as { text: string }).text).toBe(deltas.join(""));
+		expect(events.filter((event) => event.type === "message_update"))
+			.toHaveLength(5);
+		const assistant = messages[1];
+		if (assistant.role !== "assistant")
+			throw new Error("expected assistant message");
+		expect(assistant.content[0]).toEqual({
+			type: "text",
+			text: deltas.join(""),
+		});
 	});
 
 	it("throws a named error when a provider ends the stream without a done event", async () => {
@@ -215,22 +244,113 @@ describe("agentLoop (stage 3: streaming)", () => {
 		);
 	});
 
-	it("returns instead of rejecting when aborted mid-stream, keeping the user turn and no half message", async () => {
+	it("rejects when aborted mid-stream so Agent can finish the lifecycle", async () => {
 		const controller = new AbortController();
 		const deltas: string[] = [];
-		// delayMs 让 abort 一定落在流内部：泵在等第一个 delta 时信号已经响了。
-		const messages = await agentLoop({
-			...base(), prompt: "hi", signal: controller.signal,
-			onDelta: (d) => {
-				deltas.push(d);
-				controller.abort();
-			},
-			streamFn: createFakeStreamFn(["abcdef"], { delayMs: 30 }),
-		});
-		// 与「轮间中止」同一语义：abort 是 return 而不是 throw（否则 Ctrl+C 会打成 provider 故障）
-		expect(messages).toHaveLength(1);
-		expect(messages[0]).toMatchObject({ role: "user" });
-		// 已经打印过的 delta 不回收——终端上留着半句，历史里没有对应的半条
+		await expect(
+			agentLoop({
+				...base(), prompt: "hi", signal: controller.signal,
+				emit: (event) => {
+					if (
+						event.type === "message_update" &&
+						event.assistantMessageEvent.type === "text_delta"
+					) {
+						deltas.push(event.assistantMessageEvent.delta);
+						controller.abort();
+					}
+				},
+				streamFn: createFakeStreamFn(["abcdef"], { delayMs: 30 }),
+			}),
+		).rejects.toThrow(/without a done event/);
 		expect(deltas).toEqual(["a"]);
+	});
+});
+
+describe("agentLoop (stage 4: lifecycle events)", () => {
+	it("emits a complete no-tool lifecycle in order", async () => {
+		const events: AgentEvent[] = [];
+		await agentLoop({
+			...base(),
+			prompt: "hi",
+			streamFn: createFakeStreamFn(["ok"]),
+			emit: (event) => {
+				events.push(event);
+			},
+		});
+
+		expect(events.map((event) => event.type)).toEqual([
+			"agent_start",
+			"turn_start",
+			"message_start",
+			"message_end",
+			"message_start",
+			"message_update",
+			"message_update",
+			"message_end",
+			"turn_end",
+			"agent_end",
+		]);
+	});
+
+	it("keeps old history out of agent_end.messages", async () => {
+		const history: Message[] = [
+			{ role: "user", content: [{ type: "text", text: "old" }] },
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "old reply" }],
+				stopReason: "stop",
+			},
+		];
+		const events: AgentEvent[] = [];
+		const result = await agentLoop({
+			...base(),
+			messages: history,
+			prompt: "new",
+			streamFn: createFakeStreamFn(["new reply"]),
+			emit: (event) => {
+				events.push(event);
+			},
+		});
+
+		const end = events.find((event) => event.type === "agent_end");
+		if (end?.type !== "agent_end") throw new Error("missing agent_end");
+		expect(end.messages.map((message) => message.role)).toEqual([
+			"user",
+			"assistant",
+		]);
+		expect(result).toBe(history);
+		expect(result).toHaveLength(4);
+	});
+
+	it("waits for user message listeners before calling the model", async () => {
+		const gate = deferred();
+		const listenerReached = deferred();
+		const inner = createFakeStreamFn(["done"]);
+		let modelCalls = 0;
+		const streamFn: StreamFn = (context, signal) => {
+			modelCalls++;
+			return inner(context, signal);
+		};
+
+		const running = agentLoop({
+			...base(),
+			prompt: "hi",
+			streamFn,
+			emit: async (event) => {
+				if (
+					event.type === "message_end" &&
+					event.message.role === "user"
+				) {
+					listenerReached.resolve();
+					await gate.promise;
+				}
+			},
+		});
+
+		await listenerReached.promise;
+		expect(modelCalls).toBe(0);
+		gate.resolve();
+		await running;
+		expect(modelCalls).toBe(1);
 	});
 });
