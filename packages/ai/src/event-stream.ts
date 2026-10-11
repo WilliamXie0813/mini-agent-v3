@@ -38,7 +38,10 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 	private isComplete: (event: T) => boolean;
 	private extractResult: (event: T) => R;
 
-	constructor(isComplete: (event: T) => boolean, extractResult: (event: T) => R) {
+	constructor(
+		isComplete: (event: T) => boolean,
+		extractResult: (event: T) => R,
+	) {
 		this.isComplete = isComplete;
 		this.extractResult = extractResult;
 		this.finalResultPromise = new Promise((resolve, reject) => {
@@ -72,7 +75,10 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 	end(result?: R): void {
 		// 契约违反兜底：isComplete 从未触发（provider 没发 done 就结束）时，
 		// result() 不能永远挂着——那是一个没有栈、没有错误的死锁。
-		if (!this.settled) this.rejectFinalResult(new Error("event stream ended without a completion event"));
+		if (!this.settled)
+			this.rejectFinalResult(
+				new Error("event stream ended without a completion event"),
+			);
 		this.done = true;
 		if (result !== undefined) this.resolveFinalResult(result);
 		while (this.waiting.length > 0) {
@@ -88,7 +94,9 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 			} else if (this.done) {
 				return;
 			} else {
-				const result = await new Promise<IteratorResult<T>>((resolve) => this.waiting.enqueue(resolve));
+				const result = await new Promise<IteratorResult<T>>((resolve) =>
+					this.waiting.enqueue(resolve),
+				);
 				if (result.done) return;
 				yield result.value;
 			}
@@ -104,7 +112,10 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 // 用单调时钟从流创建那一刻起算，除非消息自己已经测过（provider 自己测的就以它为准）。
 // Pi 还有一条「timestamp 早于流创建则不计时」的守卫——那是给「转发别处开始的响应」用的，
 // v3 的 AssistantMessage 没有 timestamp 字段、也没有 deferred 响应（阶段 7 才出现），故不抄。
-export class AssistantMessageEventStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
+export class AssistantMessageEventStream extends EventStream<
+	AssistantMessageEvent,
+	AssistantMessage
+> {
 	readonly #startedAtMonotonic = performance.now();
 
 	constructor() {
@@ -129,7 +140,10 @@ export class AssistantMessageEventStream extends EventStream<AssistantMessageEve
 
 	#time(message: AssistantMessage): void {
 		if (this.done || message.durationMs !== undefined) return;
-		message.durationMs = Math.max(0, Math.round(performance.now() - this.#startedAtMonotonic));
+		message.durationMs = Math.max(
+			0,
+			Math.round(performance.now() - this.#startedAtMonotonic),
+		);
 	}
 }
 

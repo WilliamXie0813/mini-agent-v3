@@ -4,7 +4,10 @@ import type { AssistantMessageEventStream } from "./event-stream.ts";
 // 依赖注入缝：core 完全不知道 provider 存在（spec §3.2a）。
 // 返回事件流而不是 AsyncGenerator：provider 是推送源（阶段 7 的 SSE socket
 // 按自己的节奏吐字节），拉模型要求消费者先伸手才继续，字节没地方放。
-export type StreamFn = (context: StreamContext, signal?: AbortSignal) => AssistantMessageEventStream;
+export type StreamFn = (
+	context: StreamContext,
+	signal?: AbortSignal,
+) => AssistantMessageEventStream;
 
 let defaultStreamFn: StreamFn | undefined;
 
@@ -15,7 +18,9 @@ export function setDefaultStreamFn(fn: StreamFn | undefined): void {
 
 export function getDefaultStreamFn(): StreamFn {
 	if (defaultStreamFn === undefined) {
-		throw new Error("no default stream fn installed; call setDefaultStreamFn() at composition root");
+		throw new Error(
+			"no default stream fn installed; call setDefaultStreamFn() at composition root",
+		);
 	}
 	return defaultStreamFn;
 }
@@ -39,6 +44,7 @@ export async function consumeAssistantMessage(
 	}
 	// 契约违反：provider 结束流却没发 done。没有这条，result() 会永远挂着，
 	// 排查成本是「终端不动，什么都没有」。
-	if (done === undefined) throw new Error("assistant stream ended without a done event");
+	if (done === undefined)
+		throw new Error("assistant stream ended without a done event");
 	return done;
 }
