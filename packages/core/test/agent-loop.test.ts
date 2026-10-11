@@ -214,4 +214,23 @@ describe("agentLoop (stage 3: streaming)", () => {
 			/without a done event/,
 		);
 	});
+
+	it("returns instead of rejecting when aborted mid-stream, keeping the user turn and no half message", async () => {
+		const controller = new AbortController();
+		const deltas: string[] = [];
+		// delayMs 让 abort 一定落在流内部：泵在等第一个 delta 时信号已经响了。
+		const messages = await agentLoop({
+			...base(), prompt: "hi", signal: controller.signal,
+			onDelta: (d) => {
+				deltas.push(d);
+				controller.abort();
+			},
+			streamFn: createFakeStreamFn(["abcdef"], { delayMs: 30 }),
+		});
+		// 与「轮间中止」同一语义：abort 是 return 而不是 throw（否则 Ctrl+C 会打成 provider 故障）
+		expect(messages).toHaveLength(1);
+		expect(messages[0]).toMatchObject({ role: "user" });
+		// 已经打印过的 delta 不回收——终端上留着半句，历史里没有对应的半条
+		expect(deltas).toEqual(["a"]);
+	});
 });

@@ -1,5 +1,6 @@
 import { consumeAssistantMessage, getDefaultStreamFn } from "@mini-agent/ai";
 import type {
+	AssistantMessage,
 	ContentBlock,
 	Message,
 	StreamContext,
@@ -51,7 +52,20 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 
 		// 只有 done 携带的完整消息才进历史：delta 是传输层的碎块，
 		// 一次响应的 40 个 delta 共同描述的是 1 条 assistant 消息（spec §5 阶段 3）。
-		const message = await consumeAssistantMessage(streamFn(context, options.signal), options.onDelta);
+		let message: AssistantMessage;
+		try {
+			message = await consumeAssistantMessage(
+				streamFn(context, options.signal),
+				options.onDelta,
+			);
+		} catch (error) {
+			// 流内中止让 provider 停在半路、收不到 done——但那不是 provider 坏了，是用户按了停。
+			// 与循环顶部和工具执行后两处检查点保持同一语义：abort 是 return，不是 throw。
+			// 半截消息不进历史（它不满足「只有 done 进历史」），用户那轮 prompt 保留，
+			// 下一条 prompt 照常接上——已打印的 delta 留在终端上，历史里没有对应的半条。
+			if (options.signal?.aborted) return options.messages;
+			throw error;
+		}
 		options.messages.push(message);
 
 		// length 保护：参数 JSON 被 token 上限截断，半截参数「解析成功但不完整」，
