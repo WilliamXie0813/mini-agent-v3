@@ -109,6 +109,21 @@ Pi 的 12 个变体里，**每一个**都用 `partial`（`packages/ai/src/types.
 
 **同时保留 `done.message` 这个名字**（Pi 也是这么分的：`done` 用 `message`，其余用 `partial`）。改的只有 `start` 和新增的 delta 变体。
 
+> **勘误（2026-10-11 事后补，正文保留原样当历史）**
+>
+> 决策 C 的**结论对，第 3 个理由错**。理由 1、2 独立成立，而且已被 Pi 原文坐实：`ai/src/types.ts:794-799` 的文档注释明写「`partial` is the shared live response-so-far helper, **not an event-time snapshot**」。ai 层用 `partial` 没问题。
+>
+> 错的是外推出来的那句：**「阶段 4 落地时事件里直接放 `event.partial`，验收 #4 一字不改地成立」——不成立。** Pi 的 `agent/src/types.ts:526` 是 `{ type: "message_update"; message; assistantMessageEvent }`：顶层叫 `message`，而且装的是 `{ ...partialMessage }` 的**快照**。我拿上面那段 spec 验收 #4 的错措辞当成了 Pi 的做法，把 ai 层的字段名外推到了 agent 层。
+>
+> 后果与已做的修正（详见 `docs/HANDOFF.md` §5）：
+> - spec 第 183 行 `event` → `assistantMessageEvent`；顶层保持 `message`（`message_start`/`message_update`/`message_end` 同名字段，否则 UI reduce 与持久化要写特判分支）。
+> - 原验收 #4 **移入阶段 4**（现为阶段 4 验收 #5），改写为断言 `message_update` 的 `message` 与 `message_end` 的 `message` 一致。`message_update` 本阶段不存在，不是字段名的问题。
+> - `packages/ai/src/types.ts` 与 `docs/stages/03-streaming.md` 的对应说法已改。
+>
+> **教训**：拿 spec 里的一句转述当 Pi 的原始事实用。凡是「Pi 是这么写的」，必须落到 Pi 的具体行号上再下结论——这一条本计划自己在别处做到了（决策 C 理由 2 就带了 `types.ts:786-800`），唯独理由 3 没做。
+>
+> 回测第 3 问（为什么字段叫 `partial` 而不是 `message`）**不受影响，反而更清楚了**：两个名字指两种东西——`partial` 是 ai 层还在长、被就地变更的那份；`message` 是 agent 层复制出来的死值。答案就在这个对比里。
+
 ### 决策 D：契约违反要响亮，静默兜底不要
 
 `for await` 结束后 `doneMessage` 仍是 `undefined` = provider 没发 `done` 就结束了。这在原实现里是「`doneMessage!` 非空断言 + 下游炸」；换成 `EventStream` 后更糟——`result()` 的 promise **永不 settle**，循环会**静默挂住**，没有栈、没有错误，只有一个不动的终端。
@@ -852,7 +867,7 @@ git commit -m "feat(stage-3): CLI prints deltas as they arrive"
 3. **替代方案为什么更差**——表格三行：(a) 生成器里多 `yield` 几个 delta（消费者不 `next()` 就没字节的位置；最终消息要从迭代 return 值里抠）；(b) 回调式 `onEvent` 参数（把「事件协议」降级成「一次调用的参数」，阶段 4 的 `AgentEvent` 与阶段 11 的扩展都要重新发明一个流对象）；(c) delta 也入历史、消费者自己合并（历史被碎片污染，且丢失 provider 侧的最终归一化）。
 4. **决策点（供回测）**——spec 给的是 **「为什么 delta 事件不进消息历史，只有 `done` 携带的消息进？」**。本节列 4 问，第一问就是它，另外三问是：2. 为什么 `StreamFn` 必须从 `AsyncGenerator` 换成 `EventStream`？（用阶段 7 的 SSE 回答，而不是用「Pi 这么写」）3. 为什么 delta 的字段叫 `partial` 而不是 `message`？（提示：`partial` 和 `done.message` 的内容在最后一刻是相同的，那为什么仍是两个不同名字）4. 为什么 provider 没发 `done` 就结束时要抛具名错误，而不是返回一条空消息兜底？
 5. **已知代价**——`EventStream` 引入了一个「迭代正常结束但 `result()` reject」的状态；`partial` 是浅拷贝，历史里若误存了它会被后续 delta 继续改写；`chunkSize`/`delayMs` 是假模型的旋钮，真实 provider 没有「chunk 大小」这个概念（阶段 7 会发现 delta 的边界由网络决定）。
-6. **验收对照**——spec 的四条逐条打勾，**并明确写第 4 条（`message_update` 的 `partial`）在阶段 4 落地后才可断言**，本阶段只把「字段名与语义就位」这件事做掉。
+6. **验收对照**——spec 的三条逐条打勾（第 4 条已移入阶段 4，见决策 C 的勘误）。
 
 - [ ] **Step 2: 全量验收**
 

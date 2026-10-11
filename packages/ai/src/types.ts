@@ -47,7 +47,11 @@ export interface StreamContext { system: SystemMessage; messages: Message[]; too
 //
 // 字段名两种：delta 类变体用 partial（"到目前为止攒出来的东西"，不是快照——
 // text 块靠 *_delta 增长，只有 done 里那份才是权威），done 用 message。
-// 阶段 4 的 message_update 会把 partial 原样透出，验收 #4 因此现在就该成立。
+// Pi 同样如此（types.ts:794-799 明说 partial 不是 event-time snapshot）。
+//
+// 注意 partial 只是本层的名字，别外推：阶段 4 的 message_update 顶层字段是 message
+// （{...partialMessage} 的快照），内层才是把整个事件原样放进 assistantMessageEvent。
+// 两个名字指的是两种东西：live 的在 partial 里，agent 层拿到的是死值。
 export type AssistantMessageEvent =
 	| { type: "start"; partial: AssistantMessage }
 	| { type: "text_delta"; contentIndex: number; delta: string; partial: AssistantMessage }

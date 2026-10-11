@@ -142,9 +142,15 @@ spec §5 的阶段 4 块 + §4.5（`AgentEvent` 联合类型在 spec 第 183-187
 
 - 新概念：**`AgentEvent` 分层 + `Agent` 类**
 - 决策点：为什么 `AgentEvent` 要分这么多层，而不是直接复用 `AssistantMessageEvent`？
-- 已验证的相关事实：Pi 的 `AgentEvent` 联合在 `pi/packages/agent/src/types.ts:505-545`；Pi 的循环里 `start` 会把 partial **推进 `context.messages`**、9 个 delta 变体逐个 `emit({type:"message_update", assistantMessageEvent: event, message: {...partialMessage}})`（`pi/packages/agent/src/agent-loop.ts:414-441`）——这正是 spec 阶段 3 验收 #4 说的那个 `partial`。
+- 已验证的相关事实：Pi 的 `AgentEvent` 联合在 `pi/packages/agent/src/types.ts:516-539`；Pi 的循环里 `start` 会把 partial **推进 `context.messages`**、9 个 delta 变体逐个 `emit({type:"message_update", assistantMessageEvent: event, message: {...partialMessage}})`（`pi/packages/agent/src/agent-loop.ts:414-441`）。
 
-**注意**：spec 阶段 3 验收 #4 说的 `message_update` 的字段名是 `partial`，而 spec 自己的 `AgentEvent` 定义（第 183 行）写的是 `{ type: "message_update"; message: Message; event: AssistantMessageEvent }`。**两处对不上**——阶段 4 写计划时要定：是把 spec 第 183 行改成 `assistantMessageEvent` + `partial`（对齐 Pi），还是在阶段 3 文档里注掉验收 #4 的措辞。**这是阶段 4 的第一个待决问题，不是我留的坑。**
+**字段名问题已在 2026-10-11 结清（spec 已改）**：`message_update` 的顶层字段是 **`message`**（快照，`{ ...partialMessage }`），内层是 **`assistantMessageEvent`**。原先 spec 内部三处不一致——第 183 行写 `{ message; event }`，阶段 3 验收 #4 却写「`message_update` 的 `partial`」。两处都改了：
+
+- 第 183 行 `event` → `assistantMessageEvent`（对齐 Pi 与类型名）。
+- 顶层保持 `message`：`message_start`/`message_update`/`message_end` 必须同名字段，否则 UI reduce 与持久化要写特判分支（与 spec 第 196 行「工具结果不给 UI 特判」同一意图）。`partial` 在 v3 里是**阶段 3 `AssistantMessageEvent` 自己**的字段名，指的是「还在长、被就地变更」的那一份——与 agent 层的快照是两种东西。
+- 原阶段 3 验收 #4 **移到阶段 4**（现在是阶段 4 验收 #5），改写为断言 `message_update` 的 `message` 与 `message_end` 的 `message` 一致。**理由：`message_update` 在阶段 3 根本不存在**（阶段 3 的出口只有 `onDelta`），那条断言在阶段 3 任何字段名下都验不了。
+
+> ⚠️ 交班时我在这一节写错了一句：「对齐 Pi 的 `{partial, assistantMessageEvent}`」。**Pi 顶层是 `message` 不是 `partial`**，我把阶段 3 验收 #4 的错字段名反向安到了 Pi 头上。以本文档现在这段为准。
 
 ---
 

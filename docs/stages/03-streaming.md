@@ -47,7 +47,9 @@
 1. ✅ 终端逐字出现：`pnpm dev` 下假模型 `chunkSize: 1` + `delayMs: 25`，整句约 1.1 秒逐字打出（已用管道输入 + 计时验证，不是从测试推断）。
 2. ✅ 一轮结束 `messages` 里只有 1 条 assistant 消息且文本完整——`core/test/agent-loop.test.ts`「keeps one assistant message per response no matter how many deltas」。
 3. ✅ 事件序列 `start → text_delta×n → done` 且 delta 拼接等于 `done.message` 文本——`ai/test/fake.test.ts` 的 stage 3 describe。
-4. ⏳ **`message_update` 的 `partial` 与 `done.message` 一致**——`message_update` 是阶段 4 的 `AgentEvent`，本阶段不造它（不许提前实现）。本阶段做到的是前提：事件字段已命名为 `partial`，语义与 `done.message` 的关系已在 `types.ts` 注释里定死。阶段 4 落地时该条验收无需改签名即可断言。
+4. ➡️ **已移出本阶段：断言 `message_update` 的 `message` 与 `message_end` 的 `message` 一致**——即 spec 现阶段的**阶段 4 验收 #5**。原第 4 条写的是「`message_update` 的 `partial`」，有两个问题：**(a) 字段名错**——`partial` 是本阶段 `AssistantMessageEvent` 的字段（还在长、被就地变更的那份），而阶段 4 的 `message_update` 顶层字段是 `message`（`{...partialMessage}` 的快照），内层是 `assistantMessageEvent`；**(b) 阶段放错**——本阶段根本没有 `message_update`（出口只有 `onDelta`），这条在任何字段名下都验不了。
+
+   本阶段真正交付的前提是：delta 类变体的字段名与语义已定死（`packages/ai/src/types.ts:48-56`），且 delta 拼接等于 `done.message` 的文本（验收 #3，已由测试钉住）。**两个名字指两种东西这件事，本身就是第 3 问的答案。**
 
 ## 实施中发现的计划/环境偏差（留档）
 

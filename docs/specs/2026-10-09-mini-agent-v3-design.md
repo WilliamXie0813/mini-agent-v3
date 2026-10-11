@@ -180,7 +180,7 @@ type AgentEvent =
 	| { type: "turn_end"; message: Message; toolResults: ToolResultMessage[] }
 	// 第三层：单条消息
 	| { type: "message_start"; message: Message }
-	| { type: "message_update"; message: Message; event: AssistantMessageEvent } // 仅 assistant 流式期间
+	| { type: "message_update"; message: Message; assistantMessageEvent: AssistantMessageEvent } // 仅 assistant 流式期间
 	| { type: "message_end"; message: Message }
 	// 第三层：单次工具执行
 	| { type: "tool_execution_start"; toolCallId: string; toolName: string; args: unknown }
@@ -351,6 +351,11 @@ interface ToolResult { content: ContentBlock[]; isError?: boolean }
 
 **理由**：delta 是**传输层的碎块**，不构成完整语义单元。一次响应可能发 40 个 delta，但它们共同描述的是 1 条 assistant 消息。若把 delta 入历史：消息数组会被碎片污染、持久化会写入大量无用记录、重放时无法区分"40 个碎块"和"用户真的发了 40 条消息"。
 
+**字段名的分工**（两个名字指两种东西，别混）：
+
+- `partial` 是**本阶段** `AssistantMessageEvent` 里 `start` / `text_delta` 变体的字段——**还在长的那一份，被就地变更**。想留存必须自己深拷贝（已由 `fake.test.ts` 的用例钉住）。
+- `message` 是**阶段 4** `message_update` 的字段——agent 层复制出来的**快照**。本阶段不存在 `message_update`，它属于阶段 4 的 `AgentEvent`。
+
 **`usage` 与 `durationMs` 在 `done` 时填充**——`EventStream` 用单调时钟在 `start` 打点、`done` 结算。
 
 **验收**：
@@ -358,7 +363,6 @@ interface ToolResult { content: ContentBlock[]; isError?: boolean }
 1. 终端能看到文本逐字出现（假模型故意每 delta 之间 `await` 一小段）。
 2. 断言：一轮结束后 `messages` 里只有 1 条 assistant 消息（不是 40 条），且其 `content[0].text` 是完整文本。
 3. 断言事件序列：`start` → `text_delta`×n → `done`，且 `done.message` 的文本等于所有 delta 拼接。
-4. 断言 `message_update` 的 `partial` 在最后一条 delta 后与 `done.message` 一致。
 
 **源码预算**：约 250 行。
 
@@ -391,6 +395,7 @@ interface ToolResult { content: ContentBlock[]; isError?: boolean }
 2. `waitForIdle()` 在一个故意 `await` 3 秒的 listener 下会真的等满（用假时钟或宽松断言）。
 3. Ctrl+C 后：`state.isStreaming === false`，且历史里有一条 `stopReason: "aborted"` 的 assistant 消息。
 4. **UI 完全不读 `agent.state`**——只用事件就能渲染完整过程（这是本阶段最重要的验收）。
+5. 断言 `message_update` 的 `message` 在最后一条 delta 后与 `message_end` 的 `message` 一致（从阶段 3 移来：`message_update` 本阶段才存在，阶段 3 验不了）。
 
 **源码预算**：约 300 行。
 
