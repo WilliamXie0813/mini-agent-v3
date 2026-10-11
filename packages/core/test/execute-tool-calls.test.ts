@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { executeToolCalls } from "../src/execute-tool-calls.ts";
+import type { AgentEvent } from "../src/agent-event.ts";
 import type { ToolDef } from "../src/tool.ts";
 import type { ContentBlock } from "@mini-agent/ai";
 
@@ -96,6 +97,7 @@ describe("executeToolCalls (stage 2: serial)", () => {
 
 	it("stops before later calls once the signal is aborted, and still pairs every executed call", async () => {
 		const log: string[] = [];
+		const events: AgentEvent[] = [];
 		const controller = new AbortController();
 		const tools = makeTools(log);
 		// 第一个工具的中途 abort：结果必须成对（有 toolCall 就有 toolResult），不能半途而废。
@@ -105,9 +107,107 @@ describe("executeToolCalls (stage 2: serial)", () => {
 			[call("c1", "echo", { text: "a" }), call("c2", "echo", { text: "b" })],
 			tools,
 			controller.signal,
+			(event) => {
+				events.push(event);
+			},
 		);
 		expect(log).toEqual(["echo:a"]);
 		expect(batch.messages.map((m) => m.toolCallId)).toEqual(["c1"]);
+		expect(
+			events
+				.filter((event) => "toolCallId" in event)
+				.map((event) => event.toolCallId),
+		).toEqual(["c1", "c1"]);
+	});
+});
+
+describe("executeToolCalls (stage 4: lifecycle events)", () => {
+	it("emits execution before the tool-result message", async () => {
+		const events: AgentEvent[] = [];
+		await executeToolCalls(
+			[call("c1", "echo", { text: "hello" })],
+			makeTools([]),
+			undefined,
+			(event) => {
+				events.push(event);
+			},
+		);
+
+		expect(events.map((event) => event.type)).toEqual([
+			"tool_execution_start",
+			"tool_execution_end",
+			"message_start",
+			"message_end",
+		]);
+		expect(events[0]).toMatchObject({
+			type: "tool_execution_start",
+			toolCallId: "c1",
+			toolName: "echo",
+			args: { text: "hello" },
+		});
+		const end = events[1];
+		if (end.type !== "tool_execution_end")
+			throw new Error("missing tool_execution_end");
+		expect(end.isError).toBe(false);
+		expect(end.durationMs).toEqual(expect.any(Number));
+		expect(end.durationMs).toBeGreaterThanOrEqual(0);
+		expect(events[3]).toMatchObject({
+			type: "message_end",
+			message: { role: "toolResult", toolCallId: "c1", isError: false },
+		});
+	});
+
+	it("emits balanced lifecycles for unknown and invalid calls without executing", async () => {
+		const log: string[] = [];
+		const events: AgentEvent[] = [];
+		const batch = await executeToolCalls(
+			[
+				call("c1", "missing"),
+				call("c2", "echo", {}),
+			],
+			makeTools(log),
+			undefined,
+			(event) => {
+				events.push(event);
+			},
+		);
+
+		expect(log).toEqual([]);
+		expect(batch.messages.map((message) => message.isError)).toEqual([
+			true,
+			true,
+		]);
+		expect(events.map((event) => event.type)).toEqual([
+			"tool_execution_start",
+			"tool_execution_end",
+			"message_start",
+			"message_end",
+			"tool_execution_start",
+			"tool_execution_end",
+			"message_start",
+			"message_end",
+		]);
+	});
+
+	it("marks both execution and message events as errors when a tool throws", async () => {
+		const events: AgentEvent[] = [];
+		await executeToolCalls(
+			[call("c1", "boom")],
+			makeTools([]),
+			undefined,
+			(event) => {
+				events.push(event);
+			},
+		);
+
+		expect(events[1]).toMatchObject({
+			type: "tool_execution_end",
+			isError: true,
+		});
+		expect(events[3]).toMatchObject({
+			type: "message_end",
+			message: { role: "toolResult", isError: true },
+		});
 	});
 });
 

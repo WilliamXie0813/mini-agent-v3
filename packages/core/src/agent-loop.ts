@@ -1,6 +1,5 @@
 import { getDefaultStreamFn } from "@mini-agent/ai";
 import type {
-	ContentBlock,
 	Message,
 	StreamContext,
 	StreamDeltaHandler,
@@ -8,7 +7,10 @@ import type {
 	ToolResultMessage,
 } from "@mini-agent/ai";
 import type { AgentEventSink } from "./agent-event.ts";
-import { executeToolCalls } from "./execute-tool-calls.ts";
+import {
+	executeToolCalls,
+	failTruncatedToolCalls,
+} from "./execute-tool-calls.ts";
 import { streamAssistantMessage } from "./stream-assistant.ts";
 import { toToolDeclarations } from "./tool.ts";
 import type { ToolDef } from "./tool.ts";
@@ -87,9 +89,14 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 		}
 		let toolResults: ToolResultMessage[];
 		if (message.stopReason === "length") {
-			toolResults = truncatedBatchFailures(toolCalls, tools);
+			toolResults = (await failTruncatedToolCalls(toolCalls, emit)).messages;
 		} else {
-			const batch = await executeToolCalls(toolCalls, tools, options.signal);
+			const batch = await executeToolCalls(
+				toolCalls,
+				tools,
+				options.signal,
+				emit,
+			);
 			toolResults = batch.messages;
 		}
 		options.messages.push(...toolResults);
@@ -118,28 +125,4 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 	throw new Error(
 		`agent loop hit maxTurns (${maxTurns}) without the model stopping; last tool calls: ${called}`,
 	);
-}
-
-// 不导出：只服务 length 保护这一个分支；文案是给模型看的，必须包含「怎么办」。
-// 收 ContentBlock[] 而非收窄后的 toolCall 块：调用方虽然已过滤，但这里不假设——
-// 与 executeToolCalls 不收窄签名是同一个理由。
-function truncatedBatchFailures(
-	toolCalls: ContentBlock[],
-	tools: ToolDef<any>[],
-): ToolResultMessage[] {
-	return toolCalls.map((block) => {
-		const name = block.type === "toolCall" ? block.name : "unknown";
-		return {
-			role: "toolResult",
-			toolCallId: block.type === "toolCall" ? block.id : "unknown",
-			toolName: name,
-			content: [
-				{
-					type: "text",
-					text: `Tool "${name}" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.`,
-				},
-			],
-			isError: true,
-		};
-	});
 }

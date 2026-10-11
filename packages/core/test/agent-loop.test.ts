@@ -353,4 +353,58 @@ describe("agentLoop (stage 4: lifecycle events)", () => {
 		await running;
 		expect(modelCalls).toBe(1);
 	});
+
+	it("emits tool execution before its result message and starts the next turn", async () => {
+		const events: AgentEvent[] = [];
+		await agentLoop({
+			...base(),
+			prompt: "go",
+			tools: [echoTool],
+			streamFn: createFakeStreamFn([
+				[{
+					type: "toolCall",
+					id: "c1",
+					name: "echo",
+					arguments: { text: "hello" },
+				}],
+				"done",
+			]),
+			emit: (event) => {
+				events.push(event);
+			},
+		});
+
+		expect(events.map((event) => event.type)).toEqual([
+			"agent_start",
+			"turn_start",
+			"message_start",
+			"message_end",
+			"message_start",
+			"message_end",
+			"tool_execution_start",
+			"tool_execution_end",
+			"message_start",
+			"message_end",
+			"turn_end",
+			"turn_start",
+			"message_start",
+			"message_update",
+			"message_update",
+			"message_update",
+			"message_update",
+			"message_end",
+			"turn_end",
+			"agent_end",
+		]);
+		const turns = events.filter((event) => event.type === "turn_end");
+		expect(turns).toHaveLength(2);
+		expect(turns[0]).toMatchObject({
+			type: "turn_end",
+			toolResults: [{ role: "toolResult", toolCallId: "c1" }],
+		});
+		expect(turns[1]).toMatchObject({
+			type: "turn_end",
+			toolResults: [],
+		});
+	});
 });
