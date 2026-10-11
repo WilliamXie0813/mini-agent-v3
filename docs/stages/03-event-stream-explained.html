@@ -108,6 +108,7 @@
 	pre .k { color: #e8a04c; }                 /* 关键字 */
 	pre .f { color: #7fb4e8; }                 /* 函数 */
 	pre .s { color: #9ecf9e; }                 /* 字符串 */
+	pre .hot { color: #e8a04c; }
 
 	.callout {
 		border-left: 4px solid var(--accent);
@@ -325,6 +326,29 @@
 	.stepbar { grid-column: 1 / -1; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 	.stepcount { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; color: var(--muted); margin-left: auto; }
 	.flane .empty { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; color: var(--muted); }
+	[hidden] { display: none !important; }
+	details.lesson { margin-bottom: 48px; border: 1px solid var(--hairline); border-radius: 12px; padding: 20px; }
+	details.lesson > summary { cursor: pointer; font-size: 18px; font-weight: 700; }
+	details.lesson > section { margin: 28px 0 0; }
+	details.lesson > .callout { margin-bottom: 0; }
+	.mode-choice { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 18px; font-size: 14px; }
+	.mode-choice label { cursor: pointer; }
+	.flow-grid.basic { grid-template-columns: 1fr 1fr; }
+	.flow-grid.basic .wide2 { grid-column: auto; }
+	.prediction { grid-column: 1 / -1; border: 2px solid var(--indigo); border-radius: 8px; padding: 16px; }
+	.prediction .btns { justify-content: flex-start; margin-top: 10px; }
+	.prediction pre { margin-bottom: 0; }
+	@media (max-width: 760px) {
+		.flow-grid.basic { grid-template-columns: 1fr; }
+		.sec-head { gap: 12px; }
+		h2 { font-size: 24px; }
+		.figure { padding: 16px; }
+		table { display: block; overflow-x: auto; }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		html { scroll-behavior: auto; }
+		*, *::before, *::after { animation: none !important; transition: none !important; }
+	}
 </style>
 </head>
 <body>
@@ -333,29 +357,114 @@
 <header>
 	<div class="kicker">mini-agent-v3 · 阶段 3 · 流式</div>
 	<h1>EventStream 图解</h1>
-	<p class="sub">一个「推模型」的事件流：provider 按自己的节奏把事件<b>推</b>进来，消费者用 <code>for await</code> 慢慢读，两边谁也不等谁。本页对应 <code>packages/ai/src/event-stream.ts</code>，全部 152 行。</p>
+	<p class="sub">阶段 3 改的是「回答怎样交到 UI 手里」：小段文本到达就显示，完整回答仍然只存一次。先看一轮问答，再拆开 EventStream；不需要先懂双栈或微任务。</p>
 	<div class="toc">
-		<a href="#s1">① 为什么需要它</a>
-		<a href="#s2">② FifoQueue</a>
-		<a href="#s3">③ 两条队列的分工</a>
-		<a href="#s4">④ push() 模拟器</a>
-		<a href="#s5">⑤ end()</a>
-		<a href="#s6">⑥ result()</a>
-		<a href="#s7">⑦ for await 翻译层</a>
-		<a href="#s8">⑧ 计时版子类</a>
-		<a href="#s9">⑨ 完整流程模拟器</a>
+		<a href="#s0">① 阶段 3 改了什么</a>
+		<a href="#s9">先看一轮问答</a>
+		<a href="#s1">② 为什么需要缓冲</a>
+		<a href="#s3">③ 两条队列与三个 done</a>
+		<a href="#s4">④ 亲手 push</a>
+		<a href="#s5">⑤ 怎样结束</a>
+		<a href="#s6">⑥ 最终结果出口</a>
+		<a href="#s7">⑦ 对照迭代源码</a>
+		<a href="#queue-extra">选读：双栈队列</a>
+		<a href="#timing-extra">选读：计时</a>
 	</div>
 </header>
 
+<section id="s0">
+	<div class="sec-head"><div class="sec-num">1</div><h2>先只理解这一件事：显示可以分段，历史不能碎</h2></div>
+	<table>
+		<tr><th>观察什么</th><th>阶段 1 / 2</th><th>阶段 3</th></tr>
+		<tr><td>终端</td><td>消费函数等到完整消息后，CLI 再显示全文</td><td>收到 <code>text_delta</code> 就通过 <code>onDelta</code> 显示这一小段</td></tr>
+		<tr><td>消息历史</td><td>存一条完整 assistant 消息</td><td>仍然存一条：取自 <code>done.message</code></td></tr>
+		<tr><td>传输接口</td><td><code>StreamFn</code> 返回 AsyncGenerator</td><td>返回可被 provider <code>push</code>、被消费者 <code>for await</code> 读取的 EventStream</td></tr>
+	</table>
+	<p>例子：回答是「你好！」，本页把它拆成三个 delta。「delta」只是<strong>这次新增的一小段</strong>，不是一条新消息；真实模型一次可能交付一个字，也可能交付一整段。</p>
+	<pre>start             → 告诉消费者：响应开始了
+text_delta: "你"  → 终端显示「你」       历史还没有 assistant 消息
+text_delta: "好"  → 终端显示「你好」     历史还没有 assistant 消息
+text_delta: "！"  → 终端显示「你好！」   历史还没有 assistant 消息
+done.message      → 完整回答「你好！」   迭代结束后，agentLoop 存入一条</pre>
+	<div class="callout">
+		<span class="tag">先记住职责，不背实现</span>
+		<p><strong>provider 生产事件 → EventStream 交接 → consumeAssistantMessage 分流：</strong>delta 交给 <code>onDelta</code> 渲染，done 的完整消息返回给 <code>agentLoop</code> 入历史。终端不是消息仓库，EventStream 也不负责拼接文本。</p>
+	</div>
+</section>
+
+<section id="s9">
+	<div class="sec-head"><div class="sec-num">→</div><h2>先看整机：一次问答的一生</h2></div>
+	<p>用户输入 <code>hi</code>，假模型回答「你好！」。第一次只看<strong>终端何时改变、历史何时增加</strong>；看懂后再切进阶模式，观察同一轮问答的队列与微任务顺序。</p>
+	<div class="figure">
+		<div class="cap">一轮问答 · 教学演示，不是实时运行 provider；播放速度已放慢</div>
+		<div class="mode-choice" role="group" aria-label="讲解深度">
+			<label><input type="radio" name="flow-mode" id="f-basic" checked> 基础：事件、终端与历史</label>
+			<label><input type="radio" name="flow-mode" id="f-advanced"> 进阶：队列与微任务（切换会重新开始）</label>
+		</div>
+		<div class="flow-grid basic" id="f-grid">
+			<div class="flane" id="f-pump">
+				<h4 id="f-pump-title">① 假模型：生产事件</h4>
+				<div class="body" id="f-pump-body">脚本：["你好！"]<br>等待启动…</div>
+			</div>
+			<div class="flane" id="f-stream" hidden>
+				<h4>② EventStream 内部</h4>
+				<div class="body">
+					queue：<span id="f-queue"><span class="empty">空</span></span><br>
+					waiting：<span id="f-waiting"><span class="empty">空</span></span><br>
+					<span id="f-flags">done=false · settled=false · result(): pending</span>
+				</div>
+			</div>
+			<div class="flane" id="f-consume">
+				<h4>消费者：consumeAssistantMessage</h4>
+				<div class="body" id="f-consume-body">等待开始…</div>
+			</div>
+			<div class="flane wide2" id="f-cli">
+				<h4>终端：onDelta → process.stdout.write</h4>
+				<div class="term" id="f-term"><span class="prompt">&gt; hi</span><br></div>
+			</div>
+			<div class="flane" id="f-hist">
+				<h4>messages[]：消息历史</h4>
+				<div class="hist" id="f-hist-body"><span class="empty">空</span></div>
+			</div>
+			<div class="stepnote" id="f-note" aria-live="polite">按「自动播放」或「单步」开始。</div>
+			<div class="prediction" id="f-prediction" hidden>
+				<p><strong>先预测：</strong>最后一个 delta 已交给等待者，但消费者的续体还没运行。泵紧接着 push done，它会去哪？</p>
+				<div class="btns">
+					<button id="f-guess-direct">直接交给等待者</button>
+					<button id="f-guess-queue">进入 queue</button>
+				</div>
+				<p id="f-answer" aria-live="polite"></p>
+				<pre id="f-source" hidden><span class="c">// packages/ai/src/event-stream.ts · push()</span>
+<span class="k">const</span> waiter = <span class="k">this</span>.waiting.<span class="f">dequeue</span>();
+<span class="k">if</span> (waiter) {
+	waiter({ value: event, done: <span class="k">false</span> });
+} <span class="k">else</span> {
+	<span class="hot"><strong>this.queue.enqueue(event); // 此刻 waiting 为空，走这里</strong></span>
+}</pre>
+			</div>
+			<div class="stepbar">
+				<button class="primary" id="f-play">▶ 自动播放</button>
+				<button id="f-prev" disabled>← 上一步</button>
+				<button id="f-step">单步 →</button>
+				<button id="f-reset">↺ 重播当前模式</button>
+				<span class="stepcount" id="f-count">第 0 / 8 步</span>
+			</div>
+		</div>
+		<div class="foot">基础模式合并了内部交接步骤；进阶模式对应当前假模型 delayMs: 25、同步 onDelta、正常完成的路径，不代表所有 provider 的调度规律。</div>
+	</div>
+	<p><strong>停一下，自己回答：</strong>屏幕已经显示「你好！」，历史里就一定有 assistant 消息了吗？答案是否定的——显示依赖 delta，入历史依赖收到 done 并完成消费。看懂这一点，再往下拆交接机制。</p>
+</section>
+
 <!-- ═══════════ ① ═══════════ -->
 <section id="s1">
-	<div class="sec-head"><div class="sec-num">1</div><h2>为什么需要它：两边节奏对不上</h2></div>
+	<div class="sec-head"><div class="sec-num">2</div><h2>为什么需要它：两边节奏对不上</h2></div>
 	<p>一次模型响应是一串事件：<code>start → text_delta × n → done</code>。生产事件的是 provider（阶段 7 是 SSE socket），消费事件的是 UI 循环。麻烦在于——<strong>两边都是异步的，且节奏完全独立</strong>：</p>
 	<ul>
 		<li><strong>生产快、消费慢</strong>：socket 一瞬间涌进 20 个 delta，UI 还在逐字打印第 3 个。多出来的事件<em>必须有地方放</em>，不能丢。</li>
 		<li><strong>消费快、生产慢</strong>：UI 读完已有事件，下一个 delta 还在网络上飞。消费者<em>必须挂起等待</em>，不能死循环空转烧 CPU。</li>
 	</ul>
-	<p>以前的 <code>AsyncGenerator</code> 是「拉」模型：消费者不喊 <code>next()</code>，生产者就停着。SSE 的字节到达根本不归消费者管，所以拉模型接不上——字节没地方放。<code>EventStream</code> 就是中间那个<strong>带缓冲的交接点</strong>：</p>
+	<p>单纯在 <code>AsyncGenerator</code> 里生产并 <code>yield</code> 时，消费者不再调用 <code>next()</code>，生成器就不会继续生产。这里选择 <code>EventStream</code>，是把<strong>生产任务与消费之间的缓冲</strong>明确做出来：provider 可以独立 <code>push</code>，消费者按自己的节奏拉取。</p>
+	<p><strong>不是 AsyncGenerator 不能接 SSE。</strong>它也能包装网络读取；本项目的 EventStream 自身就用 async generator 实现迭代。我们要的是「推送接口 + 缓冲 + 最终结果出口」，不是换掉所有生成器。</p>
 	<div class="figure">
 		<div class="cap">图 1 · 推拉适配</div>
 		<svg viewBox="0 0 860 150" width="100%" class="timeline" role="img" aria-label="生产者、EventStream、消费者三者关系图">
@@ -379,14 +488,20 @@
 			<line x1="530" y1="75" x2="665" y2="75" stroke="#1c1a17" stroke-width="2" marker-end="url(#ar)"/>
 			<text x="598" y="62" text-anchor="middle" font-size="12" font-family="monospace" fill="#1c1a17">yield</text>
 		</svg>
-		<div class="foot">生产者只管 push，消费者只管 for await，谁也不需要知道对方的存在。</div>
+		<div class="foot">生产者不等待消费者读完才 push；消费者没事件时仍要等待。当前队列没有容量上限或背压，缓冲不意味着可以无限堆积。</div>
 	</div>
 </section>
 
 <!-- ═══════════ ② ═══════════ -->
+<details class="lesson" id="queue-extra">
+<summary>选读：队列为什么用两个栈？先知道「先进先出」就能跳过</summary>
 <section id="s2">
-	<div class="sec-head"><div class="sec-num">2</div><h2>FifoQueue：两个栈拼出来的队列</h2></div>
-	<p>数组当队列用，<code>shift()</code> 是 O(n)——每取一个，后面全体往前挪。这个 21 行的小类用<strong>两个栈</strong>避开它：进栈到 <code>incoming</code>，出栈从 <code>outgoing</code>；<code>outgoing</code> 空了就把 <code>incoming</code> <em>整体倒过来</em>。倒一次顺序反转一次，进一次出一次反转两次，负负得正，正好 FIFO。</p>
+	<div class="sec-head"><div class="sec-num">+</div><h2>FifoQueue：两个栈拼出来的队列</h2></div>
+	<p>FIFO 就是「先来先走」。数组头部 <code>shift()</code> 通常按 O(n) 分析；这里用<strong>两个栈</strong>避免反复移走头部元素：进栈到 <code>incoming</code>，出栈从 <code>outgoing</code>；只有 <code>outgoing</code> 空了，才把 incoming 逐个 pop、push 到 outgoing。</p>
+	<pre>数组从左到右写，最右边是栈顶：
+入 1、2、3：incoming = [1, 2, 3]，outgoing = []
+转移：      incoming = []，outgoing = [3, 2, 1]
+出队：      outgoing.pop() 先取 1，再取 2，最后取 3</pre>
 	<p>每个元素一生只被 push 两次、pop 两次，摊还 O(1)。<strong>点下面的按钮亲手倒一次</strong>：</p>
 
 	<div class="figure">
@@ -416,6 +531,7 @@
 
 	<p>同一个结构在 <code>EventStream</code> 里被用了<strong>两次</strong>：一次装事件，一次装「等待中的消费者」——这是下一节。</p>
 </section>
+</details>
 
 <!-- ═══════════ ③ ═══════════ -->
 <section id="s3">
@@ -424,7 +540,7 @@
 	<span class="k">private</span> queue   = <span class="k">new</span> <span class="f">FifoQueue</span>&lt;T&gt;();                               <span class="c">// 装事件</span>
 	<span class="k">private</span> waiting = <span class="k">new</span> <span class="f">FifoQueue</span>&lt;(v: IteratorResult&lt;T&gt;) =&gt; <span class="k">void</span>&gt;(); <span class="c">// 装等待者</span>
 	<span class="k">protected</span> done = <span class="k">false</span>;     <span class="c">// 流关了吗</span>
-	<span class="k">private</span> settled = <span class="k">false</span>;    <span class="c">// 契约完成了吗（见到过 done 事件）</span>
+	<span class="k">private</span> settled = <span class="k">false</span>;    <span class="c">// 是否收到过完成事件</span>
 	<span class="c">// …result() 的 promise 及其 resolve/reject</span>
 	<span class="c">// …isComplete / extractResult 两个回调</span>
 }</pre>
@@ -438,7 +554,18 @@
 		<span class="tag">关键直觉</span>
 		<p><code>push</code> 一个事件时先看 <code>waiting</code>：<strong>有人等就直接交付（事件不过夜），没人等才进 <code>queue</code> 存着。</strong>两条队列任何时刻最多一条有货——事件要么在等人，要么人在等事件。</p>
 	</div>
-	<p><code>done</code> 与 <code>settled</code> 是<em>故意分开</em>的两个标志：<code>done</code> 回答「流关了吗」（关门后 push 丢弃、迭代收尾），<code>settled</code> 回答「契约完成了吗」——只有 <code>isComplete</code> 命中过（见到 <code>done</code> 事件）才算。第 ⑤ 节会看到这两者的差别就是「正常关门」与「违反契约的关门」的差别。</p>
+	<h3>先分清三个 done：同名，不同层</h3>
+	<table>
+		<tr><th>写法</th><th>属于哪一层</th><th>它说的是什么</th></tr>
+		<tr><td><code>event.type === "done"</code></td><td>业务事件协议</td><td>「完整回答在 event.message 里」——消费者仍然要读到这个事件</td></tr>
+		<tr><td><code>this.done === true</code></td><td>EventStream 内部状态</td><td>「不再接收新事件」——已缓冲的事件仍可读取</td></tr>
+		<tr><td><code>{ done: true }</code></td><td>迭代协议</td><td>「没有下一个值了」——for await 到这里结束</td></tr>
+	</table>
+	<pre><span class="c">// 交付业务 done 时，它仍然是一个需要读取的值：</span>
+resolve({ value: { type: <span class="s">"done"</span>, message }, done: <span class="k">false</span> });
+<span class="c">// 真正告诉迭代器「没有下一个值」：</span>
+resolve({ value: <span class="k">undefined</span>, done: <span class="k">true</span> });</pre>
+	<p>还有一个标志 <code>settled</code>：只记录<strong>是否收到过完成事件</strong>（<code>isComplete</code> 命中过）。不要按 Promise 术语理解这个变量：没收到 done 就 <code>end()</code>，它仍是 false，但 <code>result()</code> 的 Promise 已经 rejected。第 ⑤ 节会用这个区别识别「流结束了，却没交完整回答」。</p>
 
 	<h3>waiter 到底是什么？</h3>
 	<p>一句话：<strong>waiter 不是一个「人」，而是一个函数</strong>——消费者挂起时寄存到 <code>waiting</code> 队列里的那个 <code>resolve</code>。把迭代器里那行代码拆开看：</p>
@@ -447,7 +574,7 @@
 		<li><strong>第 1 步</strong>：<code>new Promise(...)</code> 一构造，executor <em>立即执行</em>，消费者手里短暂握住自己这个 promise 的 <code>resolve</code> 函数。</li>
 		<li><strong>第 2 步</strong>：它不自己留着，而是 <code>waiting.enqueue(resolve)</code>——把「唤醒我的钥匙」<strong>寄存</strong>到队列里，然后 <code>await</code> 睡过去。</li>
 		<li><strong>第 3 步</strong>：之后某次 <code>push()</code> 执行 <code>const waiter = this.waiting.dequeue()</code>——取出来的就是这个 <code>resolve</code>。变量名叫 waiter，因为「<em>它主人在等</em>」。</li>
-		<li><strong>第 4 步</strong>：<code>waiter({ value: event, done: false })</code>——调用它 ≡ resolve 那个 promise ≡ 消费者醒来，拿到事件。</li>
+		<li><strong>第 4 步</strong>：<code>waiter({ value: event, done: false })</code>——调用它就是 resolve 那个 Promise。消费者的续体随后由微任务调度，<strong>不是在这一行立刻执行整个循环体</strong>。</li>
 		<li><strong>第 5 步</strong>：<code>end()</code> 时同理，只是拧钥匙时递的是 <code>{ done: true }</code>（「没有下一个了」）。</li>
 	</ul>
 	<div class="figure">
@@ -477,7 +604,7 @@
 	</div>
 	<div class="callout">
 		<span class="tag">一句话总结</span>
-		<p><code>waiting</code> 队列里躺着的从来不是消费者本身，而是一把把<strong>「唤醒钥匙」</strong>。<code>push</code> 不需要知道消费者是谁、在哪、有几个——取出钥匙拧一下就行。这是最原始的发布/订阅：<em>一次性订阅，交付即焚</em>。</p>
+		<p><code>waiting</code> 队列里躺着的从来不是消费者本身，而是一把把<strong>「唤醒钥匙」</strong>。一次 push 取一把钥匙，交付给一个等待者；这是<strong>排队交接，不是广播订阅</strong>。多个独立迭代器会分走事件，不会各收到一整份；本阶段按单消费者理解即可。</p>
 	</div>
 </section>
 
@@ -495,7 +622,7 @@
 	<span class="k">if</span> (waiter) waiter({ value: event, done: <span class="k">false</span> });  <span class="c">// 有 → 直接交付</span>
 	<span class="k">else</span> <span class="k">this</span>.queue.<span class="f">enqueue</span>(event);               <span class="c">// 没 → 存起来</span>
 }</pre>
-	<p>下面是一台活的 <code>EventStream</code>（事件用数字表示，<b style="color:var(--green)">绿色 9</b> 是「完成事件」）。试试这几个剧本：</p>
+	<p>下面用状态模拟演示 <code>EventStream</code> 的交接规则（事件用数字表示，<b style="color:var(--green)">绿色 9</b> 是「完成事件」）。为方便观察，读取被放慢；这里的动画不代表真实 Promise 的调度时间。试试这几个剧本：</p>
 	<ul>
 		<li><strong>剧本 A（生产快）</strong>：不开消费者，连按 3 次「push 普通事件」→ 事件堆在 queue。</li>
 		<li><strong>剧本 B（消费快）</strong>：先「启动 for await」，再 push → 事件<em>不经过 queue</em>，直接出现在右侧。</li>
@@ -584,11 +711,14 @@
 <span class="k">const</span> finalMessage = stream.<span class="f">result</span>();  <span class="c">// 先拿句柄，不用等</span>
 <span class="k">for await</span> (<span class="k">const</span> event <span class="k">of</span> stream) { <span class="c">/* 渲染 delta… */</span> }
 <span class="k">const</span> msg = <span class="k">await</span> finalMessage;        <span class="c">// 迭代结束后，结果早 resolve 了</span></pre>
-	<p>构造函数里那行看起来很怪的 <code>this.finalResultPromise.catch(() =&gt; {})</code> 是干什么的？</p>
+	<p><strong>再确认一次：</strong>即使没人迭代这个流，provider push done 也会结算 <code>result()</code>；即使 result 已 resolve，消费者也可能还没读完 queue。结果就绪与显示完成不是同一时刻。</p>
+	<details class="lesson">
+	<summary>选读：为什么构造时预挂一个空 catch？</summary>
 	<div class="callout">
 		<span class="tag">为什么预挂一个空 catch</span>
-		<p>契约违反时 <code>end()</code> 会 <em>reject</em> 这个 promise。但调用方未必 <code>await result()</code>（循环只用 <code>done</code> 事件）——没人接的 rejection 会变成 unhandled rejection 噪音。预挂一个 noop catch 把 promise 标记为「已处理」；注意这只是个标记，<code>await result()</code> 的人<strong>照样</strong>拿到 rejection，错误没有被吞掉。</p>
+		<p>没发完成事件就 <code>end()</code>，会 reject 最终结果 Promise。但调用方未必 <code>await result()</code>——没人接的 rejection 会触发 unhandled rejection。空 catch 注册了一个拒绝处理器，避免这类报告；<code>result()</code> 返回的仍是<strong>原 Promise</strong>，不是 catch 返回的新 Promise，所以 await result() 仍会抛出错误。这里只用了迭代的上层，则由 consumeAssistantMessage 检查缺失 done 并抛错。</p>
 	</div>
+	</details>
 </section>
 
 <!-- ═══════════ ⑦ ═══════════ -->
@@ -617,12 +747,17 @@
 </section>
 
 <!-- ═══════════ ⑧ ═══════════ -->
+<details class="lesson" id="timing-extra">
+<summary>选读：具体消息协议与计时，不影响前面的交接原理</summary>
 <section id="s8">
-	<div class="sec-head"><div class="sec-num">8</div><h2>AssistantMessageEventStream：加计时，定契约</h2></div>
+	<div class="sec-head"><div class="sec-num">+</div><h2>AssistantMessageEventStream：加计时，定契约</h2></div>
 	<p>子类把泛型钉死成具体协议，并顺手干一件副业——<strong>计时</strong>：</p>
 	<pre><span class="k">super</span>(
 	(event) =&gt; event.type === <span class="s">"done"</span>,    <span class="c">// isComplete：done 算完成</span>
-	(event) =&gt; event.message,             <span class="c">// extractResult：done 里的消息就是终局</span>
+	(event) =&gt; {                          <span class="c">// extractResult：完成事件里的完整消息</span>
+		<span class="k">if</span> (event.type === <span class="s">"done"</span>) <span class="k">return</span> event.message;
+		<span class="k">throw new</span> Error(<span class="s">"Unexpected event type for final result"</span>);
+	},
 );
 <span class="c">// push/end 时给 done 消息盖 durationMs（单调时钟，从流创建起算）</span>
 <span class="c">// 守卫：消息自带 durationMs 就不盖——provider 自己测的以它为准</span></pre>
@@ -679,54 +814,11 @@
 	</div>
 	<p>循环那边（<code>consumeAssistantMessage</code>）只用 <code>for await</code>，不用 <code>result()</code>——<strong>done 里那条消息就是权威，多 await 一次不带来信息</strong>。<code>result()</code> 留给宿主代码和测试。</p>
 </section>
-
-<!-- ═══════════ ⑨ ═══════════ -->
-<section id="s9">
-	<div class="sec-head"><div class="sec-num">9</div><h2>完整流程模拟器：一次问答的一生</h2></div>
-	<p>把前面所有零件装回整机。剧本沿用 CLI 的真实配置（假模型 <code>delayMs: 25</code>），回复换成 3 个字的 <code>你好！</code> 便于逐字观察：用户输入 <code>hi</code>，3 个字符 = 3 个 delta。五个角色全部在场：<strong>假模型的泵 → EventStream → consumeAssistantMessage → 终端（onDelta）→ messages[] 历史</strong>。</p>
-	<p>重点看三件事：<strong>①</strong> 消费者在泵启动<em>之前</em>就已挂起（第 3 步），所以 start 和每个 delta 都是<em>直交</em>、不经过 queue（第 4–8 步）；<strong>②</strong> 真实一轮里<em>唯一进 queue 的事件是 done</em>——原因在第 9 步的「同一同步片段」陷阱；<strong>③</strong> 终端逐字靠 <code>onDelta</code>，delta <em>从不进历史</em>；历史的那 +1 条发生在迭代结束、<code>consumeAssistantMessage</code> 返回之后——<em>入历史的是 agentLoop</em>（第 12 步）。</p>
-
-	<div class="figure">
-		<div class="cap">模拟器 3 · 一轮问答（自动播放或单步，下方解说跟随高亮）</div>
-		<div class="flow-grid">
-			<div class="flane" id="f-pump">
-				<h4>① fake 泵（queueMicrotask）</h4>
-				<div class="body" id="f-pump-body">脚本：["你好！"]<br>等待启动…</div>
-			</div>
-			<div class="flane" id="f-stream">
-				<h4>② EventStream 内部</h4>
-				<div class="body">
-					queue：<span id="f-queue"><span class="empty">空</span></span><br>
-					waiting：<span id="f-waiting"><span class="empty">空</span></span><br>
-					<span id="f-flags">done=false · settled=false · result(): pending</span>
-				</div>
-			</div>
-			<div class="flane" id="f-consume">
-				<h4>③ consumeAssistantMessage</h4>
-				<div class="body" id="f-consume-body">for await 未启动<br>onDelta 调用：0 次<br>done 变量：undefined</div>
-			</div>
-			<div class="flane wide2" id="f-cli">
-				<h4>④ 终端（onDelta → process.stdout.write）</h4>
-				<div class="term" id="f-term"><span class="prompt">&gt; hi</span><br></div>
-			</div>
-			<div class="flane" id="f-hist">
-				<h4>⑤ messages[] 历史</h4>
-				<div class="hist" id="f-hist-body"><span class="empty" style="font-size:12px;color:var(--muted)">空</span></div>
-			</div>
-			<div class="stepnote" id="f-note">按「自动播放」或「单步」开始。</div>
-			<div class="stepbar">
-				<button class="primary" id="f-play">▶ 自动播放</button>
-				<button id="f-step">单步 →</button>
-				<button id="f-reset">↺ 重置</button>
-				<span class="stepcount" id="f-count">第 0 / 13 步</span>
-			</div>
-		</div>
-	</div>
-</section>
+</details>
 
 <footer>
 	EventStream = 两条队列 + 一个 promise + 两个标志位。<br>
-	对应源码 <code>packages/ai/src/event-stream.ts</code>（152 行） · mini-agent-v3 阶段 3
+	对照源码：<code>packages/ai/src/event-stream.ts</code> · <code>fake.ts</code> · <code>stream-fn.ts</code> · <code>packages/core/src/agent-loop.ts</code>
 </footer>
 
 </div>
@@ -755,7 +847,7 @@
 		if (outgoing.length === 0) {
 			if (incoming.length === 0) { $pop.textContent = 'undefined'; $note.textContent = '两条栈都空，返回 undefined。'; return; }
 			outgoing = incoming.reverse(); incoming = [];
-			$note.textContent = 'outgoing 空了 → incoming 整体倒过来（顺序反转，第二次反转）。';
+			$note.textContent = 'outgoing 空了 → incoming 逆序转移，最早入队的元素来到 outgoing 栈顶。';
 			render();
 			busy = true;
 			const g = gen;
@@ -764,7 +856,7 @@
 		function doPop() {
 			const v = outgoing.pop();
 			$pop.textContent = v;
-			$note.textContent = `outgoing.pop() → ${v}。栈的后进先出 × 两次反转 = 先进先出 ✓`;
+			$note.textContent = `outgoing.pop() → ${v}。取走当前最早入队的元素，先进先出 ✓`;
 			render();
 		}
 	};
@@ -885,33 +977,52 @@
 	const LANES = ['f-pump', 'f-stream', 'f-consume', 'f-cli', 'f-hist'];
 	const $ = id => document.getElementById(id);
 	let queue, waiting, doneFlag, settled, resultTxt, term, hist, deltas, doneVar, curEvent, step, timer, pending;
+	let advanced = false, guess = null;
 
 	function reset() {
 		queue = []; waiting = false; doneFlag = false; settled = false;
 		resultTxt = 'pending'; term = ''; hist = []; deltas = 0;
-		doneVar = 'undefined'; curEvent = '—'; step = 0; pending = null;
+		doneVar = 'undefined'; curEvent = '—'; step = 0; pending = null; guess = null;
 		clearInterval(timer); timer = null;
 		$('f-play').textContent = '▶ 自动播放';
+		$('f-grid').classList.toggle('basic', !advanced);
+		$('f-stream').hidden = !advanced;
+		$('f-pump-title').textContent = advanced ? '① fake 泵（queueMicrotask）' : '① 假模型：生产事件';
 		$('f-pump-body').innerHTML = '脚本：["你好！"]<br>等待启动…';
 		$('f-term').innerHTML = '<span class="prompt">&gt; hi</span><br><span class="cursor"></span>';
 		render();
 		note('按「自动播放」或「单步」开始。', null);
 	}
+	function currentSteps() { return advanced ? advancedSteps : basicSteps; }
+	function pause() {
+		clearInterval(timer); timer = null;
+		$('f-play').textContent = '▶ 自动播放';
+	}
 	function note(html, focus) {
 		$('f-note').innerHTML = `<b>第 ${step} 步</b> · ${html}`;
 		LANES.forEach(l => $(l).classList.toggle('focus', l === focus));
-		$('f-count').textContent = `第 ${step} / ${steps.length} 步`;
+		$('f-count').textContent = `第 ${step} / ${currentSteps().length} 步`;
 	}
 	function render() {
 		$('f-queue').innerHTML = queue.map(c => `<span class="chip ${c.done ? 'done-chip' : ''}">${c.label}</span>`).join(' ') || '<span class="empty">空</span>';
 		$('f-waiting').innerHTML = waiting ? '<span class="waiter">resolve 等待中…</span>' : '<span class="empty">空</span>';
 		$('f-flags').textContent = `done=${doneFlag} · settled=${settled} · result(): ${resultTxt}`;
 		$('f-consume-body').innerHTML =
-			`当前事件：${curEvent}<br>onDelta 调用：${deltas} 次<br>done 变量：${doneVar}`;
+			`当前事件：${curEvent}<br>onDelta 调用：${deltas} 次<br>` +
+			(advanced ? `done 变量：${doneVar}` : `完整回答：${doneVar === 'undefined' ? '尚未收到' : '已收到「你好！」'}`);
 		$('f-term').innerHTML = `<span class="prompt">&gt; hi</span><br>${term}<span class="cursor"></span>`;
 		$('f-hist-body').innerHTML = hist.length
 			? hist.map(h => `<div class="hchip ${h.role}">${h.label}</div>`).join('')
 			: '<span style="font-size:12px;color:var(--muted)">空</span>';
+		$('f-prev').disabled = step === 0;
+		$('f-step').disabled = step >= currentSteps().length;
+		$('f-prediction').hidden = !advanced || step < 8 || step > 10;
+		const revealed = guess !== null || step >= 9;
+		$('f-source').hidden = !revealed;
+		$('f-answer').textContent = revealed
+			? (guess === 'direct' ? '这次不是直接交付。' : guess === 'queue' ? '猜对了！' : '答案：进入 queue。') +
+				'最后一个 delta 已取走 waiting 的 resolve，消费者还未寄存下一把钥匙，所以走下面高亮的 else 分支。'
+			: '自动播放会在这里暂停。先选一个答案，再点「单步」看 done 的去向。';
 	}
 	function push(c) {
 		if (c.done) { doneFlag = true; settled = true; resultTxt = '✓ resolved(message)'; }
@@ -925,7 +1036,28 @@
 		if (c.done) { doneVar = 'message（已存进 done 变量）'; }
 	}
 
-	const steps = [
+	const basicSteps = [
+		() => { hist.push({ role: 'user', label: 'user: "hi"' });
+			note('用户输入 hi。agentLoop 先把 user 消息存进历史；此时还没有 assistant 消息。', 'f-hist'); },
+		() => { $('f-pump-body').innerHTML = '脚本：["你好！"]<br><b>返回 EventStream，开始生产事件</b>';
+			note('假模型返回一个 EventStream。消费者可以逐个读事件，不必等到完整回答才开始渲染。EventStream 负责交接，不负责生成或拼接回答。', 'f-pump'); },
+		() => { curEvent = 'start';
+			note('收到 start：响应开始了。consumeAssistantMessage 不用它打印文本，终端仍是空的。', 'f-consume'); },
+		() => { process({ type: 'delta', ch: '你', label: 'text_delta: "你"' });
+			note('收到 delta「你」→ consumeAssistantMessage 调用 onDelta("你") → CLI 打印「你」。历史没有增加。', 'f-cli'); },
+		() => { process({ type: 'delta', ch: '好', label: 'text_delta: "好"' });
+			note('收到 delta「好」→ 追加打印，终端现在是「你好」。不是再打印一遍完整的「你好」，也不是新增一条消息。', 'f-cli'); },
+		() => { process({ type: 'delta', ch: '！', label: 'text_delta: "！"' });
+			note('收到最后一段「！」，终端已经显示「你好！」。但消费者还没收到 done，历史仍只有 user 消息。显示完不等于完整回答已经入历史。', 'f-cli'); },
+		() => { doneFlag = true; settled = true; resultTxt = '✓ resolved(message)';
+			process({ label: 'done（携带完整 message）', done: true });
+			note('收到 done：里面带的是完整消息「你好！」。消费者保存这条消息，不再调用 onDelta，所以终端不会重复打印全文。此刻历史还没增加。', 'f-consume'); },
+		() => { curEvent = '迭代结束，返回完整消息';
+			hist.push({ role: 'asst', label: 'assistant: "你好！" ← agentLoop 入历史' });
+			note('流消费结束，consumeAssistantMessage 返回完整消息，agentLoop 再存入历史。结论：3 个 delta 用来显示，1 条 assistant 消息用来记忆。可重播，也可切进阶观察内部交接。', 'f-hist'); },
+	];
+
+	const advancedSteps = [
 		() => { hist.push({ role: 'user', label: 'user: "hi"' });
 			note('用户在 CLI 输入 hi 回车。agentLoop 先把 <b>user 消息</b>推进 messages[]——历史的第一条。', 'f-cli'); },
 		() => { $('f-pump-body').innerHTML = '脚本：["你好！"]<br><b>已排进 queueMicrotask，函数同步返回 stream</b>';
@@ -937,13 +1069,13 @@
 		() => { process(pending); pending = null; waiting = true; curEvent = 'start（无 onDelta）→ 再次挂起';
 			note('消费者的续体运行：处理 start——它不触发 onDelta，终端没动静。循环一圈，queue 还是空 → <b>再次挂起</b>，resolve 回到 waiting。', 'f-consume'); },
 		() => { push({ type: 'delta', ch: '你', label: 'δ 你' }); process(pending); pending = null; waiting = true;
-			note('泵 <code>await setTimeout(25)</code> 后 push δ「你」→ 直交。25ms 足够消费者跑完整个续体：<b>onDelta 第 1 次 → 终端「你」</b>→ 再挂起。所以只要 delayMs > 0，每个 delta 都是直交。', 'f-cli'); },
+			note('泵 <code>await setTimeout(25)</code> 后 push δ「你」→ 直交。本例消费回调是同步的，续体会在下次定时器回调前处理完：<b>onDelta 第 1 次 → 终端「你」</b>→ 再挂起。这是当前假模型的路径，不是所有 provider 的规律。', 'f-cli'); },
 		() => { push({ type: 'delta', ch: '好', label: 'δ 好' }); process(pending); pending = null; waiting = true;
 			note('又一个 25ms：δ「好」直交 → onDelta 第 2 次 → 终端「你好」→ 再挂起。', 'f-cli'); },
 		() => { push({ type: 'delta', ch: '！', label: 'δ ！' }); curEvent = 'δ！已交付，续体待运行';
 			note('泵 push δ「！」→ 直交，消费者被叫醒。<b>但注意：处理它的续体还排在微任务队列里，没有运行</b>——终端暂时还是「你好」。泵的同步片段还没走完！', 'f-stream'); },
 		() => { push({ type: 'done', label: 'done', done: true });
-			note('★全剧最关键的一步：泵在<b>同一个同步片段</b>里紧接着 push done。消费者刚被「！」叫醒、还没来得及重新挂起 → waiting 是空的 → <b>done 进 queue</b>！同时 isComplete 命中：done=true、settled=true、result() resolve(message)、盖 durationMs。<b>这是真实 CLI 一轮里唯一进 queue 的事件。</b>', 'f-stream'); },
+			note('泵在<b>同一个同步片段</b>里紧接着 push done。消费者刚被「！」叫醒、还没重新挂起 → waiting 为空 → <b>done 进 queue</b>！子类先盖 durationMs，基类再设置 done、settled 并 resolve result()。在当前假模型、同步 onDelta、正常完成的路径里，只有 done 进 queue。', 'f-stream'); },
 		() => { $('f-pump-body').innerHTML = '脚本：["你好！"]<br><b>end(message) —— 泵收工</b>';
 			note('泵 end(message)：没有等待者，重复 resolve 被忽略（Promise 只 settle 一次）。泵的生命结束。', 'f-pump'); },
 		() => { process(pending); pending = null; process(queue.shift());
@@ -954,20 +1086,32 @@
 	];
 
 	function doStep() {
-		if (step >= steps.length) { clearInterval(timer); timer = null; $('f-play').textContent = '▶ 自动播放'; return; }
+		const steps = currentSteps();
+		if (step >= steps.length) { pause(); return; }
 		step++;
 		steps[step - 1]();
 		render();
-		if (step >= steps.length) { clearInterval(timer); timer = null; $('f-play').textContent = '▶ 自动播放'; }
+		if (step >= steps.length || (advanced && step === 8)) pause();
 	}
-	$('f-step').onclick = () => { if (step < steps.length) doStep(); };
-	$('f-play').onclick = () => {
-		if (timer) { clearInterval(timer); timer = null; $('f-play').textContent = '▶ 自动播放'; return; }
-		if (step >= steps.length) reset();
-		$('f-play').textContent = '⏸ 暂停';
-		doStep();
-		timer = setInterval(doStep, 1500);
+	$('f-step').onclick = () => { pause(); doStep(); };
+	$('f-prev').onclick = () => {
+		const target = Math.max(0, step - 1);
+		reset();
+		for (let i = 0; i < target; i++) doStep();
 	};
+	$('f-play').onclick = () => {
+		if (timer) { pause(); return; }
+		if (step >= currentSteps().length) reset();
+		doStep();
+		if (step < currentSteps().length && !(advanced && step === 8)) {
+			$('f-play').textContent = '⏸ 暂停';
+			timer = setInterval(doStep, 1500);
+		}
+	};
+	$('f-guess-direct').onclick = () => { guess = 'direct'; render(); };
+	$('f-guess-queue').onclick = () => { guess = 'queue'; render(); };
+	$('f-basic').onchange = () => { advanced = false; reset(); };
+	$('f-advanced').onchange = () => { advanced = true; reset(); };
 	$('f-reset').onclick = reset;
 	reset();
 })();
