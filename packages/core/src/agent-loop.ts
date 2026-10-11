@@ -84,7 +84,9 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 		let toolResults: ToolResultMessage[];
 		let terminate = false;
 		if (message.stopReason === "length") {
-			toolResults = (await failTruncatedToolCalls(toolCalls, emit)).messages;
+			toolResults = (
+				await failTruncatedToolCalls(toolCalls, options.signal, emit)
+			).messages;
 		} else {
 			const batch = await executeToolCalls(
 				toolCalls,

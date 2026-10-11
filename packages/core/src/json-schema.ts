@@ -109,10 +109,11 @@ function validateObject(
 		? schema["required"].filter((name): name is string => typeof name === "string")
 		: [];
 	for (const name of required) {
-		if (!(name in value)) issues.push({ path: `${path}.${name}`, message: "is required" });
+		if (!Object.hasOwn(value, name))
+			issues.push({ path: `${path}.${name}`, message: "is required" });
 	}
 	for (const [name, childSchema] of Object.entries(properties)) {
-		if (name in value && isRecord(childSchema))
+		if (Object.hasOwn(value, name) && isRecord(childSchema))
 			issues.push(...validateJsonSchema(value[name], childSchema, `${path}.${name}`));
 	}
 	const additional = schema["additionalProperties"];
@@ -122,7 +123,7 @@ function validateObject(
 	}
 	if (additional === false) {
 		for (const name of Object.keys(value)) {
-			if (!(name in properties))
+			if (!Object.hasOwn(properties, name))
 				issues.push({ path: `${path}.${name}`, message: "unexpected property" });
 		}
 	}

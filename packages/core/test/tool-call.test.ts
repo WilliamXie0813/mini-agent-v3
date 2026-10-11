@@ -241,6 +241,63 @@ describe("prepareToolCall", () => {
 			expect(settled).toBe(true);
 		});
 
+		it("serializes update delivery when an earlier sink is asynchronous", async () => {
+			let release = () => {};
+			const gate = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			let firstReached = () => {};
+			const reached = new Promise<void>((resolve) => {
+				firstReached = resolve;
+			});
+			const prepared = await preparedWith(async (_params, _signal, onUpdate) => {
+				onUpdate?.({ content: [{ type: "text", text: "one" }] });
+				onUpdate?.({ content: [{ type: "text", text: "two" }] });
+				return { content: [{ type: "text", text: "done" }] };
+			});
+			const observed: string[] = [];
+
+			const executing = executePreparedToolCall(
+				prepared,
+				undefined,
+				async (partial) => {
+					const text = resultText(partial);
+					if (text === "one") {
+						firstReached();
+						await gate;
+					}
+					observed.push(text);
+				},
+			);
+
+			await reached;
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(observed).toEqual([]);
+			release();
+			await executing;
+			expect(observed).toEqual(["one", "two"]);
+		});
+
+		it("does not call execute when the signal is already aborted", async () => {
+			const execute = vi.fn(async () => ({
+				content: [{ type: "text" as const, text: "unexpected" }],
+			}));
+			const prepared = await preparedWith(execute);
+			const controller = new AbortController();
+			controller.abort();
+
+			const outcome = await executePreparedToolCall(
+				prepared,
+				controller.signal,
+				() => {},
+			);
+
+			expect(execute).not.toHaveBeenCalled();
+			expect(outcome.isError).toBe(true);
+			expect(resultText(outcome.result)).toBe("Operation aborted");
+		});
+
 		it("ignores updates fired after the tool promise settles", async () => {
 			let lateUpdate: ToolUpdateHandler = () => {};
 			const prepared = await preparedWith(async (_params, _signal, onUpdate) => {
@@ -259,9 +316,9 @@ describe("prepareToolCall", () => {
 
 		it("keeps accepted updates when an aborted tool throws", async () => {
 			const controller = new AbortController();
-			controller.abort();
 			const prepared = await preparedWith(async (_params, signal, onUpdate) => {
 				onUpdate?.({ content: [{ type: "text", text: "before abort" }] });
+				controller.abort();
 				if (signal?.aborted)
 					throw new DOMException("Operation aborted", "AbortError");
 				return { content: [] };

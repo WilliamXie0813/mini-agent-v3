@@ -97,6 +97,27 @@ describe("validateJsonSchema", () => {
 		}]);
 	});
 
+	it("treats prototype-named keys as ordinary own properties", () => {
+		expect(validateJsonSchema({}, {
+			type: "object",
+			required: ["toString"],
+		})).toEqual([{
+			path: "arguments.toString",
+			message: "is required",
+		}]);
+		for (const key of ["toString", "constructor", "__proto__"]) {
+			const value = JSON.parse(`{"${key}":"unexpected"}`);
+			expect(validateJsonSchema(value, {
+				type: "object",
+				properties: {},
+				additionalProperties: false,
+			})).toEqual([{
+				path: `arguments.${key}`,
+				message: "unexpected property",
+			}]);
+		}
+	});
+
 	it("validates string, array, and number boundaries", () => {
 		expect(validateJsonSchema("a", {
 			type: "string",

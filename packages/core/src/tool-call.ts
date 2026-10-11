@@ -85,16 +85,23 @@ export async function executePreparedToolCall(
 	signal: AbortSignal | undefined,
 	onUpdate: ToolUpdateSink,
 ): Promise<ExecutedToolCallOutcome> {
-	const updates: Promise<void>[] = [];
+	if (signal?.aborted) {
+		const result = errorResult("Operation aborted");
+		return {
+			toolCall: prepared.toolCall, result, isError: true,
+			startedAt: prepared.startedAt,
+		};
+	}
+	let updateQueue = Promise.resolve();
 	let acceptingUpdates = true;
 	let result: ToolResult;
 
 	try {
 		const executed = await prepared.tool.execute(prepared.args, signal, (partial) => {
 			if (!acceptingUpdates) return;
-			const update = Promise.resolve().then(() => onUpdate(partial));
+			const update = updateQueue.then(() => onUpdate(partial));
 			update.catch(() => {});
-			updates.push(update);
+			updateQueue = update;
 		});
 		acceptingUpdates = false;
 		result = {
@@ -106,7 +113,7 @@ export async function executePreparedToolCall(
 		acceptingUpdates = false;
 		result = errorResult(error instanceof Error ? error.message : String(error));
 	}
-	await Promise.all(updates);
+	await updateQueue;
 	return {
 		toolCall: prepared.toolCall,
 		result,

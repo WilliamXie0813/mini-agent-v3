@@ -188,8 +188,15 @@ describe("agentLoop (stage 2: tool loop)", () => {
 			signal: controller.signal, streamFn,
 		})).rejects.toThrow(/agent loop aborted/);
 		expect(modelCalls).toBe(2); // 没有第三次请求
-		// history 以配对的 toolResult 收尾：两条 assistant toolCall 都不悬空
-		expect(messages.at(-1)).toMatchObject({ role: "toolResult", toolCallId: "c2" });
+		// signal 已在第二批执行前中止：不为尚未开始的 c2 伪造 toolResult。
+		expect(messages.at(-1)).toMatchObject({ role: "assistant" });
+		expect(
+			messages.some(
+				(message) =>
+					message.role === "toolResult" &&
+					message.toolCallId === "c2",
+			),
+		).toBe(false);
 	});
 });
 

@@ -77,11 +77,13 @@ export async function executeToolCalls(
 
 export async function failTruncatedToolCalls(
 	toolCalls: ToolCall[],
+	signal?: AbortSignal,
 	emit?: AgentEventSink,
 ): Promise<ExecutedToolBatch> {
 	const emitEvent = emit ?? (() => {});
 	const finalized: FinalizedToolCallOutcome[] = [];
 	for (const toolCall of toolCalls) {
+		if (signal?.aborted) break;
 		const startedAt = performance.now();
 		await emitStart(toolCall, emitEvent);
 		const outcome = finalizeToolCall({

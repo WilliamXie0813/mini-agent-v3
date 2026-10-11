@@ -5,6 +5,7 @@ import type {
 } from "@mini-agent/ai";
 import {
 	executeToolCalls,
+	failTruncatedToolCalls,
 } from "../src/execute-tool-calls.ts";
 import type {
 	ExecuteToolCallsOptions,
@@ -289,6 +290,34 @@ describe("executeToolCalls", () => {
 				events.push(event);
 			},
 		}));
+
+		expect(batch.messages.map((message) => message.toolCallId))
+			.toEqual(["c1"]);
+		expect(
+			events
+				.filter((event) => "toolCallId" in event)
+				.map((event) => event.toolCallId),
+		).toEqual(["c1", "c1"]);
+	});
+
+	it("stops synthesizing truncated calls that have not started after abort", async () => {
+		const controller = new AbortController();
+		const calls = [call("c1", "first"), call("c2", "second")];
+		const events: AgentEvent[] = [];
+
+		const batch = await failTruncatedToolCalls(
+			calls,
+			controller.signal,
+			(event) => {
+				events.push(event);
+				if (
+					event.type === "tool_execution_start" &&
+					event.toolCallId === "c1"
+				) {
+					controller.abort();
+				}
+			},
+		);
 
 		expect(batch.messages.map((message) => message.toolCallId))
 			.toEqual(["c1"]);
