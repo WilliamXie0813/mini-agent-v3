@@ -26,6 +26,17 @@ export type ImmediateToolCallOutcome = {
 	startedAt: number;
 };
 
+export type ExecutedToolCallOutcome = {
+	toolCall: ToolCall;
+	result: ToolResult;
+	isError: boolean;
+	startedAt: number;
+};
+
+export type ToolUpdateSink = (
+	partialResult: ToolResult,
+) => void | Promise<void>;
+
 export interface PrepareToolCallOptions {
 	toolCall: ToolCall;
 	assistantMessage: AssistantMessage;
@@ -99,6 +110,53 @@ export async function prepareToolCall(
 		tool,
 		args: options.toolCall.arguments,
 		startedAt: options.startedAt,
+	};
+}
+
+export async function executePreparedToolCall(
+	prepared: PreparedToolCall,
+	signal: AbortSignal | undefined,
+	onUpdate: ToolUpdateSink,
+): Promise<ExecutedToolCallOutcome> {
+	const updatePromises: Promise<void>[] = [];
+	let acceptingUpdates = true;
+	let result: ToolResult;
+	let isError: boolean;
+
+	try {
+		const executed = await prepared.tool.execute(
+			prepared.args,
+			signal,
+			(partialResult) => {
+				if (!acceptingUpdates) return;
+				const update = Promise.resolve().then(
+					() => onUpdate(partialResult),
+				);
+				update.catch(() => {});
+				updatePromises.push(update);
+			},
+		);
+		acceptingUpdates = false;
+		result = {
+			content: executed.content ?? [],
+			isError: executed.isError === true,
+			terminate: executed.terminate,
+		};
+		isError = result.isError === true;
+	} catch (error) {
+		acceptingUpdates = false;
+		result = errorResult(
+			error instanceof Error ? error.message : String(error),
+		);
+		isError = true;
+	}
+
+	await Promise.all(updatePromises);
+	return {
+		toolCall: prepared.toolCall,
+		result,
+		isError,
+		startedAt: prepared.startedAt,
 	};
 }
 

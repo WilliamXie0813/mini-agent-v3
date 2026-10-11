@@ -3,11 +3,16 @@ import type {
 	AssistantMessage,
 	Message,
 } from "@mini-agent/ai";
-import { prepareToolCall } from "../src/tool-call.ts";
+import {
+	executePreparedToolCall,
+	prepareToolCall,
+} from "../src/tool-call.ts";
+import type { PreparedToolCall } from "../src/tool-call.ts";
 import type {
 	BeforeToolCall,
 	ToolCall,
 	ToolDef,
+	ToolUpdateHandler,
 } from "../src/tool.ts";
 
 const assistantMessage: AssistantMessage = {
@@ -27,7 +32,7 @@ const call: ToolCall = {
 };
 
 function makeTool(
-	execute = vi.fn(async () => ({
+	execute: ToolDef<any>["execute"] = vi.fn(async () => ({
 		content: [{ type: "text" as const, text: "done" }],
 	})),
 ): ToolDef<any> {
@@ -72,6 +77,20 @@ function prepare(overrides: Partial<Parameters<typeof prepareToolCall>[0]> = {})
 	});
 }
 
+async function preparedWith(execute: ToolDef<any>["execute"]): Promise<PreparedToolCall> {
+	const outcome = await prepare({ tools: [makeTool(execute)] });
+	if (outcome.kind !== "prepared")
+		throw new Error("expected prepared outcome");
+	return outcome;
+}
+
+function resultText(result: { content: Array<{ type: string; text?: string }> }): string {
+	return result.content
+		.filter((block) => block.type === "text")
+		.map((block) => block.text ?? "")
+		.join("");
+}
+
 describe("prepareToolCall", () => {
 	it("returns a prepared call for a known tool with valid arguments", async () => {
 		const tool = makeTool();
@@ -83,6 +102,135 @@ describe("prepareToolCall", () => {
 			tool,
 			args: call.arguments,
 			startedAt: 12,
+		});
+	});
+
+	describe("executePreparedToolCall", () => {
+		it("normalizes a successful tool result", async () => {
+			const prepared = await preparedWith(async () => ({
+				content: [{ type: "text", text: "done" }],
+			}));
+
+			const outcome = await executePreparedToolCall(
+				prepared,
+				undefined,
+				() => {},
+			);
+
+			expect(outcome).toMatchObject({
+				toolCall: call,
+				isError: false,
+				startedAt: 12,
+				result: {
+					content: [{ type: "text", text: "done" }],
+					isError: false,
+				},
+			});
+		});
+
+		it("turns a thrown tool error into an error result", async () => {
+			const prepared = await preparedWith(async () => {
+				throw new Error("disk unavailable");
+			});
+
+			const outcome = await executePreparedToolCall(
+				prepared,
+				undefined,
+				() => {},
+			);
+
+			expect(outcome.isError).toBe(true);
+			expect(resultText(outcome.result)).toBe("disk unavailable");
+		});
+
+		it("delivers partial updates to the sink in source order", async () => {
+			const prepared = await preparedWith(async (_params, _signal, onUpdate) => {
+				onUpdate?.({ content: [{ type: "text", text: "one" }] });
+				onUpdate?.({ content: [{ type: "text", text: "two" }] });
+				return { content: [{ type: "text", text: "done" }] };
+			});
+			const updates: string[] = [];
+
+			await executePreparedToolCall(prepared, undefined, (partial) => {
+				updates.push(resultText(partial));
+			});
+
+			expect(updates).toEqual(["one", "two"]);
+		});
+
+		it("waits for accepted update promises before resolving", async () => {
+			let release = () => {};
+			const gate = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			let updateReached = () => {};
+			const reached = new Promise<void>((resolve) => {
+				updateReached = resolve;
+			});
+			const prepared = await preparedWith(async (_params, _signal, onUpdate) => {
+				onUpdate?.({ content: [{ type: "text", text: "partial" }] });
+				return { content: [{ type: "text", text: "done" }] };
+			});
+			let settled = false;
+
+			const executing = executePreparedToolCall(
+				prepared,
+				undefined,
+				async () => {
+					updateReached();
+					await gate;
+				},
+			).then((outcome) => {
+				settled = true;
+				return outcome;
+			});
+
+			await reached;
+			await Promise.resolve();
+			expect(settled).toBe(false);
+			release();
+			await executing;
+			expect(settled).toBe(true);
+		});
+
+		it("ignores updates fired after the tool promise settles", async () => {
+			let lateUpdate: ToolUpdateHandler = () => {};
+			const prepared = await preparedWith(async (_params, _signal, onUpdate) => {
+				lateUpdate = onUpdate ?? (() => {});
+				return { content: [{ type: "text", text: "done" }] };
+			});
+			const updates: string[] = [];
+
+			await executePreparedToolCall(prepared, undefined, (partial) => {
+				updates.push(resultText(partial));
+			});
+			lateUpdate({ content: [{ type: "text", text: "late" }] });
+
+			expect(updates).toEqual([]);
+		});
+
+		it("keeps accepted updates when an aborted tool throws", async () => {
+			const controller = new AbortController();
+			controller.abort();
+			const prepared = await preparedWith(async (_params, signal, onUpdate) => {
+				onUpdate?.({ content: [{ type: "text", text: "before abort" }] });
+				if (signal?.aborted)
+					throw new DOMException("Operation aborted", "AbortError");
+				return { content: [] };
+			});
+			const updates: string[] = [];
+
+			const outcome = await executePreparedToolCall(
+				prepared,
+				controller.signal,
+				(partial) => {
+					updates.push(resultText(partial));
+				},
+			);
+
+			expect(updates).toEqual(["before abort"]);
+			expect(outcome.isError).toBe(true);
+			expect(resultText(outcome.result)).toBe("Operation aborted");
 		});
 	});
 
