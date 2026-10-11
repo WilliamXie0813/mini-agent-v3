@@ -1,4 +1,8 @@
-import type { AssistantMessage, StreamContext } from "./types.ts";
+import type {
+	AssistantMessage,
+	AssistantMessageEvent,
+	StreamContext,
+} from "./types.ts";
 import type { AssistantMessageEventStream } from "./event-stream.ts";
 
 // 依赖注入缝：core 完全不知道 provider 存在（spec §3.2a）。
@@ -26,19 +30,21 @@ export function getDefaultStreamFn(): StreamFn {
 }
 
 export type StreamDeltaHandler = (delta: string) => void;
+export type AssistantMessageEventHandler = (
+	event: AssistantMessageEvent,
+) => void | Promise<void>;
 
 // 事件消费的唯一实现：delta 交给 UI 即时显示，done 携带的消息是唯一进历史的候选。
 // 放在 ai 而不是 core，因为它是「事件协议怎么读」的知识，与 provider 同侧；
 // core 只负责决定拿到的消息要不要入历史。
 export async function consumeAssistantMessage(
 	stream: AssistantMessageEventStream,
-	onDelta?: StreamDeltaHandler,
+	onEvent?: AssistantMessageEventHandler,
 ): Promise<AssistantMessage> {
 	let done: AssistantMessage | undefined;
 	for await (const event of stream) {
-		if (event.type === "text_delta") {
-			onDelta?.(event.delta);
-		} else if (event.type === "done") {
+		await onEvent?.(event);
+		if (event.type === "done") {
 			done = event.message;
 		}
 	}

@@ -56,7 +56,9 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 		try {
 			message = await consumeAssistantMessage(
 				streamFn(context, options.signal),
-				options.onDelta,
+				(event) => {
+					if (event.type === "text_delta") options.onDelta?.(event.delta);
+				},
 			);
 		} catch (error) {
 			// 流内中止让 provider 停在半路、收不到 done——但那不是 provider 坏了，是用户按了停。
