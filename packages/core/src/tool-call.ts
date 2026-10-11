@@ -1,21 +1,9 @@
-import type {
-	AssistantMessage,
-	Message,
-} from "@mini-agent/ai";
+import type { AssistantMessage, Message } from "@mini-agent/ai";
 import { validateJsonSchema } from "./json-schema.ts";
-import type {
-	BeforeToolCall,
-	ToolCall,
-	ToolDef,
-	ToolResult,
-} from "./tool.ts";
+import type { BeforeToolCall, ToolCall, ToolDef, ToolResult } from "./tool.ts";
 
-export {
-	finalizeToolCall,
-} from "./finalize-tool-call.ts";
-export type {
-	FinalizedToolCallOutcome,
-} from "./finalize-tool-call.ts";
+export { finalizeToolCall } from "./finalize-tool-call.ts";
+export type { FinalizedToolCallOutcome } from "./finalize-tool-call.ts";
 
 export type PreparedToolCall = {
 	kind: "prepared";
@@ -33,16 +21,8 @@ export type ImmediateToolCallOutcome = {
 	startedAt: number;
 };
 
-export type ExecutedToolCallOutcome = {
-	toolCall: ToolCall;
-	result: ToolResult;
-	isError: boolean;
-	startedAt: number;
-};
-
-export type ToolUpdateSink = (
-	partialResult: ToolResult,
-) => void | Promise<void>;
+export type ExecutedToolCallOutcome = Omit<ImmediateToolCallOutcome, "kind">;
+export type ToolUpdateSink = (partialResult: ToolResult) => void | Promise<void>;
 
 export interface PrepareToolCallOptions {
 	toolCall: ToolCall;
@@ -57,57 +37,37 @@ export interface PrepareToolCallOptions {
 export async function prepareToolCall(
 	options: PrepareToolCallOptions,
 ): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
-	const tool = options.tools.find(
-		(candidate) => candidate.name === options.toolCall.name,
-	);
-	if (!tool) {
-		return immediate(
-			options,
-			errorResult(`Tool "${options.toolCall.name}" not found`),
-		);
-	}
+	const tool = options.tools.find(({ name }) => name === options.toolCall.name);
+	if (!tool)
+		return immediate(options, errorResult(`Tool "${options.toolCall.name}" not found`));
 
-	const issues = validateJsonSchema(
-		options.toolCall.arguments,
-		tool.parameters,
-	);
+	const issues = validateJsonSchema(options.toolCall.arguments, tool.parameters);
 	if (issues.length > 0) {
-		const details = issues
-			.map((issue) => `${issue.path}: ${issue.message}`)
-			.join("; ");
+		const details = issues.map(({ path, message }) => `${path}: ${message}`).join("; ");
 		return immediate(
 			options,
-			errorResult(
-				`Tool "${tool.name}" arguments failed validation: ${details}`,
-			),
+			errorResult(`Tool "${tool.name}" arguments failed validation: ${details}`),
 		);
 	}
 
 	let beforeResult;
 	try {
-		beforeResult = await options.beforeToolCall?.(
-			{
-				assistantMessage: options.assistantMessage,
-				toolCall: options.toolCall,
-				args: options.toolCall.arguments,
-				messages: options.messages.slice(),
-			},
-			options.signal,
-		);
+		beforeResult = await options.beforeToolCall?.({
+			assistantMessage: options.assistantMessage,
+			toolCall: options.toolCall,
+			args: options.toolCall.arguments,
+			messages: options.messages.slice(),
+		}, options.signal);
 	} catch (error) {
 		return immediate(
 			options,
 			errorResult(error instanceof Error ? error.message : String(error)),
 		);
 	}
-
-	if (options.signal?.aborted) {
+	if (options.signal?.aborted)
 		return immediate(options, errorResult("Operation aborted"));
-	}
 	if (beforeResult?.block) {
-		const result = errorResult(
-			beforeResult.reason ?? "Tool execution was blocked",
-		);
+		const result = errorResult(beforeResult.reason ?? "Tool execution was blocked");
 		if (beforeResult.terminate === true) result.terminate = true;
 		return immediate(options, result);
 	}
@@ -125,44 +85,32 @@ export async function executePreparedToolCall(
 	signal: AbortSignal | undefined,
 	onUpdate: ToolUpdateSink,
 ): Promise<ExecutedToolCallOutcome> {
-	const updatePromises: Promise<void>[] = [];
+	const updates: Promise<void>[] = [];
 	let acceptingUpdates = true;
 	let result: ToolResult;
-	let isError: boolean;
 
 	try {
-		const executed = await prepared.tool.execute(
-			prepared.args,
-			signal,
-			(partialResult) => {
-				if (!acceptingUpdates) return;
-				const update = Promise.resolve().then(
-					() => onUpdate(partialResult),
-				);
-				update.catch(() => {});
-				updatePromises.push(update);
-			},
-		);
+		const executed = await prepared.tool.execute(prepared.args, signal, (partial) => {
+			if (!acceptingUpdates) return;
+			const update = Promise.resolve().then(() => onUpdate(partial));
+			update.catch(() => {});
+			updates.push(update);
+		});
 		acceptingUpdates = false;
 		result = {
 			content: executed.content ?? [],
 			isError: executed.isError === true,
 			terminate: executed.terminate,
 		};
-		isError = result.isError === true;
 	} catch (error) {
 		acceptingUpdates = false;
-		result = errorResult(
-			error instanceof Error ? error.message : String(error),
-		);
-		isError = true;
+		result = errorResult(error instanceof Error ? error.message : String(error));
 	}
-
-	await Promise.all(updatePromises);
+	await Promise.all(updates);
 	return {
 		toolCall: prepared.toolCall,
 		result,
-		isError,
+		isError: result.isError === true,
 		startedAt: prepared.startedAt,
 	};
 }
@@ -181,8 +129,5 @@ function immediate(
 }
 
 function errorResult(text: string): ToolResult {
-	return {
-		content: [{ type: "text", text }],
-		isError: true,
-	};
+	return { content: [{ type: "text", text }], isError: true };
 }

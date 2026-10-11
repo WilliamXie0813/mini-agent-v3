@@ -12,7 +12,10 @@ import {
 } from "./execute-tool-calls.ts";
 import { streamAssistantMessage } from "./stream-assistant.ts";
 import { toToolDeclarations } from "./tool.ts";
-import type { ToolDef } from "./tool.ts";
+import type {
+	BeforeToolCall,
+	ToolDef,
+} from "./tool.ts";
 
 export interface AgentLoopOptions {
 	prompt: string;
@@ -23,6 +26,7 @@ export interface AgentLoopOptions {
 	emit?: AgentEventSink;
 	tools?: ToolDef<any>[]; // 缺省 []：无工具的调用走一轮就收敛，与阶段 1 行为一致
 	maxTurns?: number; // 缺省 10：模型反复要工具时的熔断，防止无限烧 token
+	beforeToolCall?: BeforeToolCall;
 }
 
 // 提前返回都在构造 user 消息之前（阶段 1 的约定，不要动）：已中止的 signal 不产生半条消息；
@@ -78,6 +82,7 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 			return options.messages;
 		}
 		let toolResults: ToolResultMessage[];
+		let terminate = false;
 		if (message.stopReason === "length") {
 			toolResults = (await failTruncatedToolCalls(toolCalls, emit)).messages;
 		} else {
@@ -89,9 +94,11 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 					tools,
 					signal: options.signal,
 					emit,
+					beforeToolCall: options.beforeToolCall,
 				},
 			);
 			toolResults = batch.messages;
+			terminate = batch.terminate;
 		}
 		options.messages.push(...toolResults);
 		newMessages.push(...toolResults);
@@ -99,6 +106,10 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 		if (options.signal?.aborted) {
 			await emit({ type: "turn_start" });
 			throw new Error("agent loop aborted");
+		}
+		if (terminate) {
+			await emit({ type: "agent_end", messages: newMessages });
+			return options.messages;
 		}
 	}
 

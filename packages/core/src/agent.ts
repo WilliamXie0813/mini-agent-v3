@@ -5,6 +5,7 @@ import type {
 	StreamFn,
 } from "@mini-agent/ai";
 import { agentLoop } from "./agent-loop.ts";
+import type { AgentOptions } from "./agent-options.ts";
 import type {
 	AgentEvent,
 	AgentEventListener,
@@ -14,15 +15,7 @@ import {
 	reduceAgentState,
 } from "./agent-state.ts";
 import type { AgentState } from "./agent-state.ts";
-import type { ToolDef } from "./tool.ts";
-
-export interface AgentOptions {
-	system: string;
-	messages?: Message[];
-	tools?: ToolDef<any>[];
-	streamFn?: StreamFn;
-	maxTurns?: number;
-}
+import type { BeforeToolCall } from "./tool.ts";
 
 type ActiveRun = {
 	promise: Promise<void>;
@@ -45,6 +38,7 @@ export class Agent {
 	private readonly maxTurns?: number;
 	private readonly listeners = new Set<AgentEventListener>();
 	private readonly _state: AgentState;
+	public beforeToolCall?: BeforeToolCall;
 	private activeRun?: ActiveRun;
 	private runMessages: Message[] = [];
 	private turnOpen = false;
@@ -54,6 +48,7 @@ export class Agent {
 		this.system = options.system;
 		this.streamFn = options.streamFn ?? getDefaultStreamFn();
 		this.maxTurns = options.maxTurns;
+		this.beforeToolCall = options.beforeToolCall;
 		this._state = createAgentState(
 			options.messages ?? [],
 			options.tools ?? [],
@@ -91,6 +86,7 @@ export class Agent {
 				signal,
 				tools: this._state.tools.slice(),
 				maxTurns: this.maxTurns,
+				beforeToolCall: this.beforeToolCall,
 				emit: (event) => this.processEvents(event),
 			});
 		});

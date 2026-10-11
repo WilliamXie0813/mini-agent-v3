@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	createAssistantMessageEventStream,
 	createFakeStreamFn,
@@ -11,7 +11,10 @@ import type {
 } from "@mini-agent/ai";
 import { Agent } from "../src/agent.ts";
 import type { AgentEvent } from "../src/agent-event.ts";
-import type { ToolDef } from "../src/tool.ts";
+import type {
+	BeforeToolCallContext,
+	ToolDef,
+} from "../src/tool.ts";
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
 	let resolve = () => {};
@@ -163,6 +166,312 @@ describe("Agent", () => {
 			role: "toolResult",
 			toolCallId: "c1",
 			isError: false,
+		});
+	});
+
+	describe("Agent (stage 5: tool interception)", () => {
+		beforeEach(() => setDefaultStreamFn(undefined));
+
+		it("blocks a tool before execute and lets the model recover", async () => {
+			const execute = vi.fn(async () => ({
+				content: [{ type: "text" as const, text: "unexpected" }],
+			}));
+			const bashTool: ToolDef<{ command: string }> = {
+				name: "bash",
+				description: "bash",
+				parameters: {
+					type: "object",
+					properties: { command: { type: "string" } },
+					required: ["command"],
+				},
+				execute,
+			};
+			const inner = createFakeStreamFn([
+				[{
+					type: "toolCall",
+					id: "c1",
+					name: "bash",
+					arguments: { command: "rm -rf /tmp/nope" },
+				}],
+				"recovered",
+			]);
+			let modelCalls = 0;
+			const agent = new Agent({
+				system: "test",
+				tools: [bashTool],
+				streamFn: (context, signal) => {
+					modelCalls++;
+					return inner(context, signal);
+				},
+			});
+			let hookContext: BeforeToolCallContext | undefined;
+			agent.beforeToolCall = (context) => {
+				hookContext = context;
+				return { block: true, reason: "Denied by policy" };
+			};
+
+			await agent.prompt("go");
+
+			expect(execute).not.toHaveBeenCalled();
+			expect(modelCalls).toBe(2);
+			expect(agent.state.messages.map((message) => message.role)).toEqual([
+				"user",
+				"assistant",
+				"toolResult",
+				"assistant",
+			]);
+			expect(agent.state.messages[2]).toMatchObject({
+				role: "toolResult",
+				isError: true,
+				content: [{ type: "text", text: "Denied by policy" }],
+			});
+			expect(hookContext).toMatchObject({
+				toolCall: { id: "c1", name: "bash" },
+				args: { command: "rm -rf /tmp/nope" },
+				messages: [
+					{ role: "user" },
+					{ role: "assistant" },
+				],
+			});
+		});
+
+		it("feeds schema violations back without calling hook or execute", async () => {
+			const execute = vi.fn(async () => ({ content: [] }));
+			const hook = vi.fn();
+			const tool: ToolDef<any> = {
+				name: "configure",
+				description: "configure",
+				parameters: {
+					type: "object",
+					properties: {
+						options: {
+							type: "object",
+							properties: { mode: { enum: ["safe", "fast"] } },
+							required: ["mode"],
+						},
+					},
+					required: ["options"],
+				},
+				execute,
+			};
+			const agent = new Agent({
+				system: "test",
+				tools: [tool],
+				streamFn: createFakeStreamFn([
+					[{
+						type: "toolCall",
+						id: "c1",
+						name: "configure",
+						arguments: { options: { mode: "danger" } },
+					}],
+					"fixed",
+				]),
+			});
+			agent.beforeToolCall = hook;
+
+			await agent.prompt("go");
+
+			expect(hook).not.toHaveBeenCalled();
+			expect(execute).not.toHaveBeenCalled();
+			const result = agent.state.messages[2];
+			if (result.role !== "toolResult")
+				throw new Error("expected tool result");
+			expect(textOf(result.content)).toContain(
+				'arguments.options.mode: expected one of ["safe","fast"]',
+			);
+		});
+
+		it("ends the run after a terminating blocked call", async () => {
+			const inner = createFakeStreamFn([
+				[{
+					type: "toolCall",
+					id: "c1",
+					name: "bash",
+					arguments: { command: "blocked" },
+				}],
+				"must not run",
+			]);
+			let modelCalls = 0;
+			const agent = new Agent({
+				system: "test",
+				tools: [{
+					name: "bash",
+					description: "bash",
+					parameters: { type: "object" },
+					execute: async () => ({ content: [] }),
+				}],
+				streamFn: (context, signal) => {
+					modelCalls++;
+					return inner(context, signal);
+				},
+			});
+			const events: AgentEvent[] = [];
+			agent.beforeToolCall = () => ({ block: true, terminate: true });
+			agent.subscribe((event) => {
+				events.push(event);
+			});
+
+			await agent.prompt("go");
+
+			expect(modelCalls).toBe(1);
+			expect(agent.state.messages.at(-1)).toMatchObject({
+				role: "toolResult",
+				isError: true,
+			});
+			expect(events.filter((event) => event.type === "turn_start"))
+				.toHaveLength(1);
+			expect(events.at(-1)?.type).toBe("agent_end");
+		});
+
+		it("continues when only one call in the batch terminates", async () => {
+			const agent = new Agent({
+				system: "test",
+				tools: [
+					{
+						name: "first",
+						description: "first",
+						parameters: { type: "object" },
+						execute: async () => ({ content: [] }),
+					},
+					{
+						name: "second",
+						description: "second",
+						parameters: { type: "object" },
+						execute: async () => ({ content: [] }),
+					},
+				],
+				streamFn: createFakeStreamFn([
+					[
+						{ type: "toolCall", id: "c1", name: "first", arguments: {} },
+						{ type: "toolCall", id: "c2", name: "second", arguments: {} },
+					],
+					"continued",
+				]),
+			});
+			agent.beforeToolCall = ({ toolCall }) => ({
+				block: true,
+				terminate: toolCall.name === "first",
+			});
+
+			await agent.prompt("go");
+
+			expect(agent.state.messages.at(-1)).toMatchObject({
+				role: "assistant",
+				stopReason: "stop",
+			});
+		});
+
+		it("emits tool updates before execution end", async () => {
+			const agent = new Agent({
+				system: "test",
+				tools: [{
+					name: "stream",
+					description: "stream",
+					parameters: { type: "object" },
+					execute: async (_params, _signal, onUpdate) => {
+						onUpdate?.({
+							content: [{ type: "text", text: "partial" }],
+						});
+						return { content: [{ type: "text", text: "done" }] };
+					},
+				}],
+				streamFn: createFakeStreamFn([
+					[{
+						type: "toolCall",
+						id: "c1",
+						name: "stream",
+						arguments: { raw: true },
+					}],
+					"done",
+				]),
+			});
+			const events: AgentEvent[] = [];
+			agent.subscribe((event) => {
+				events.push(event);
+			});
+
+			await agent.prompt("go");
+
+			const update = events.find(
+				(event) => event.type === "tool_execution_update",
+			);
+			expect(update).toMatchObject({
+				type: "tool_execution_update",
+				toolCallId: "c1",
+				toolName: "stream",
+				args: { raw: true },
+				partialResult: {
+					content: [{ type: "text", text: "partial" }],
+				},
+			});
+			expect(events.findIndex((event) => event.type === "tool_execution_update"))
+				.toBeLessThan(
+					events.findIndex((event) => event.type === "tool_execution_end"),
+				);
+		});
+
+		it("feeds hook exceptions back instead of rejecting prompt", async () => {
+			const agent = new Agent({
+				system: "test",
+				tools: [echoTool],
+				streamFn: createFakeStreamFn([
+					[{
+						type: "toolCall",
+						id: "c1",
+						name: "echo",
+						arguments: { text: "x" },
+					}],
+					"recovered",
+				]),
+			});
+			agent.beforeToolCall = () => {
+				throw new Error("permission service unavailable");
+			};
+
+			await expect(agent.prompt("go")).resolves.toBeUndefined();
+
+			expect(agent.state.messages[2]).toMatchObject({
+				role: "toolResult",
+				isError: true,
+				content: [{
+					type: "text",
+					text: "permission service unavailable",
+				}],
+			});
+		});
+
+		it("prefers aborted terminal state over a terminating tool result", async () => {
+			const agent = new Agent({
+				system: "test",
+				tools: [{
+					name: "stop",
+					description: "stop",
+					parameters: { type: "object" },
+					execute: async () => ({
+						content: [],
+						terminate: true,
+					}),
+				}],
+				streamFn: createFakeStreamFn([
+					[{
+						type: "toolCall",
+						id: "c1",
+						name: "stop",
+						arguments: {},
+					}],
+					"must not run",
+				]),
+			});
+			agent.subscribe((event) => {
+				if (event.type === "tool_execution_start") agent.abort();
+			});
+
+			await agent.prompt("go");
+
+			expect(agent.state.messages.at(-1)).toMatchObject({
+				role: "assistant",
+				stopReason: "aborted",
+			});
 		});
 	});
 

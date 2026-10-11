@@ -407,4 +407,41 @@ describe("agentLoop (stage 4: lifecycle events)", () => {
 			toolResults: [],
 		});
 	});
+
+	describe("agentLoop (stage 5: interception)", () => {
+		it("ends after a terminating blocked batch without another model request", async () => {
+			const inner = createFakeStreamFn([
+				[{
+					type: "toolCall",
+					id: "c1",
+					name: "echo",
+					arguments: { text: "blocked" },
+				}],
+				"must not run",
+			]);
+			let modelCalls = 0;
+			const events: AgentEvent[] = [];
+
+			const messages = await agentLoop({
+				...base(),
+				prompt: "go",
+				tools: [echoTool],
+				streamFn: (context, signal) => {
+					modelCalls++;
+					return inner(context, signal);
+				},
+				beforeToolCall: () => ({ block: true, terminate: true }),
+				emit: (event) => {
+					events.push(event);
+				},
+			});
+
+			expect(modelCalls).toBe(1);
+			expect(messages.at(-1)).toMatchObject({
+				role: "toolResult",
+				isError: true,
+			});
+			expect(events.at(-1)?.type).toBe("agent_end");
+		});
+	});
 });
