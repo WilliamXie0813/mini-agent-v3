@@ -1,6 +1,6 @@
 # 阶段 4 —— 事件分层与生命周期
 
-> spec：`docs/specs/2026-10-09-mini-agent-v3-design.md` §3.2(c)、§3.3、§5 阶段 4  
+> spec：`docs/specs/2026-10-09-mini-agent-v3-design.md` §3.2(c)、§3.3、§5 阶段 4
 > 计划：`docs/plans/2026-10-11-stage-4-events-and-lifecycle.md`
 
 ## 这个阶段解决了什么问题
