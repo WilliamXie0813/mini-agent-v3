@@ -13,4 +13,3 @@ export type { ExecutedToolBatch } from "./execute-tool-calls.ts";
 export { toToolDeclarations } from "./tool.ts";
 export type { ToolDef, ToolResult } from "./tool.ts";
 export { createReadTool, createEditTool, createBashTool, createDefaultTools } from "./tools.ts";
-export type { StreamDeltaHandler } from "@mini-agent/ai";

@@ -29,7 +29,6 @@ export function getDefaultStreamFn(): StreamFn {
 	return defaultStreamFn;
 }
 
-export type StreamDeltaHandler = (delta: string) => void;
 export type AssistantMessageEventHandler = (
 	event: AssistantMessageEvent,
 ) => void | Promise<void>;

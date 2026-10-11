@@ -2,7 +2,6 @@ import { getDefaultStreamFn } from "@mini-agent/ai";
 import type {
 	Message,
 	StreamContext,
-	StreamDeltaHandler,
 	StreamFn,
 	ToolResultMessage,
 } from "@mini-agent/ai";
@@ -21,7 +20,6 @@ export interface AgentLoopOptions {
 	system: string; // 本阶段是纯字符串；阶段 8 改为 SystemMessage
 	streamFn?: StreamFn; // 缺省 fallback 到 getDefaultStreamFn()
 	signal?: AbortSignal;
-	onDelta?: StreamDeltaHandler; // 流式增量只给 UI 看；入历史的永远是 done 携带的那条消息
 	emit?: AgentEventSink;
 	tools?: ToolDef<any>[]; // 缺省 []：无工具的调用走一轮就收敛，与阶段 1 行为一致
 	maxTurns?: number; // 缺省 10：模型反复要工具时的熔断，防止无限烧 token
@@ -66,15 +64,7 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 		// 一次响应的 40 个 delta 共同描述的是 1 条 assistant 消息（spec §5 阶段 3）。
 		const message = await streamAssistantMessage(
 			streamFn(context, options.signal),
-			async (event) => {
-				if (
-					event.type === "message_update" &&
-					event.assistantMessageEvent.type === "text_delta"
-				) {
-					options.onDelta?.(event.assistantMessageEvent.delta);
-				}
-				await emit(event);
-			},
+			emit,
 		);
 		options.messages.push(message);
 		newMessages.push(message);
