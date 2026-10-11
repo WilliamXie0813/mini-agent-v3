@@ -5,7 +5,6 @@ import type {
 	StreamFn,
 } from "@mini-agent/ai";
 import { agentLoop } from "./agent-loop.ts";
-import type { AgentOptions } from "./agent-options.ts";
 import type {
 	AgentEvent,
 	AgentEventListener,
@@ -15,7 +14,12 @@ import {
 	reduceAgentState,
 } from "./agent-state.ts";
 import type { AgentState } from "./agent-state.ts";
-import type { BeforeToolCall } from "./tool.ts";
+import type { BeforeToolCall, ToolDef } from "./tool.ts";
+
+export interface AgentOptions {
+	system: string; messages?: Message[]; tools?: ToolDef<any>[];
+	streamFn?: StreamFn; maxTurns?: number; beforeToolCall?: BeforeToolCall;
+}
 
 type ActiveRun = {
 	promise: Promise<void>;
