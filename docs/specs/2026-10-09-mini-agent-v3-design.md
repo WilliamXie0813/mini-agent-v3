@@ -385,13 +385,24 @@ interface ToolResult { content: ContentBlock[]; isError?: boolean }
 - `subscribe(listener)` 返回 `unsubscribe` 函数。
 - `abort()` 只做一件事：`activeRun.abortController.abort()`。
 - **中止不抛异常**：截断点变成 `isError: true` 的 toolResult，循环自然收敛；兜底构造一条 `stopReason: "aborted"` 的 assistant 消息并走完正常事件序列（Pi `agent.ts:532` 的 `handleRunFailure`）。
+- `tool_execution_update` 本阶段只把协议形状定下来；真正的部分结果来自阶段 5 新增的工具 `onUpdate` 回调，本阶段没有可产生该事件的数据源。
+- `prompt()` 是 single-flight：从 `agent_start` 到 `agent_end` 的最后一个 listener settle 都算 active；期间再次调用直接抛具名错误，不排队、不并行。它返回 `Promise<void>`；完整历史从 `state.messages` 读。
+- `agent_end.messages` 只带**本次 run 新增的消息**，不是完整 transcript；完整 transcript 由 `Agent._state.messages` 持有。这样订阅者无需重复接收旧历史，也与 Pi 的 `newMessages` 语义一致。
+- 所有最终产生 toolResult 的调用（成功、未知工具、参数错误、`length` 整批保护）都发 `tool_execution_start → tool_execution_end → message_start(toolResult) → message_end(toolResult)`；因 abort 尚未开始的后续调用不伪造执行事件。
+
+**失败边界**：
+
+- 生命周期开始后的 provider/loop 故障（包括缺少 `done`、`maxTurns`）不让 `prompt()` reject，而是由 `Agent` 合成 `stopReason: "error"` 的 assistant 消息，并补齐 `message_start → message_end → turn_end → agent_end`。
+- abort 使用同一条收尾路径，但 stop reason 是 `"aborted"`。流中的半截 `partial` 不进历史；工具已产出的结果保留。若中止发生在工具阶段，当前 turn 先带已有 toolResult 正常 `turn_end`，再开启一个 terminal turn 发 aborted assistant。
+- 组装/前置条件错误（例如构造 `Agent` 时没有可用 `StreamFn`）在生命周期开始前直接抛出。
+- listener 自己 reject 代表事件交付基础设施失败：不递归合成 error 事件，`prompt()` 在清理 `isStreaming`/active run 后原样 reject。
 
 **为什么 listener 被 await**：`agent_end` 是最后一个事件，但它发出后 listener 可能还在写日志/落盘。若不等，`waitForIdle()` 会提前返回，第 9 阶段的持久化就会丢数据。**这是一个为了正确性牺牲吞吐的取舍，且必须在状态机语义里定死。**
 
 **验收**：
 
 1. 订阅者收到完整事件序列，顺序断言为：
-   `agent_start → turn_start → message_start → message_update×n → message_end → message_start(toolResult) → message_end → tool_execution_* → turn_end → ... → agent_end`
+   `agent_start → turn_start → message_start(user) → message_end(user) → message_start(assistant) → message_update×n → message_end(assistant) → [tool_execution_start → tool_execution_end → message_start(toolResult) → message_end(toolResult)]×n → turn_end → ... → agent_end`
 2. `waitForIdle()` 在一个故意 `await` 3 秒的 listener 下会真的等满（用假时钟或宽松断言）。
 3. Ctrl+C 后：`state.isStreaming === false`，且历史里有一条 `stopReason: "aborted"` 的 assistant 消息。
 4. **UI 完全不读 `agent.state`**——只用事件就能渲染完整过程（这是本阶段最重要的验收）。
