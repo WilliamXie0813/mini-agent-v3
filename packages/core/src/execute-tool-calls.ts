@@ -1,133 +1,133 @@
-import type { ContentBlock, ToolResultMessage } from "@mini-agent/ai";
+import type {
+	AssistantMessage,
+	Message,
+	ToolResultMessage,
+} from "@mini-agent/ai";
 import type { AgentEventSink } from "./agent-event.ts";
-import type { ToolDef, ToolResult } from "./tool.ts";
+import {
+	executePreparedToolCall,
+	prepareToolCall,
+} from "./tool-call.ts";
+import { finalizeToolCall } from "./finalize-tool-call.ts";
+import type { FinalizedToolCallOutcome } from "./finalize-tool-call.ts";
+import type {
+	BeforeToolCall,
+	ToolCall,
+	ToolDef,
+	ToolResult,
+} from "./tool.ts";
 
-export interface ExecutedToolBatch { messages: ToolResultMessage[] }
+export interface ExecuteToolCallsOptions {
+	assistantMessage: AssistantMessage;
+	messages: readonly Message[];
+	tools: readonly ToolDef<any>[];
+	signal?: AbortSignal;
+	emit?: AgentEventSink;
+	beforeToolCall?: BeforeToolCall;
+}
+
+export interface ExecutedToolBatch {
+	messages: ToolResultMessage[];
+	terminate: boolean;
+}
 
 export async function executeToolCalls(
-	toolCalls: ContentBlock[],
-	tools: ToolDef<any>[],
-	signal?: AbortSignal,
-	emit?: AgentEventSink,
+	toolCalls: ToolCall[],
+	options: ExecuteToolCallsOptions,
 ): Promise<ExecutedToolBatch> {
-	const messages: ToolResultMessage[] = [];
-	const emitEvent = emit ?? (() => {});
-	for (const block of toolCalls) {
-		if (signal?.aborted) break; // 已执行的调用都已配对；未启动的不合成结果（见测试最后一条）
-		if (block.type !== "toolCall") continue;
+	const finalized: FinalizedToolCallOutcome[] = [];
+	const emit = options.emit ?? (() => {});
+	for (const toolCall of toolCalls) {
+		if (options.signal?.aborted) break;
 		const startedAt = performance.now();
-		await emitEvent({
-			type: "tool_execution_start",
-			toolCallId: block.id,
-			toolName: block.name,
-			args: block.arguments,
+		await emitStart(toolCall, emit);
+		const preparation = await prepareToolCall({
+			toolCall,
+			assistantMessage: options.assistantMessage,
+			messages: options.messages,
+			tools: options.tools,
+			beforeToolCall: options.beforeToolCall,
+			signal: options.signal,
+			startedAt,
 		});
-		const result = await executeOne(block, tools, signal);
-		messages.push(await emitResult(block, result, startedAt, emitEvent));
+		const outcome = preparation.kind === "immediate"
+			? preparation
+			: await executePreparedToolCall(
+					preparation,
+					options.signal,
+					(partialResult) => emit({
+						type: "tool_execution_update",
+						toolCallId: toolCall.id,
+						toolName: toolCall.name,
+						args: toolCall.arguments,
+						partialResult,
+					}),
+				);
+		const result = finalizeToolCall(outcome);
+		await emitFinalized(result, emit);
+		finalized.push(result);
 	}
-	return { messages };
+	return {
+		messages: finalized.map((outcome) => outcome.message),
+		terminate:
+			finalized.length > 0 &&
+			finalized.every((outcome) => outcome.result.terminate === true),
+	};
 }
 
 export async function failTruncatedToolCalls(
-	toolCalls: ContentBlock[],
+	toolCalls: ToolCall[],
 	emit?: AgentEventSink,
 ): Promise<ExecutedToolBatch> {
-	const messages: ToolResultMessage[] = [];
 	const emitEvent = emit ?? (() => {});
-	for (const block of toolCalls) {
-		if (block.type !== "toolCall") continue;
+	const finalized: FinalizedToolCallOutcome[] = [];
+	for (const toolCall of toolCalls) {
 		const startedAt = performance.now();
-		await emitEvent({
-			type: "tool_execution_start",
-			toolCallId: block.id,
-			toolName: block.name,
-			args: block.arguments,
+		await emitStart(toolCall, emitEvent);
+		const outcome = finalizeToolCall({
+			kind: "immediate",
+			toolCall,
+			result: errorResult(
+				`Tool "${toolCall.name}" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.`,
+			),
+			isError: true,
+			startedAt,
 		});
-		const result = errorResult(
-			`Tool "${block.name}" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.`,
-		);
-		messages.push(await emitResult(block, result, startedAt, emitEvent));
+		await emitFinalized(outcome, emitEvent);
+		finalized.push(outcome);
 	}
-	return { messages };
-}
-
-// 不导出：阶段 5 拆三段式时如果这里有第二个入口，会让人以为分离是为并行服务的。
-async function executeOne(
-	block: { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> },
-	tools: ToolDef<any>[],
-	signal?: AbortSignal,
-): Promise<ToolResult> {
-	const tool = tools.find((t) => t.name === block.name);
-	if (!tool) return errorResult(`Tool "${block.name}" not found`);
-
-	const missing = findMissingRequired(tool, block.arguments);
-	if (missing !== undefined) {
-		return errorResult(
-			`Tool "${tool.name}" is missing required parameter "${missing}"`,
-		);
-	}
-
-	try {
-		const result = await tool.execute(block.arguments, signal);
-		return {
-			content: result.content ?? [],
-			isError: result.isError === true,
-		};
-	} catch (e) {
-		return errorResult(e instanceof Error ? e.message : String(e));
-	}
-}
-
-// 只查必填字段的存在性与顶层 typeof。完整 JSON Schema 校验是阶段 5 的事。
-function findMissingRequired(tool: ToolDef<any>, args: Record<string, unknown>): string | undefined {
-	const required = (tool.parameters["required"] ?? []) as string[];
-	const properties = (tool.parameters["properties"] ?? {}) as Record<string, { type?: string }>;
-	for (const name of required) {
-		if (!(name in args)) return name;
-		const declared = properties[name]?.type;
-		if (declared !== undefined && !matchesDeclaredType(args[name], declared)) return name;
-	}
-	return undefined;
-}
-
-// typeof 映射用对象字面量而不是 enum（erasableSyntaxOnly 禁 enum）。
-// array 需要 Array.isArray：typeof [] === "object"，不特判的话声明 "object" 的字段会收下数组。
-const TYPE_CHECKS: Record<string, (value: unknown) => boolean> = {
-	string: (v) => typeof v === "string",
-	number: (v) => typeof v === "number",
-	boolean: (v) => typeof v === "boolean",
-	object: (v) => typeof v === "object" && v !== null && !Array.isArray(v),
-	array: (v) => Array.isArray(v),
-};
-
-function matchesDeclaredType(value: unknown, declared: string): boolean {
-	return TYPE_CHECKS[declared]?.(value) ?? true;
-}
-
-async function emitResult(
-	block: { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> },
-	result: ToolResult,
-	startedAt: number,
-	emit: AgentEventSink,
-): Promise<ToolResultMessage> {
-	const message: ToolResultMessage = {
-		role: "toolResult",
-		toolCallId: block.id,
-		toolName: block.name,
-		content: result.content ?? [],
-		isError: result.isError === true,
+	return {
+		messages: finalized.map((outcome) => outcome.message),
+		terminate: false,
 	};
+}
+
+async function emitStart(
+	toolCall: ToolCall,
+	emit: AgentEventSink,
+): Promise<void> {
+	await emit({
+		type: "tool_execution_start",
+		toolCallId: toolCall.id,
+		toolName: toolCall.name,
+		args: toolCall.arguments,
+	});
+}
+
+async function emitFinalized(
+	outcome: FinalizedToolCallOutcome,
+	emit: AgentEventSink,
+): Promise<void> {
 	await emit({
 		type: "tool_execution_end",
-		toolCallId: block.id,
-		toolName: block.name,
-		result,
-		isError: message.isError,
-		durationMs: performance.now() - startedAt,
+		toolCallId: outcome.toolCall.id,
+		toolName: outcome.toolCall.name,
+		result: outcome.result,
+		isError: outcome.isError,
+		durationMs: outcome.durationMs,
 	});
-	await emit({ type: "message_start", message });
-	await emit({ type: "message_end", message });
-	return message;
+	await emit({ type: "message_start", message: outcome.message });
+	await emit({ type: "message_end", message: outcome.message });
 }
 
 function errorResult(text: string): ToolResult {

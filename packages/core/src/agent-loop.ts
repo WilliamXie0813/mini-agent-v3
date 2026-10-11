@@ -83,9 +83,13 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 		} else {
 			const batch = await executeToolCalls(
 				toolCalls,
-				tools,
-				options.signal,
-				emit,
+				{
+					assistantMessage: message,
+					messages: options.messages,
+					tools,
+					signal: options.signal,
+					emit,
+				},
 			);
 			toolResults = batch.messages;
 		}

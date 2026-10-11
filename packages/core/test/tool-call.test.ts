@@ -5,6 +5,7 @@ import type {
 } from "@mini-agent/ai";
 import {
 	executePreparedToolCall,
+	finalizeToolCall,
 	prepareToolCall,
 } from "../src/tool-call.ts";
 import type { PreparedToolCall } from "../src/tool-call.ts";
@@ -102,6 +103,53 @@ describe("prepareToolCall", () => {
 			tool,
 			args: call.arguments,
 			startedAt: 12,
+		});
+	});
+
+	describe("finalizeToolCall", () => {
+		it("creates a protocol message while keeping terminate in the result", () => {
+			const finalized = finalizeToolCall({
+				toolCall: call,
+				result: {
+					content: [{ type: "text", text: "done" }],
+					isError: false,
+					terminate: true,
+				},
+				isError: false,
+				startedAt: performance.now() - 5,
+			});
+
+			expect(finalized.result).toMatchObject({
+				isError: false,
+				terminate: true,
+			});
+			expect(finalized.message).toEqual({
+				role: "toolResult",
+				toolCallId: "c1",
+				toolName: "write",
+				content: [{ type: "text", text: "done" }],
+				isError: false,
+			});
+			expect("terminate" in finalized.message).toBe(false);
+			expect(finalized.durationMs).toEqual(expect.any(Number));
+			expect(finalized.durationMs).toBeGreaterThanOrEqual(0);
+		});
+
+		it("finalizes immediate blocked outcomes through the same path", async () => {
+			const blocked = await prepare({
+				beforeToolCall: () => ({ block: true, terminate: true }),
+			});
+			if (blocked.kind !== "immediate")
+				throw new Error("expected immediate outcome");
+
+			const finalized = finalizeToolCall(blocked);
+
+			expect(finalized).toMatchObject({
+				toolCall: call,
+				isError: true,
+				result: { isError: true, terminate: true },
+				message: { role: "toolResult", isError: true },
+			});
 		});
 	});
 

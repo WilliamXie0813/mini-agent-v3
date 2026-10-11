@@ -10,6 +10,13 @@ import type {
 	ToolResult,
 } from "./tool.ts";
 
+export {
+	finalizeToolCall,
+} from "./finalize-tool-call.ts";
+export type {
+	FinalizedToolCallOutcome,
+} from "./finalize-tool-call.ts";
+
 export type PreparedToolCall = {
 	kind: "prepared";
 	toolCall: ToolCall;
