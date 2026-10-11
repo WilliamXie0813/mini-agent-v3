@@ -11,5 +11,15 @@ export type {
 export { executeToolCalls } from "./execute-tool-calls.ts";
 export type { ExecutedToolBatch } from "./execute-tool-calls.ts";
 export { toToolDeclarations } from "./tool.ts";
-export type { ToolDef, ToolResult } from "./tool.ts";
+export type {
+	BeforeToolCall,
+	BeforeToolCallContext,
+	BeforeToolCallResult,
+	ToolCall,
+	ToolDef,
+	ToolResult,
+	ToolUpdateHandler,
+} from "./tool.ts";
+export { validateJsonSchema } from "./json-schema.ts";
+export type { ValidationIssue } from "./json-schema.ts";
 export { createReadTool, createEditTool, createBashTool, createDefaultTools } from "./tools.ts";
