@@ -15,6 +15,7 @@ import { toToolDeclarations } from "./tool.ts";
 import type {
 	BeforeToolCall,
 	ToolDef,
+	ToolExecutionMode,
 } from "./tool.ts";
 
 export interface AgentLoopOptions {
@@ -27,6 +28,7 @@ export interface AgentLoopOptions {
 	tools?: ToolDef<any>[]; // 缺省 []：无工具的调用走一轮就收敛，与阶段 1 行为一致
 	maxTurns?: number; // 缺省 10：模型反复要工具时的熔断，防止无限烧 token
 	beforeToolCall?: BeforeToolCall;
+	toolExecution?: ToolExecutionMode;
 }
 
 // 提前返回都在构造 user 消息之前（阶段 1 的约定，不要动）：已中止的 signal 不产生半条消息；
@@ -97,6 +99,7 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 					signal: options.signal,
 					emit,
 					beforeToolCall: options.beforeToolCall,
+					toolExecution: options.toolExecution,
 				},
 			);
 			toolResults = batch.messages;

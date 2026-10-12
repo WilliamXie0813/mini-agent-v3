@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import { describe, it, expect, beforeEach } from "vitest";
 import { agentLoop } from "../src/agent-loop.ts";
 import { setDefaultStreamFn, createFakeStreamFn, createAssistantMessageEventStream } from "@mini-agent/ai";
@@ -449,6 +450,50 @@ describe("agentLoop (stage 4: lifecycle events)", () => {
 				isError: true,
 			});
 			expect(events.at(-1)?.type).toBe("agent_end");
+		});
+	});
+
+	describe("agentLoop (stage 6: execution mode)", () => {
+		it("passes sequential mode to the tool batch", async () => {
+			const calls = [
+				{ type: "toolCall" as const, id: "c1", name: "slow", arguments: {} },
+				{ type: "toolCall" as const, id: "c2", name: "fast", arguments: {} },
+			];
+			const tools: ToolDef<any>[] = [
+				{
+					name: "slow",
+					description: "slow",
+					parameters: { type: "object" },
+					execute: async () => {
+						await sleep(50);
+						return { content: [] };
+					},
+				},
+				{
+					name: "fast",
+					description: "fast",
+					parameters: { type: "object" },
+					execute: async () => {
+						await sleep(5);
+						return { content: [] };
+					},
+				},
+			];
+			const endOrder: string[] = [];
+
+			await agentLoop({
+				...base(),
+				prompt: "go",
+				tools,
+				toolExecution: "sequential",
+				streamFn: createFakeStreamFn([calls, "done"]),
+				emit: (event) => {
+					if (event.type === "tool_execution_end")
+						endOrder.push(event.toolCallId);
+				},
+			});
+
+			expect(endOrder).toEqual(["c1", "c2"]);
 		});
 	});
 });

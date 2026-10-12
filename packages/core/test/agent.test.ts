@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	createAssistantMessageEventStream,
@@ -232,6 +233,156 @@ describe("Agent", () => {
 					{ role: "user" },
 					{ role: "assistant" },
 				],
+			});
+		});
+
+		describe("Agent (stage 6: parallel tools)", () => {
+			beforeEach(() => setDefaultStreamFn(undefined));
+
+			function delayedTool(
+				name: string,
+				delayMs: number,
+				executionMode?: "sequential" | "parallel",
+			): ToolDef<Record<string, never>> {
+				return {
+					name,
+					description: name,
+					parameters: { type: "object" },
+					executionMode,
+					execute: async () => {
+						await sleep(delayMs);
+						return { content: [{ type: "text", text: name }] };
+					},
+				};
+			}
+
+			const batch = [
+				{ type: "toolCall" as const, id: "c1", name: "slow", arguments: {} },
+				{ type: "toolCall" as const, id: "c2", name: "fast", arguments: {} },
+				{ type: "toolCall" as const, id: "c3", name: "medium", arguments: {} },
+			];
+
+			it("uses parallel execution by default while keeping history source ordered", async () => {
+				const agent = new Agent({
+					system: "test",
+					tools: [
+						delayedTool("slow", 100),
+						delayedTool("fast", 20),
+						delayedTool("medium", 30),
+					],
+					streamFn: createFakeStreamFn([batch, "done"]),
+				});
+				const endOrder: string[] = [];
+				agent.subscribe((event) => {
+					if (event.type === "tool_execution_end")
+						endOrder.push(event.toolCallId);
+				});
+
+				await agent.prompt("go");
+
+				expect(endOrder).toEqual(["c2", "c3", "c1"]);
+				expect(
+					agent.state.messages
+						.filter((message) => message.role === "toolResult")
+						.map((message) =>
+							message.role === "toolResult" ? message.toolCallId : "never",
+						),
+				).toEqual(["c1", "c2", "c3"]);
+			});
+
+			it("switches between sequential and parallel modes without rebuilding Agent", async () => {
+				const agent = new Agent({
+					system: "test",
+					tools: [
+						delayedTool("slow", 80),
+						delayedTool("fast", 10),
+						delayedTool("medium", 20),
+					],
+					streamFn: createFakeStreamFn([
+						batch, "first done",
+						batch, "second done",
+					]),
+				});
+				const orders: string[][] = [[], []];
+				let run = -1;
+				agent.subscribe((event) => {
+					if (event.type === "agent_start") run++;
+					if (event.type === "tool_execution_end")
+						orders[run].push(event.toolCallId);
+				});
+
+				agent.toolExecution = "sequential";
+				await agent.prompt("first");
+				agent.toolExecution = "parallel";
+				await agent.prompt("second");
+
+				expect(orders[0]).toEqual(["c1", "c2", "c3"]);
+				expect(orders[1]).toEqual(["c2", "c3", "c1"]);
+			});
+
+			it("downgrades the whole batch when one tool is sequential", async () => {
+				const agent = new Agent({
+					system: "test",
+					tools: [
+						delayedTool("slow", 60),
+						delayedTool("fast", 10, "sequential"),
+						delayedTool("medium", 20),
+					],
+					streamFn: createFakeStreamFn([batch, "done"]),
+				});
+				const endOrder: string[] = [];
+				agent.subscribe((event) => {
+					if (event.type === "tool_execution_end")
+						endOrder.push(event.toolCallId);
+				});
+
+				await agent.prompt("go");
+
+				expect(endOrder).toEqual(["c1", "c2", "c3"]);
+			});
+
+			it("finalizes every call as aborted when prepare aborts before phase two", async () => {
+				const executes = [vi.fn(), vi.fn(), vi.fn()];
+				const tools: ToolDef<any>[] = ["one", "two", "three"].map(
+					(name, index) => ({
+						name,
+						description: name,
+						parameters: { type: "object" },
+						execute: executes[index],
+					}),
+				);
+				const calls = [
+					{ type: "toolCall" as const, id: "c1", name: "one", arguments: {} },
+					{ type: "toolCall" as const, id: "c2", name: "two", arguments: {} },
+					{ type: "toolCall" as const, id: "c3", name: "three", arguments: {} },
+				];
+				const agent = new Agent({
+					system: "test",
+					tools,
+					streamFn: createFakeStreamFn([calls, "must not run"]),
+				});
+				agent.beforeToolCall = ({ toolCall }) => {
+					if (toolCall.id === "c2") agent.abort();
+				};
+
+				await expect(agent.prompt("go")).resolves.toBeUndefined();
+
+				expect(executes.every((execute) => execute.mock.calls.length === 0))
+					.toBe(true);
+				const results = agent.state.messages.filter(
+					(message) => message.role === "toolResult",
+				);
+				expect(results.map((message) =>
+					message.role === "toolResult" ? message.toolCallId : "never",
+				)).toEqual(["c1", "c2", "c3"]);
+				expect(results.map((message) =>
+					message.role === "toolResult" ? textOf(message.content) : "never",
+				)).toEqual(["Operation aborted", "Operation aborted", "Operation aborted"]);
+				expect(agent.state.messages.at(-1)).toMatchObject({
+					role: "assistant",
+					stopReason: "aborted",
+				});
+				expect(agent.state.isStreaming).toBe(false);
 			});
 		});
 
