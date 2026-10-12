@@ -17,6 +17,7 @@ export type {
 	BeforeToolCallResult,
 	ToolCall,
 	ToolDef,
+	ToolExecutionMode,
 	ToolResult,
 	ToolUpdateHandler,
 } from "./tool.ts";

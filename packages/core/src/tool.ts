@@ -1,6 +1,7 @@
 import type { AssistantMessage, ContentBlock, JSONSchema, Message, Tool } from "@mini-agent/ai";
 
 export type ToolCall = Extract<ContentBlock, { type: "toolCall" }>;
+export type ToolExecutionMode = "sequential" | "parallel";
 
 export interface BeforeToolCallResult {
 	block?: boolean; reason?: string; terminate?: boolean;
@@ -24,6 +25,7 @@ export type ToolUpdateHandler = (partialResult: ToolResult) => void;
 export interface ToolDef<P = Record<string, unknown>> extends Tool {
 	/** 副作用安全性：进程崩溃后能否安全重跑。默认 "unsafe"。第 9 阶段启用。 */
 	replay?: "safe" | "unsafe";
+	executionMode?: ToolExecutionMode;
 	execute: (params: P, signal?: AbortSignal, onUpdate?: ToolUpdateHandler) => Promise<ToolResult>;
 }
 

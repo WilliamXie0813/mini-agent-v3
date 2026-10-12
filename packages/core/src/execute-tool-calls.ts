@@ -14,6 +14,7 @@ import type {
 	BeforeToolCall,
 	ToolCall,
 	ToolDef,
+	ToolExecutionMode,
 	ToolResult,
 } from "./tool.ts";
 
@@ -24,11 +25,25 @@ export interface ExecuteToolCallsOptions {
 	signal?: AbortSignal;
 	emit?: AgentEventSink;
 	beforeToolCall?: BeforeToolCall;
+	toolExecution?: ToolExecutionMode;
 }
 
 export interface ExecutedToolBatch {
 	messages: ToolResultMessage[];
 	terminate: boolean;
+}
+
+export function shouldExecuteSequential(
+	toolCalls: ToolCall[],
+	tools: readonly ToolDef<any>[],
+	mode: ToolExecutionMode,
+): boolean {
+	if (mode === "sequential") return true;
+	return toolCalls.some(
+		(toolCall) =>
+			tools.find((tool) => tool.name === toolCall.name)?.executionMode ===
+			"sequential",
+	);
 }
 
 export async function executeToolCalls(

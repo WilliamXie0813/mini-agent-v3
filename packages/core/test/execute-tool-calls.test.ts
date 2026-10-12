@@ -6,6 +6,7 @@ import type {
 import {
 	executeToolCalls,
 	failTruncatedToolCalls,
+	shouldExecuteSequential,
 } from "../src/execute-tool-calls.ts";
 import type {
 	ExecuteToolCallsOptions,
@@ -134,6 +135,43 @@ describe("executeToolCalls", () => {
 			partialResult: {
 				content: [{ type: "text", text: "one" }],
 			},
+		});
+	});
+
+	describe("shouldExecuteSequential", () => {
+		const noop = async () => ({ content: [] });
+		const calls = [call("c1", "first"), call("c2", "second")];
+		const parallel = makeTool("first", noop);
+		const sequential = {
+			...makeTool("second", noop),
+			executionMode: "sequential" as const,
+		};
+
+		it("uses sequential mode when requested globally", () => {
+			expect(shouldExecuteSequential(calls, [parallel, sequential], "sequential"))
+				.toBe(true);
+		});
+
+		it("downgrades the whole batch when one registered tool is sequential", () => {
+			expect(shouldExecuteSequential(calls, [parallel, sequential], "parallel"))
+				.toBe(true);
+		});
+
+		it("keeps a batch parallel when all registered tools allow it", () => {
+			expect(shouldExecuteSequential(calls, [parallel], "parallel"))
+				.toBe(false);
+		});
+
+		it("does not treat an unknown tool as sequential", () => {
+			expect(shouldExecuteSequential(
+				[call("c3", "missing")],
+				[sequential],
+				"parallel",
+			)).toBe(false);
+		});
+
+		it("keeps an empty parallel batch parallel", () => {
+			expect(shouldExecuteSequential([], [sequential], "parallel")).toBe(false);
 		});
 	});
 
