@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import type {
 	AssistantMessage,
@@ -93,7 +94,9 @@ describe("executeToolCalls", () => {
 			},
 		);
 
-		const batch = await executeToolCalls(calls, options(calls, [echo]));
+		const batch = await executeToolCalls(calls, options(calls, [echo], {
+			toolExecution: "sequential",
+		}));
 
 		expect(log).toEqual(["first", "second"]);
 		expect(batch.messages.map((message) => message.toolCallId))
@@ -198,6 +201,7 @@ describe("executeToolCalls", () => {
 				: undefined;
 
 		const batch = await executeToolCalls(calls, options(calls, tools, {
+			toolExecution: "sequential",
 			beforeToolCall,
 			emit: (event) => {
 				events.push(event);
@@ -324,6 +328,7 @@ describe("executeToolCalls", () => {
 
 		const batch = await executeToolCalls(calls, options(calls, tools, {
 			signal: controller.signal,
+			toolExecution: "sequential",
 			emit: (event) => {
 				events.push(event);
 			},
@@ -384,5 +389,201 @@ describe("executeToolCalls", () => {
 			.toEqual([true, true]);
 		expect(textOf(batch.messages[0])).toBe("kaboom");
 		expect(textOf(batch.messages[1])).toBe("bad input");
+	});
+
+	it("runs prepared tools in parallel while preserving two different orders", async () => {
+		const calls = [
+			call("c1", "slow"),
+			call("c2", "fast"),
+			call("c3", "medium"),
+		];
+		const tools = [
+			makeTool("slow", async () => {
+				await sleep(100);
+				return { content: [{ type: "text", text: "slow" }] };
+			}),
+			makeTool("fast", async () => {
+				await sleep(20);
+				return { content: [{ type: "text", text: "fast" }] };
+			}),
+			makeTool("medium", async () => {
+				await sleep(30);
+				return { content: [{ type: "text", text: "medium" }] };
+			}),
+		];
+		const events: AgentEvent[] = [];
+		const startedAt = performance.now();
+
+		const batch = await executeToolCalls(calls, options(calls, tools, {
+			toolExecution: "parallel",
+			emit: (event) => {
+				events.push(event);
+			},
+		}));
+		const elapsed = performance.now() - startedAt;
+
+		expect(elapsed).toBeLessThan(150);
+		expect(
+			events
+				.filter((event) => event.type === "tool_execution_start")
+				.map((event) => event.toolCallId),
+		).toEqual(["c1", "c2", "c3"]);
+		expect(
+			events
+				.filter((event) => event.type === "tool_execution_end")
+				.map((event) => event.toolCallId),
+		).toEqual(["c2", "c3", "c1"]);
+		expect(
+			events
+				.filter(
+					(event) =>
+						event.type === "message_end" &&
+						event.message.role === "toolResult",
+				)
+				.map((event) =>
+					event.type === "message_end" &&
+					event.message.role === "toolResult"
+						? event.message.toolCallId
+						: "never",
+				),
+		).toEqual(["c1", "c2", "c3"]);
+		expect(batch.messages.map((message) => message.toolCallId))
+			.toEqual(["c1", "c2", "c3"]);
+	});
+
+	it("finishes every prepare before starting any execute", async () => {
+		const calls = [
+			call("c1", "one"),
+			call("c2", "two"),
+			call("c3", "three"),
+		];
+		const hookOrder: string[] = [];
+		const executeSnapshots: number[] = [];
+		let release = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let firstReached = () => {};
+		const reached = new Promise<void>((resolve) => {
+			firstReached = resolve;
+		});
+		const tools = calls.map((toolCall) =>
+			makeTool(toolCall.name, async () => {
+				executeSnapshots.push(hookOrder.length);
+				return { content: [] };
+			}),
+		);
+
+		const executing = executeToolCalls(calls, options(calls, tools, {
+			toolExecution: "parallel",
+			beforeToolCall: async ({ toolCall }) => {
+				hookOrder.push(toolCall.id);
+				if (toolCall.id === "c1") {
+					firstReached();
+					await gate;
+				}
+			},
+		}));
+
+		await reached;
+		expect(hookOrder).toEqual(["c1"]);
+		expect(executeSnapshots).toEqual([]);
+		release();
+		await executing;
+		expect(hookOrder).toEqual(["c1", "c2", "c3"]);
+		expect(executeSnapshots).toEqual([3, 3, 3]);
+	});
+
+	it("keeps source-ordered messages when immediate and executed outcomes mix", async () => {
+		const calls = [
+			call("c1", "slow"),
+			call("c2", "invalid", { value: 7 }),
+			call("c3", "fast"),
+		];
+		const tools = [
+			makeTool("slow", async () => {
+				await sleep(60);
+				return { content: [] };
+			}),
+			makeTool(
+				"invalid",
+				async () => ({ content: [] }),
+				{
+					type: "object",
+					properties: { value: { type: "string" } },
+					required: ["value"],
+				},
+			),
+			makeTool("fast", async () => {
+				await sleep(10);
+				return { content: [] };
+			}),
+		];
+		const events: AgentEvent[] = [];
+
+		const batch = await executeToolCalls(calls, options(calls, tools, {
+			toolExecution: "parallel",
+			emit: (event) => {
+				events.push(event);
+			},
+		}));
+
+		expect(
+			events
+				.filter((event) => event.type === "tool_execution_end")
+				.map((event) => event.toolCallId),
+		).toEqual(["c2", "c3", "c1"]);
+		expect(batch.messages.map((message) => message.toolCallId))
+			.toEqual(["c1", "c2", "c3"]);
+	});
+
+	it("propagates a parallel end listener failure", async () => {
+		const calls = [call("c1", "one"), call("c2", "two")];
+		const tools = calls.map((toolCall) =>
+			makeTool(toolCall.name, async () => ({ content: [] })),
+		);
+
+		await expect(executeToolCalls(calls, options(calls, tools, {
+			toolExecution: "parallel",
+			emit: (event) => {
+				if (
+					event.type === "tool_execution_end" &&
+					event.toolCallId === "c2"
+				) {
+					throw new Error("end listener failed");
+				}
+			},
+		}))).rejects.toThrow("end listener failed");
+	});
+
+	it("creates source-ordered abort outcomes when prepare aborts before phase two", async () => {
+		const controller = new AbortController();
+		const calls = [
+			call("c1", "one"),
+			call("c2", "two"),
+			call("c3", "three"),
+		];
+		const executes = calls.map(() => vi.fn(async () => ({ content: [] })));
+		const tools = calls.map((toolCall, index) =>
+			makeTool(toolCall.name, executes[index]),
+		);
+		const hookOrder: string[] = [];
+
+		const batch = await executeToolCalls(calls, options(calls, tools, {
+			toolExecution: "parallel",
+			signal: controller.signal,
+			beforeToolCall: ({ toolCall }) => {
+				hookOrder.push(toolCall.id);
+				if (toolCall.id === "c2") controller.abort();
+			},
+		}));
+
+		expect(hookOrder).toEqual(["c1", "c2"]);
+		expect(executes.every((execute) => execute.mock.calls.length === 0))
+			.toBe(true);
+		expect(batch.messages.map((message) => message.toolCallId))
+			.toEqual(["c1", "c2", "c3"]);
+		expect(batch.messages.map((message) => textOf(message)))
+			.toEqual(["Operation aborted", "Operation aborted", "Operation aborted"]);
 	});
 });

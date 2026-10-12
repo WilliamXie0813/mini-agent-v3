@@ -4,10 +4,16 @@ import type {
 	ToolResultMessage,
 } from "@mini-agent/ai";
 import type { AgentEventSink } from "./agent-event.ts";
+import { executeToolCallsParallel } from "./execute-tool-calls-parallel.ts";
 import {
 	executePreparedToolCall,
 	prepareToolCall,
 } from "./tool-call.ts";
+import {
+	emitToolEnd,
+	emitToolResultMessage,
+	emitToolStart,
+} from "./tool-call-events.ts";
 import { finalizeToolCall } from "./finalize-tool-call.ts";
 import type { FinalizedToolCallOutcome } from "./finalize-tool-call.ts";
 import type {
@@ -50,12 +56,22 @@ export async function executeToolCalls(
 	toolCalls: ToolCall[],
 	options: ExecuteToolCallsOptions,
 ): Promise<ExecutedToolBatch> {
+	const mode = options.toolExecution ?? "parallel";
+	if (shouldExecuteSequential(toolCalls, options.tools, mode))
+		return executeToolCallsSequential(toolCalls, options);
+	return executeToolCallsParallel(toolCalls, options);
+}
+
+async function executeToolCallsSequential(
+	toolCalls: ToolCall[],
+	options: ExecuteToolCallsOptions,
+): Promise<ExecutedToolBatch> {
 	const finalized: FinalizedToolCallOutcome[] = [];
 	const emit = options.emit ?? (() => {});
 	for (const toolCall of toolCalls) {
 		if (options.signal?.aborted) break;
 		const startedAt = performance.now();
-		await emitStart(toolCall, emit);
+		await emitToolStart(toolCall, emit);
 		const preparation = await prepareToolCall({
 			toolCall,
 			assistantMessage: options.assistantMessage,
@@ -79,7 +95,8 @@ export async function executeToolCalls(
 					}),
 				);
 		const result = finalizeToolCall(outcome);
-		await emitFinalized(result, emit);
+		await emitToolEnd(result, emit);
+		await emitToolResultMessage(result.message, emit);
 		finalized.push(result);
 	}
 	return {
@@ -100,7 +117,7 @@ export async function failTruncatedToolCalls(
 	for (const toolCall of toolCalls) {
 		if (signal?.aborted) break;
 		const startedAt = performance.now();
-		await emitStart(toolCall, emitEvent);
+		await emitToolStart(toolCall, emitEvent);
 		const outcome = finalizeToolCall({
 			kind: "immediate",
 			toolCall,
@@ -110,41 +127,14 @@ export async function failTruncatedToolCalls(
 			isError: true,
 			startedAt,
 		});
-		await emitFinalized(outcome, emitEvent);
+		await emitToolEnd(outcome, emitEvent);
+		await emitToolResultMessage(outcome.message, emitEvent);
 		finalized.push(outcome);
 	}
 	return {
 		messages: finalized.map((outcome) => outcome.message),
 		terminate: false,
 	};
-}
-
-async function emitStart(
-	toolCall: ToolCall,
-	emit: AgentEventSink,
-): Promise<void> {
-	await emit({
-		type: "tool_execution_start",
-		toolCallId: toolCall.id,
-		toolName: toolCall.name,
-		args: toolCall.arguments,
-	});
-}
-
-async function emitFinalized(
-	outcome: FinalizedToolCallOutcome,
-	emit: AgentEventSink,
-): Promise<void> {
-	await emit({
-		type: "tool_execution_end",
-		toolCallId: outcome.toolCall.id,
-		toolName: outcome.toolCall.name,
-		result: outcome.result,
-		isError: outcome.isError,
-		durationMs: outcome.durationMs,
-	});
-	await emit({ type: "message_start", message: outcome.message });
-	await emit({ type: "message_end", message: outcome.message });
 }
 
 function errorResult(text: string): ToolResult {
