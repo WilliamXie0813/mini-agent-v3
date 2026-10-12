@@ -1,0 +1,26 @@
+{
+	"name": "@mini-agent/web",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"test": "vitest run",
+		"check": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@mini-agent/protocol": "workspace:*",
+		"react": "^19.3.0",
+		"react-dom": "^19.3.0"
+	},
+	"devDependencies": {
+		"@testing-library/jest-dom": "^7.0.1",
+		"@testing-library/react": "^16.3.3",
+		"@testing-library/user-event": "^14.6.7",
+		"@types/node": "22.19.19",
+		"@types/react": "^19.3.0",
+		"@types/react-dom": "^19.3.0",
+		"jsdom": "^30.1.2",
+		"typescript": "5.9.3",
+		"vitest": "^3"
+	}
+}
