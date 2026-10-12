@@ -1,6 +1,6 @@
 # mini-agent Web UI V1 设计文档
 
-> 状态：待最终批准  
+> 状态：已批准  
 > 日期：2026-10-12  
 > 对应代码基线：阶段 6「并行工具」  
 > 相关总设计：`docs/specs/2026-10-09-mini-agent-v3-design.md`
