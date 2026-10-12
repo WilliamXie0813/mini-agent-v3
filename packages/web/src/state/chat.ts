@@ -20,6 +20,7 @@ export function buildChatView(
 			case "message_start":
 				if (event.message.role === "system" || event.message.role === "toolResult")
 					break;
+				if (openMessageIndex !== undefined) break;
 				openMessageIndex = pushMessage(
 					items,
 					envelope,
@@ -28,6 +29,7 @@ export function buildChatView(
 				);
 				break;
 			case "message_update":
+				if (openMessageIndex === undefined) break;
 				openMessageIndex = updateAssistant(
 					items,
 					openMessageIndex,
@@ -41,6 +43,7 @@ export function buildChatView(
 					break;
 				}
 				if (event.message.role === "system") break;
+				if (openMessageIndex === undefined) break;
 				openMessageIndex = finalizeMessage(
 					items,
 					cards,
@@ -93,11 +96,16 @@ function updateAssistant(
 	envelope: AgentEventEnvelope,
 	message: ChatMessage,
 ): number {
-	if (index !== undefined && items[index]?.kind === "message") {
-		items[index] = { ...items[index], status: "streaming", message };
+	const current = index === undefined ? undefined : items[index];
+	if (
+		index !== undefined &&
+		current?.kind === "message" &&
+		current.message.role === "assistant"
+	) {
+		items[index] = { ...current, status: "streaming", message };
 		return index;
 	}
-	return pushMessage(items, envelope, message, "streaming");
+	return index ?? -1;
 }
 
 function finalizeMessage(
@@ -109,10 +117,14 @@ function finalizeMessage(
 ): undefined {
 	let messageIndex = index;
 	const current = messageIndex === undefined ? undefined : items[messageIndex];
-	if (messageIndex !== undefined && current?.kind === "message") {
+	if (
+		messageIndex !== undefined &&
+		current?.kind === "message" &&
+		current.message.role === message.role
+	) {
 		items[messageIndex] = { ...current, status: "complete", message };
 	} else {
-		messageIndex = pushMessage(items, envelope, message, "complete");
+		return undefined;
 	}
 	if (message.role === "assistant") {
 		for (const block of message.content) {

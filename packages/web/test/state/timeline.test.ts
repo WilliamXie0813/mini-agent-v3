@@ -101,9 +101,26 @@ describe("buildTimeline", () => {
 		expect(stream).toMatchObject({
 			kind: "assistant-stream",
 			count: 2,
-			id: "run-1:3-4",
+			id: "run-1:3:stream",
 		});
 		expect(stream?.envelopes.map(({ sequence }) => sequence)).toEqual([3, 4]);
+	});
+
+	it("keeps a streaming aggregate id stable as new updates arrive", () => {
+		const first = buildTimeline(lifecycle().slice(0, 4));
+		const second = buildTimeline(lifecycle().slice(0, 5));
+		const firstTurn = first.find((item) => item.kind === "turn");
+		const secondTurn = second.find((item) => item.kind === "turn");
+		if (firstTurn?.kind !== "turn" || secondTurn?.kind !== "turn")
+			throw new Error("expected turn groups");
+		const firstStream = firstTurn.items.find(
+			(item) => item.kind === "assistant-stream",
+		);
+		const secondStream = secondTurn.items.find(
+			(item) => item.kind === "assistant-stream",
+		);
+
+		expect(firstStream?.id).toBe(secondStream?.id);
 	});
 
 	it("preserves tool completion sequence", () => {
@@ -151,6 +168,67 @@ describe("buildTimeline", () => {
 			(item) =>
 				item.kind === "diagnostic" &&
 				item.code === "UNCLOSED_TURN",
+		)).toBe(true);
+	});
+
+	it.each([
+		{
+			name: "message end without start",
+			events: [
+				envelope(2, {
+					type: "message_end",
+					message: assistant("ended first"),
+				}),
+			],
+			code: "MESSAGE_END_WITHOUT_START",
+		},
+		{
+			name: "message update without start",
+			events: [
+				envelope(2, {
+					type: "message_update",
+					message: assistant("orphan", "pending"),
+					assistantMessageEvent: {
+						type: "text_delta",
+						contentIndex: 0,
+						delta: "orphan",
+						partial: assistant("orphan", "pending"),
+					},
+				}),
+			],
+			code: "MESSAGE_UPDATE_WITHOUT_START",
+		},
+		{
+			name: "overlapping message starts",
+			events: [
+				envelope(2, {
+					type: "message_start",
+					message: assistant("", "pending"),
+				}),
+				envelope(3, {
+					type: "message_start",
+					message: assistant("second", "pending"),
+				}),
+			],
+			code: "OVERLAPPING_MESSAGE_START",
+		},
+	])("diagnoses $name", ({ events, code }) => {
+		const timeline = buildTimeline([
+			envelope(0, { type: "agent_start" }),
+			envelope(1, { type: "turn_start" }),
+			...events,
+			envelope(8, {
+				type: "turn_end",
+				message: assistant("done"),
+				toolResults: [],
+			}),
+			envelope(9, { type: "agent_end", messages: [] }),
+		]);
+		const turn = timeline.find((item) => item.kind === "turn");
+		if (turn?.kind !== "turn") throw new Error("expected a turn");
+
+		expect(turn.items.some(
+			(item) => item.kind === "diagnostic" && item.code === code,
 		)).toBe(true);
 	});
 });

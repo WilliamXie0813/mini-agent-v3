@@ -15,6 +15,17 @@ import { SessionController } from "../src/session-controller.ts";
 
 type Predicate = (message: ServerMessage) => boolean;
 
+function deferred<T = void>(): {
+	promise: Promise<T>;
+	resolve: (value: T) => void;
+} {
+	let resolve = (_value: T) => {};
+	const promise = new Promise<T>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+}
+
 function recorder(
 	rejectOnce?: Predicate,
 ): {
@@ -297,6 +308,75 @@ describe("SessionController", () => {
 		const settledIndex = sink.messages.findIndex(terminal("aborted"));
 		expect(endIndex).toBeGreaterThan(-1);
 		expect(settledIndex).toBeGreaterThan(endIndex);
+	});
+
+	it("applies abort requested while run acceptance is pending", async () => {
+		const accepted = deferred();
+		const release = deferred();
+		const settled = deferred<ServerMessage>();
+		const messages: ServerMessage[] = [];
+		const controller = createController(async (message) => {
+			messages.push(message);
+			if (message.type === "run.accepted") {
+				accepted.resolve();
+				await release.promise;
+			}
+			if (message.type === "run.settled") settled.resolve(message);
+		});
+		const starting = controller.handle({
+			type: "run.start",
+			requestId: "request-1",
+			scenarioId: "abort-lifecycle",
+			prompt: "abort before acceptance finishes",
+		});
+		await accepted.promise;
+
+		await controller.handle({ type: "run.abort", requestId: "stop" });
+		release.resolve();
+		await starting;
+
+		expect(await settled.promise).toMatchObject({
+			type: "run.settled",
+			outcome: "aborted",
+		});
+		expect(messages.some(
+			(message) =>
+				message.type === "agent.event" &&
+				message.event.type === "agent_end",
+		)).toBe(true);
+	});
+
+	it("does not start an accepted run after disconnect", async () => {
+		const accepted = deferred();
+		const release = deferred();
+		const base = createDemoScenarioRegistry();
+		let created: Agent | undefined;
+		const registry: DemoScenarioRegistry = {
+			list: () => base.list(),
+			createAgent: (id) => {
+				created = base.createAgent(id);
+				return created;
+			},
+		};
+		const controller = createController(async (message) => {
+			if (message.type !== "run.accepted") return;
+			accepted.resolve();
+			await release.promise;
+		}, registry);
+		const starting = controller.handle({
+			type: "run.start",
+			requestId: "request-1",
+			scenarioId: "abort-lifecycle",
+			prompt: "disconnect before acceptance finishes",
+		});
+		await accepted.promise;
+
+		controller.disconnect();
+		release.resolve();
+		await starting;
+		await created?.waitForIdle();
+
+		expect(created?.state.messages).toEqual([]);
 	});
 
 	it("aborts and suppresses old run output after disconnect", async () => {

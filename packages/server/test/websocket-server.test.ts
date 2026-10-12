@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { connect as connectTcp } from "node:net";
 import WebSocket from "ws";
 import {
 	decodeServerMessage,
@@ -84,6 +85,38 @@ function waitForClose(socket: WebSocket): Promise<{ code: number; reason: string
 	return new Promise((resolve) => {
 		socket.once("close", (code, reason) => {
 			resolve({ code, reason: reason.toString() });
+		});
+	});
+}
+
+function rawUpgradeStatus(url: string, target: string): Promise<number> {
+	const parsed = new URL(url);
+	return new Promise((resolve, reject) => {
+		const socket = connectTcp({
+			host: parsed.hostname,
+			port: Number(parsed.port),
+		});
+		let response = "";
+		socket.once("error", reject);
+		socket.once("connect", () => {
+			socket.write([
+				`GET ${target} HTTP/1.1`,
+				`Host: ${parsed.host}`,
+				"Connection: Upgrade",
+				"Upgrade: websocket",
+				"Sec-WebSocket-Version: 13",
+				"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+				"",
+				"",
+			].join("\r\n"));
+		});
+		socket.on("data", (chunk) => {
+			response += chunk.toString();
+			if (!response.includes("\r\n\r\n")) return;
+			socket.destroy();
+			const match = /^HTTP\/1\.1 (\d+)/.exec(response);
+			if (!match) reject(new Error(`invalid HTTP response: ${response}`));
+			else resolve(Number(match[1]));
 		});
 	});
 }
@@ -186,6 +219,17 @@ describe("startAgentWebSocketServer", () => {
 		});
 
 		expect(status).toBe(404);
+	});
+
+	it("rejects a malformed request target without crashing", async () => {
+		const server = await start();
+
+		expect(await rawUpgradeStatus(server.url, "//[")).toBe(400);
+
+		const client = await connect(server.url);
+		expect(await client.waitFor(
+			(message) => message.type === "server.ready",
+		)).toMatchObject({ type: "server.ready" });
 	});
 
 	it("rejects browser origins outside localhost", async () => {

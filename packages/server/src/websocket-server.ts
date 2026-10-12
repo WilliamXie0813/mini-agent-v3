@@ -34,7 +34,12 @@ export async function startAgentWebSocketServer(
 	let activeSocket: WebSocket | undefined;
 
 	server.on("upgrade", (request, socket, head) => {
-		if (pathOf(request) !== "/agent") {
+		const path = pathOf(request);
+		if (path === undefined) {
+			rejectUpgrade(socket, 400, "Bad Request");
+			return;
+		}
+		if (path !== "/agent") {
 			rejectUpgrade(socket, 404, "Not Found");
 			return;
 		}
@@ -125,8 +130,12 @@ function listen(
 	});
 }
 
-function pathOf(request: IncomingMessage): string {
-	return new URL(request.url ?? "/", "http://localhost").pathname;
+function pathOf(request: IncomingMessage): string | undefined {
+	try {
+		return new URL(request.url ?? "/", "http://localhost").pathname;
+	} catch {
+		return undefined;
+	}
 }
 
 function originAllowed(origin: string | undefined): boolean {

@@ -196,6 +196,31 @@ describe("Workspace layout and controls", () => {
 			expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
 		},
 	);
+
+	it("renders protocol and run diagnostics with a raw-event link", () => {
+		const diagnosticState = running([
+			envelope(0, { type: "agent_start" }),
+		]);
+		diagnosticState.lastProtocolError = {
+			code: "RUN_ACTIVE",
+			message: "A run is already active.",
+		};
+		if (!diagnosticState.run) throw new Error("expected run");
+		diagnosticState.run.diagnostics = [{
+			code: "DUPLICATE_SEQUENCE",
+			message: "Sequence 0 was received more than once.",
+			sequence: 0,
+		}];
+		render(<Workspace state={diagnosticState} {...callbacks} />);
+
+		expect(screen.getByText(/RUN_ACTIVE: A run is already active/))
+			.toBeInTheDocument();
+		const diagnostic = screen.getByRole("button", {
+			name: /DUPLICATE_SEQUENCE/,
+		});
+		fireEvent.click(diagnostic);
+		expect(callbacks.onSelectTimelineItem).toHaveBeenCalledWith("run-1:0");
+	});
 });
 
 describe("Workspace chat", () => {
@@ -274,5 +299,18 @@ describe("Workspace timeline", () => {
 		expect(screen.getByText("Elapsed 90ms")).toBeInTheDocument();
 		expect(screen.getByText(/"toolCallId": "c2"/)).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Copy JSON" })).toBeInTheDocument();
+	});
+
+	it("selects a turn header to inspect both boundary envelopes", () => {
+		const stateWithSelection = running(toolLifecycle());
+		stateWithSelection.selectedTimelineItemId = "run-1:turn:1:1";
+		render(<Workspace state={stateWithSelection} {...callbacks} />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Turn 1" }));
+
+		expect(callbacks.onSelectTimelineItem)
+			.toHaveBeenCalledWith("run-1:turn:1:1");
+		expect(screen.getByText(/"type": "turn_start"/)).toBeInTheDocument();
+		expect(screen.getByText(/"type": "turn_end"/)).toBeInTheDocument();
 	});
 });

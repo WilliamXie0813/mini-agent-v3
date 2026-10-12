@@ -1,16 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { StopReason } from "@mini-agent/ai";
 import type { Agent, AgentEvent } from "@mini-agent/core";
-import {
-	PROTOCOL_VERSION,
-	V1_CAPABILITIES,
-} from "@mini-agent/protocol";
+import { PROTOCOL_VERSION, V1_CAPABILITIES } from "@mini-agent/protocol";
 import type { ClientCommand, RunOutcome, ServerMessage } from "@mini-agent/protocol";
 import type { DemoScenarioRegistry } from "./scenarios.ts";
 
-export type ServerMessageSink = (
-	message: ServerMessage,
-) => void | Promise<void>;
+export type ServerMessageSink = (message: ServerMessage) => void | Promise<void>;
 
 export interface SessionControllerOptions {
 	send: ServerMessageSink;
@@ -25,6 +20,7 @@ type ActiveRun = {
 	startedAt: number;
 	sequence: number;
 	lastStopReason?: StopReason;
+	abortRequested: boolean;
 	promise?: Promise<void>;
 };
 
@@ -99,6 +95,7 @@ export class SessionController {
 			agent,
 			startedAt: this.now(),
 			sequence: 0,
+			abortRequested: false,
 		};
 		this.activeRun = run;
 		try {
@@ -111,6 +108,7 @@ export class SessionController {
 			this.activeRun = undefined;
 			throw error;
 		}
+		if (this.closed || this.activeRun !== run) return;
 
 		agent.subscribe((event) => this.deliverEvent(run, event));
 		run.promise = this.runAgent(run, command.prompt);
@@ -120,12 +118,13 @@ export class SessionController {
 	private async runAgent(run: ActiveRun, prompt: string): Promise<void> {
 		let outcome: RunOutcome;
 		try {
-			await run.agent.prompt(prompt);
+			const promptPromise = run.agent.prompt(prompt);
+			if (run.abortRequested) run.agent.abort();
+			await promptPromise;
 			outcome = this.outcomeFor(run.lastStopReason);
 		} catch {
 			outcome = "failed";
 		}
-
 		try {
 			await this.send({ type: "run.settled", runId: run.runId, outcome });
 		} catch {
@@ -168,7 +167,8 @@ export class SessionController {
 			);
 			return;
 		}
-		this.activeRun.agent.abort();
+		this.activeRun.abortRequested = true;
+		if (this.activeRun.promise) this.activeRun.agent.abort();
 	}
 
 	private async reset(requestId: string): Promise<void> {
@@ -184,13 +184,11 @@ export class SessionController {
 		if (stopReason === "error") return "error";
 		return "completed";
 	}
-	private async sendError(
-		requestId: string,
-		code: string,
-		message: string,
-	): Promise<void> {
+
+	private async sendError(requestId: string, code: string, message: string): Promise<void> {
 		await this.send({ type: "protocol.error", requestId, code, message });
 	}
+
 	private async send(message: ServerMessage): Promise<void> {
 		if (this.closed) return;
 		await this.sendFn(message);

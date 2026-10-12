@@ -24,7 +24,16 @@ export function TimelinePanel({
 					item.kind === "turn"
 						? (
 							<section className="turn-group" key={item.id}>
-								<h2>Turn {item.turnNumber}</h2>
+								<button
+									className={
+										item.id === selectedItemId
+											? "turn-heading selected"
+											: "turn-heading"
+									}
+									onClick={() => onSelect(item.id)}
+								>
+									Turn {item.turnNumber}
+								</button>
 								{item.items.map((leaf) => (
 									<TimelineLeaf
 										key={leaf.id}

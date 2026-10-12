@@ -180,4 +180,24 @@ describe("buildChatView", () => {
 			status: "error",
 		});
 	});
+
+	it("does not present an unmatched message_end as a valid chat message", () => {
+		const chat = buildChatView([
+			envelope(0, {
+				type: "message_end",
+				message: assistant("ended first"),
+			}),
+			envelope(1, {
+				type: "message_start",
+				message: assistant("started later", "pending"),
+			}),
+		]);
+
+		expect(chat).toHaveLength(1);
+		expect(chat[0]).toMatchObject({
+			kind: "message",
+			status: "streaming",
+		});
+		expect(textOf(chat[0])).toBe("started later");
+	});
 });

@@ -1,11 +1,14 @@
 import type { AgentEventEnvelope } from "@mini-agent/protocol";
 import type {
-	TimelineAssistantStreamItem,
-	TimelineDiagnosticItem,
 	TimelineItem,
-	TimelineLeafItem,
 	TimelineTurnItem,
 } from "./types.ts";
+import {
+	appendAssistantUpdate,
+	diagnostic,
+	eventItem,
+	ordered,
+} from "./timeline-items.ts";
 
 const knownEvents = new Set([
 	"agent_start",
@@ -25,12 +28,22 @@ export function buildTimeline(
 ): TimelineItem[] {
 	const output: TimelineItem[] = [];
 	let current: TimelineTurnItem | undefined;
+	let openMessage:
+		| { role: string; envelope: AgentEventEnvelope }
+		| undefined;
 	let turnNumber = 0;
 
 	for (const envelope of ordered(envelopes)) {
 		const type = envelope.event.type;
 		if (type === "turn_start") {
 			if (current) {
+				if (openMessage) {
+					current.items.push(diagnostic(
+						"UNCLOSED_MESSAGE",
+						"A message remained open when the next turn started.",
+						openMessage.envelope,
+					));
+				}
 				current.items.push(diagnostic(
 					"NESTED_TURN",
 					"A new turn started before the previous turn ended.",
@@ -38,6 +51,7 @@ export function buildTimeline(
 				));
 				output.push(current);
 			}
+			openMessage = undefined;
 			current = {
 				kind: "turn",
 				id: `${envelope.runId}:turn:${++turnNumber}:${envelope.sequence}`,
@@ -55,6 +69,14 @@ export function buildTimeline(
 					envelope,
 				));
 				continue;
+			}
+			if (openMessage) {
+				current.items.push(diagnostic(
+					"UNCLOSED_MESSAGE",
+					"A message remained open when the turn ended.",
+					openMessage.envelope,
+				));
+				openMessage = undefined;
 			}
 			current.end = envelope;
 			output.push(current);
@@ -91,14 +113,66 @@ export function buildTimeline(
 			));
 			continue;
 		}
-		if (type === "message_update") {
-			appendAssistantUpdate(current.items, envelope);
-		} else {
-			current.items.push(eventItem(envelope));
+		if (type === "message_start") {
+			if (openMessage) {
+				current.items.push(diagnostic(
+					"OVERLAPPING_MESSAGE_START",
+					"A message started before the previous message ended.",
+					envelope,
+				));
+			} else {
+				openMessage = {
+					role: envelope.event.type === "message_start"
+						? envelope.event.message.role
+						: "",
+					envelope,
+				};
+				current.items.push(eventItem(envelope));
+			}
+			continue;
 		}
+		if (type === "message_update") {
+			if (!openMessage) {
+				current.items.push(diagnostic(
+					"MESSAGE_UPDATE_WITHOUT_START",
+					"A message update arrived without message_start.",
+					envelope,
+				));
+			} else if (openMessage.role !== "assistant") {
+				current.items.push(diagnostic(
+					"MESSAGE_UPDATE_FOR_NON_ASSISTANT",
+					"A message update targeted a non-assistant message.",
+					envelope,
+				));
+			} else {
+				appendAssistantUpdate(current.items, envelope);
+			}
+			continue;
+		}
+		if (type === "message_end") {
+			if (!openMessage) {
+				current.items.push(diagnostic(
+					"MESSAGE_END_WITHOUT_START",
+					"A message ended without message_start.",
+					envelope,
+				));
+			} else {
+				current.items.push(eventItem(envelope));
+				openMessage = undefined;
+			}
+			continue;
+		}
+		current.items.push(eventItem(envelope));
 	}
 
 	if (current) {
+		if (openMessage) {
+			current.items.push(diagnostic(
+				"UNCLOSED_MESSAGE",
+				"Timeline ended before message_end.",
+				openMessage.envelope,
+			));
+		}
 		output.push(current);
 		output.push(diagnostic(
 			"UNCLOSED_TURN",
@@ -107,60 +181,4 @@ export function buildTimeline(
 		));
 	}
 	return output;
-}
-
-function appendAssistantUpdate(
-	items: TimelineLeafItem[],
-	envelope: AgentEventEnvelope,
-): void {
-	const previous = items.at(-1);
-	if (previous?.kind === "assistant-stream") {
-		previous.envelopes.push(envelope);
-		previous.count++;
-		previous.id = aggregateId(previous.envelopes);
-		return;
-	}
-	const item: TimelineAssistantStreamItem = {
-		kind: "assistant-stream",
-		id: `${envelope.runId}:${envelope.sequence}-${envelope.sequence}`,
-		count: 1,
-		envelopes: [envelope],
-	};
-	items.push(item);
-}
-
-function eventItem(envelope: AgentEventEnvelope): TimelineLeafItem {
-	return {
-		kind: "event",
-		id: `${envelope.runId}:${envelope.sequence}`,
-		eventType: envelope.event.type,
-		envelopes: [envelope],
-	};
-}
-
-function diagnostic(
-	code: string,
-	message: string,
-	envelope: AgentEventEnvelope,
-): TimelineDiagnosticItem {
-	return {
-		kind: "diagnostic",
-		id: `${envelope.runId}:${envelope.sequence}:diagnostic:${code}`,
-		code,
-		message,
-		envelopes: [envelope],
-	};
-}
-
-function aggregateId(envelopes: AgentEventEnvelope[]): string {
-	return `${envelopes[0].runId}:${envelopes[0].sequence}-${envelopes.at(-1)!.sequence}`;
-}
-
-function ordered(envelopes: AgentEventEnvelope[]): AgentEventEnvelope[] {
-	return envelopes
-		.map((envelope, index) => ({ envelope, index }))
-		.sort((left, right) =>
-			left.envelope.sequence - right.envelope.sequence ||
-			left.index - right.index)
-		.map(({ envelope }) => envelope);
 }
