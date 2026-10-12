@@ -452,6 +452,20 @@ describe("prepareToolCall", () => {
 		expect(textOf(outcome)).toBe("policy unavailable");
 	});
 
+	it("standardizes a hook rejection caused by abort", async () => {
+		const controller = new AbortController();
+		const outcome = await prepare({
+			signal: controller.signal,
+			beforeToolCall: () => {
+				controller.abort();
+				throw new Error("permission wait cancelled");
+			},
+		});
+
+		expect(outcome).toMatchObject({ kind: "immediate", isError: true });
+		expect(textOf(outcome)).toBe("Operation aborted");
+	});
+
 	it("returns Operation aborted when the signal changes during the hook", async () => {
 		const controller = new AbortController();
 		const outcome = await prepare({

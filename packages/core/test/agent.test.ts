@@ -290,6 +290,37 @@ describe("Agent", () => {
 				).toEqual(["c1", "c2", "c3"]);
 			});
 
+			it("delivers the same completion order to every asynchronous subscriber", async () => {
+				const agent = new Agent({
+					system: "test",
+					tools: [
+						delayedTool("first", 10),
+						delayedTool("second", 20),
+					],
+					streamFn: createFakeStreamFn([[
+						{ type: "toolCall", id: "c1", name: "first", arguments: {} },
+						{ type: "toolCall", id: "c2", name: "second", arguments: {} },
+					], "done"]),
+				});
+				const observed: string[] = [];
+				agent.subscribe(async (event) => {
+					if (
+						event.type === "tool_execution_end" &&
+						event.toolCallId === "c1"
+					) {
+						await sleep(50);
+					}
+				});
+				agent.subscribe((event) => {
+					if (event.type === "tool_execution_end")
+						observed.push(event.toolCallId);
+				});
+
+				await agent.prompt("go");
+
+				expect(observed).toEqual(["c1", "c2"]);
+			});
+
 			it("switches between sequential and parallel modes without rebuilding Agent", async () => {
 				const agent = new Agent({
 					system: "test",

@@ -1,37 +1,20 @@
 import { getDefaultStreamFn } from "@mini-agent/ai";
-import type {
-	AssistantMessage,
-	Message,
-	StreamFn,
-} from "@mini-agent/ai";
+import type { AssistantMessage, Message, StreamFn } from "@mini-agent/ai";
 import { agentLoop } from "./agent-loop.ts";
 import type { AgentOptions } from "./agent-options.ts";
-import type {
-	AgentEvent,
-	AgentEventListener,
-} from "./agent-event.ts";
-import {
-	createAgentState,
-	reduceAgentState,
-} from "./agent-state.ts";
+import type { AgentEvent, AgentEventListener } from "./agent-event.ts";
+import { createAgentState, reduceAgentState } from "./agent-state.ts";
 import type { AgentState } from "./agent-state.ts";
-import type {
-	BeforeToolCall,
-	ToolExecutionMode,
-} from "./tool.ts";
+import type { BeforeToolCall, ToolExecutionMode } from "./tool.ts";
 
 type ActiveRun = {
-	promise: Promise<void>;
-	resolve: () => void;
-	abortController: AbortController;
+	promise: Promise<void>; resolve: () => void; abortController: AbortController;
 };
 
 class AgentListenerFailure extends Error {
 	readonly original: unknown;
-
 	constructor(original: unknown) {
-		super("agent listener failed");
-		this.original = original;
+		super("agent listener failed"); this.original = original;
 	}
 }
 
@@ -47,6 +30,7 @@ export class Agent {
 	private runMessages: Message[] = [];
 	private turnOpen = false;
 	private messageOpen = false;
+	private eventTail = Promise.resolve();
 
 	constructor(options: AgentOptions) {
 		this.system = options.system;
@@ -167,7 +151,14 @@ export class Agent {
 		});
 	}
 
-	private async processEvents(event: AgentEvent): Promise<void> {
+	private processEvents(event: AgentEvent): Promise<void> {
+		const delivery = this.eventTail.then(() => this.deliverEvent(event));
+		delivery.catch(() => {});
+		this.eventTail = delivery.then(() => {}, () => {});
+		return delivery;
+	}
+
+	private async deliverEvent(event: AgentEvent): Promise<void> {
 		reduceAgentState(this._state, event);
 		switch (event.type) {
 			case "turn_start":

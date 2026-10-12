@@ -74,10 +74,18 @@ export async function executeToolCallsParallel(
 		});
 	}
 
-	const ordered = await Promise.all(
+	const settled = await Promise.allSettled(
 		entries.map((entry) =>
 			typeof entry === "function" ? entry() : Promise.resolve(entry),
 		),
+	);
+	const rejected = settled.find(
+		(result): result is PromiseRejectedResult =>
+			result.status === "rejected",
+	);
+	if (rejected) throw rejected.reason;
+	const ordered = settled.map((result) =>
+		(result as PromiseFulfilledResult<FinalizedToolCallOutcome>).value,
 	);
 	for (const outcome of ordered)
 		await emitToolResultMessage(outcome.message, emit);

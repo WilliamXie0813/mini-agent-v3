@@ -556,6 +556,35 @@ describe("executeToolCalls", () => {
 		}))).rejects.toThrow("end listener failed");
 	});
 
+	it("drains started siblings before propagating a parallel listener failure", async () => {
+		const calls = [call("c1", "fast"), call("c2", "slow")];
+		const tools = [
+			makeTool("fast", async () => {
+				await sleep(10);
+				return { content: [] };
+			}),
+			makeTool("slow", async () => {
+				await sleep(80);
+				return { content: [] };
+			}),
+		];
+		const ended: string[] = [];
+		const startedAt = performance.now();
+
+		await expect(executeToolCalls(calls, options(calls, tools, {
+			toolExecution: "parallel",
+			emit: (event) => {
+				if (event.type !== "tool_execution_end") return;
+				ended.push(event.toolCallId);
+				if (event.toolCallId === "c1")
+					throw new Error("end listener failed");
+			},
+		}))).rejects.toThrow("end listener failed");
+
+		expect(performance.now() - startedAt).toBeGreaterThanOrEqual(70);
+		expect(ended).toEqual(["c1", "c2"]);
+	});
+
 	it("creates source-ordered abort outcomes when prepare aborts before phase two", async () => {
 		const controller = new AbortController();
 		const calls = [

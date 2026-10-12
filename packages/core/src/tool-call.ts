@@ -59,6 +59,8 @@ export async function prepareToolCall(
 			messages: options.messages.slice(),
 		}, options.signal);
 	} catch (error) {
+		if (options.signal?.aborted)
+			return immediate(options, errorResult("Operation aborted"));
 		return immediate(
 			options,
 			errorResult(error instanceof Error ? error.message : String(error)),
