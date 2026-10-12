@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>并行工具深度图解 — 阶段 6</title>
+<style>
+	:root {
+		--paper:#f6f1e7; --deep:#efe7d8; --ink:#1c1a17; --soft:#4a453c;
+		--muted:#8a8272; --accent:#d6401f; --blue:#2b4acb; --green:#2e7d4f;
+		--gold:#b47a15; --line:#d8cfbd; --code:#221f1b; --code-fg:#e8e0d0;
+	}
+	*{box-sizing:border-box;margin:0;padding:0} html{scroll-behavior:smooth}
+	body{background:var(--paper);color:var(--ink);font-family:Georgia,"Songti SC","STSong","SimSun",serif;line-height:1.85;padding:0 24px 150px;background-image:radial-gradient(rgba(28,26,23,.045) 1px,transparent 1px);background-size:26px 26px}
+	.wrap{max-width:1040px;margin:0 auto}
+	header{padding:90px 0 60px;border-bottom:3px double var(--ink);margin-bottom:70px}
+	.kicker{font:12px "Cascadia Code",Consolas,monospace;letter-spacing:.34em;color:var(--accent);margin-bottom:18px}
+	h1{font-size:clamp(38px,6vw,62px);line-height:1.18}
+	header .sub{max-width:800px;margin-top:22px;color:var(--soft);font-size:17px}
+	.toc{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:30px}
+	.toc a{font:13px "Cascadia Code",Consolas,monospace;color:var(--blue);text-decoration:none;border-bottom:1px dashed var(--blue)}
+	section{margin-bottom:100px}.sec-head{display:flex;align-items:baseline;gap:20px;margin-bottom:28px}
+	.sec-num{font-size:54px;font-weight:700;color:var(--deep);-webkit-text-stroke:1.5px var(--accent);line-height:1}
+	h2{font-size:30px}h3{margin:28px 0 12px;font-size:20px}
+	p{margin-bottom:16px;color:var(--soft);font-size:16.5px}p strong,li strong{color:var(--ink)}
+	code{font:.88em "Cascadia Code",Consolas,monospace;background:var(--deep);padding:2px 7px;border-radius:4px}
+	pre{background:var(--code);color:var(--code-fg);font:13px/1.7 "Cascadia Code",Consolas,monospace;padding:20px 24px;border-radius:9px;overflow-x:auto;margin:16px 0 20px;box-shadow:0 9px 28px rgba(28,26,23,.15)}
+	pre .hot{color:#e8a04c}pre .good{color:#9ecf9e}pre .dim{color:#8f8674}
+	table{width:100%;border-collapse:collapse;margin:20px 0;font-size:15px}th,td{border:1px solid var(--line);padding:11px 14px;text-align:left;vertical-align:top}th{background:var(--deep);font:13px "Cascadia Code",Consolas,monospace}td{color:var(--soft)}
+	.callout{border-left:4px solid var(--accent);background:var(--deep);padding:16px 22px;margin:22px 0;border-radius:0 8px 8px 0}.callout .tag{display:block;margin-bottom:6px;font:11px "Cascadia Code",Consolas,monospace;letter-spacing:.24em;color:var(--accent)}.callout p{margin:0;font-size:15.5px}
+	.figure{background:#fffdf7;border:1px solid var(--line);border-radius:12px;padding:26px;margin:22px 0;box-shadow:0 4px 14px rgba(28,26,23,.06)}.cap{margin-bottom:16px;font:12px "Cascadia Code",Consolas,monospace;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}.foot{margin-top:16px;padding-top:12px;border-top:1px dashed var(--line);color:var(--muted);font-size:14px}
+	.btns{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;align-items:center}button{border:1.5px solid var(--ink);border-radius:999px;background:transparent;padding:9px 17px;cursor:pointer;font:13px "Cascadia Code",Consolas,monospace;transition:.15s}button:hover:not(:disabled),button.active{background:var(--ink);color:var(--paper)}button:disabled{opacity:.32;cursor:not-allowed}button.primary{border-color:var(--accent);color:var(--accent);font-weight:700}button.primary:hover:not(:disabled){background:var(--accent);color:#fff}button.green{border-color:var(--green);color:var(--green)}button.green:hover:not(:disabled){background:var(--green);color:#fff}[hidden]{display:none!important}
+
+	.story{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.lane{min-height:175px;padding:14px;border:1.5px solid var(--line);border-radius:10px;transition:.2s}.lane.focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(214,64,31,.14);transform:translateY(-2px)}.lane h4{margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line);font:11.5px "Cascadia Code",Consolas,monospace;letter-spacing:.12em;color:var(--muted);text-transform:uppercase}.lane .body{font:12px/1.65 "Cascadia Code",Consolas,monospace;color:var(--soft)}
+	.event{grid-column:1/-1;background:var(--code);color:var(--code-fg);padding:12px 16px;border-radius:8px;font:13px "Cascadia Code",Consolas,monospace}.event strong{color:#e8a04c}.note{grid-column:1/-1;min-height:70px;padding:13px 18px;border-left:4px solid var(--accent);background:var(--deep)}.counter{margin-left:auto;color:var(--muted);font:12px "Cascadia Code",Consolas,monospace}
+	.timeline{display:flex;flex-direction:column;gap:6px}.bar{height:28px;border-radius:6px;color:#fff;font:11px/28px "Cascadia Code",Consolas,monospace;padding:0 9px;position:relative}.bar.prepare{background:var(--blue)}.bar.execute{background:var(--green)}.bar.wait{background:var(--gold)}.bar::after{content:attr(data-ms);position:absolute;right:8px}
+	.messages{display:flex;flex-direction:column;gap:5px}.msg{padding:5px 8px;border-radius:5px;font-size:11.5px}.msg.assistant{background:var(--green);color:#fff}.msg.tool{background:var(--gold);color:#fff}
+
+	.debugger{display:grid;grid-template-columns:220px 1fr;gap:16px}.steps{display:flex;flex-direction:column;gap:6px}.step{width:100%;border-radius:7px;text-align:left;padding:8px 10px;font-size:11.5px}.step.active{background:var(--accent);border-color:var(--accent);color:#fff}.detail{display:grid;grid-template-columns:1fr 1fr;gap:12px}.card{border:1.5px solid var(--line);border-radius:9px;padding:14px;min-height:112px}.card h4{margin-bottom:8px;color:var(--muted);font:11px "Cascadia Code",Consolas,monospace;letter-spacing:.1em;text-transform:uppercase}.card p{margin:0;font-size:14px}.source{grid-column:1/-1}.source pre{box-shadow:none;margin:8px 0}
+
+	.order-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.order-box{border:1.5px solid var(--line);border-radius:9px;padding:16px}.order-box h3{margin-top:0}.chip{padding:7px 10px;margin-bottom:6px;border-radius:6px;font:12px "Cascadia Code",Consolas,monospace}.chip.end{background:rgba(43,74,203,.1);border-left:3px solid var(--blue)}.chip.message{background:rgba(180,122,21,.12);border-left:3px solid var(--gold)}.chip.good{background:rgba(46,125,79,.12);border-left:3px solid var(--green)}.chip.bad{background:rgba(214,64,31,.1);border-left:3px solid var(--accent)}
+	.queue{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}.qbox{position:relative;padding:13px 9px;border:1.5px solid var(--line);border-radius:8px;text-align:center;font:11.5px/1.55 "Cascadia Code",Consolas,monospace}.qbox::after{content:"→";position:absolute;right:-16px;top:38%;color:var(--muted)}.qbox:last-child::after{display:none}.qbox.wait{border-color:var(--accent);background:rgba(214,64,31,.09)}.qbox.done{border-color:var(--green);background:rgba(46,125,79,.1)}.status{margin-top:14px;padding:12px 15px;border-radius:8px;background:var(--deep);font:12.5px "Cascadia Code",Consolas,monospace}
+	.quiz-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.quiz{padding:18px;border:1.5px solid var(--line);border-radius:10px;background:#fffdf7}.quiz h3{margin:0 0 10px;font-size:17px}.answer{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line);color:var(--soft)}
+	details.source{margin-top:12px;border:1px solid var(--line);border-radius:8px;padding:10px 13px}details.source summary{cursor:pointer;font-weight:700}details.source pre{margin-bottom:0;max-height:450px}
+	footer{border-top:3px double var(--ink);padding-top:30px;text-align:center;color:var(--muted);font-size:14px}
+	@media(max-width:850px){.story,.queue{grid-template-columns:1fr 1fr}.debugger,.order-grid{grid-template-columns:1fr}.steps{display:grid;grid-template-columns:1fr 1fr}.qbox:nth-child(2)::after,.qbox:nth-child(4)::after{display:none}}
+	@media(max-width:580px){.story,.queue,.detail,.quiz-grid,.steps{grid-template-columns:1fr}.qbox::after{display:none}h2{font-size:24px}.figure{padding:16px}table{font-size:13px}}
+	@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+	<div class="kicker">mini-agent-v3 · 阶段 6 · 深度学习版</div>
+	<h1>一批 ToolCall 的两种顺序</h1>
+	<p class="sub">先完整看一批 slow / fast / medium 工具怎样从模型源顺序进入 runtime，经过串行 prepare 和并行 execute，产生完成顺序事件，再重新排回源顺序消息。第二遍沿同一时间线拆源码、Promise.all、sequential fallback、文件锁与 abort。</p>
+	<div class="toc">
+		<a href="#s0">阅读方法</a><a href="#s1">① 完整故事</a><a href="#s2">② 同线调试器</a>
+		<a href="#s3">③ 两阶段并行</a><a href="#s4">④ 双顺序</a><a href="#s5">⑤ 文件队列</a>
+		<a href="#s6">⑥ Abort/降级</a><a href="#s7">⑦ 回测</a>
+	</div>
+</header>
+
+<section id="s0">
+	<div class="sec-head"><div class="sec-num">0</div><h2>先建立全局地图</h2></div>
+	<p>模型按顺序发出三个调用：<code>c1 slow(100ms)</code>、<code>c2 fast(20ms)</code>、<code>c3 medium(30ms)</code>。</p>
+	<pre>源顺序：      c1 → c2 → c3
+prepare：     c1 → c2 → c3       <span class="dim">// 串行</span>
+execute：     c1 ───────── 100ms
+             c2 ── 20ms          <span class="dim">// 并行</span>
+             c3 ─── 30ms
+end 事件：    c2 → c3 → c1       <span class="hot">// 完成顺序</span>
+result 消息： c1 → c2 → c3       <span class="good">// 源顺序</span></pre>
+	<div class="callout"><span class="tag">核心</span><p>UI 与模型不是同一个消费者。UI 要实时完成顺序；模型要稳定协议顺序。阶段 6 不是“加 Promise.all”，而是同时维护这两种顺序。</p></div>
+</section>
+
+<section id="s1">
+	<div class="sec-head"><div class="sec-num">1</div><h2>第一遍：完整播放一次 batch</h2></div>
+	<div class="figure">
+		<div class="cap">完整故事播放器</div>
+		<div class="story">
+			<div class="lane" id="lane-model"><h4>① Model Source</h4><div class="body" id="body-model"></div></div>
+			<div class="lane" id="lane-prepare"><h4>② Serial Prepare</h4><div class="body" id="body-prepare"></div></div>
+			<div class="lane" id="lane-execute"><h4>③ Parallel Execute</h4><div class="body"><div class="timeline" id="body-execute"></div></div></div>
+			<div class="lane" id="lane-output"><h4>④ Events / Messages</h4><div class="body"><div id="body-output"></div><div class="messages" id="body-messages"></div></div></div>
+			<div class="event">当前时刻：<strong id="story-event">—</strong></div>
+			<div class="note" id="story-note">按「自动播放」或「单步」开始。</div>
+			<div class="btns" style="grid-column:1/-1">
+				<button id="prev">← 上一步</button><button class="primary" id="next">单步 →</button>
+				<button class="green" id="play">▶ 自动播放</button><button id="reset">重置</button>
+				<span class="counter" id="count"></span>
+			</div>
+		</div>
+	</div>
+</section>
+
+<section id="s2">
+	<div class="sec-head"><div class="sec-num">2</div><h2>第二遍：仍在同一时间线上逐步下钻</h2></div>
+	<div class="figure">
+		<div class="cap">同线调试器</div>
+		<div class="debugger">
+			<div class="steps" id="debug-steps"></div>
+			<div>
+				<h3 id="debug-title" style="margin-top:0"></h3>
+				<div class="detail">
+					<div class="card"><h4>为什么存在</h4><p id="d-why"></p></div>
+					<div class="card"><h4>输入</h4><p id="d-input"></p></div>
+					<div class="card"><h4>输出</h4><p id="d-output"></p></div>
+					<div class="card"><h4>事件 / 历史</h4><p id="d-state"></p></div>
+					<div class="card"><h4>如果反过来</h4><p id="d-counter"></p></div>
+					<div class="card"><h4>关键对象</h4><p id="d-object"></p></div>
+					<div class="card source"><h4>关键源码</h4><pre id="d-source"></pre></div>
+				</div>
+			</div>
+		</div>
+	</div>
+</section>
+
+<section id="s3">
+	<div class="sec-head"><div class="sec-num">3</div><h2>两阶段并行：为什么 Promise.all 只能放在 prepare 之后</h2></div>
+	<div class="figure">
+		<div class="cap">阶段一 · prepare 串行</div>
+		<pre>for (const toolCall of toolCalls) {
+  await emitToolStart(toolCall);
+  const preparation = await prepareToolCall(...);
+
+  if (preparation.kind === "immediate") {
+    <span class="hot">// invalid / block 现在就 finalize + end</span>
+    entries.push(finalized);
+  } else {
+    <span class="good">// 只保存 thunk，还不执行工具</span>
+    entries.push(async () =&gt; execute(preparation));
+  }
+}</pre>
+		<p>permission hook 可能等待人类点击。串行 prepare 保证权限问题按模型顺序出现，并保证任何 execute 开始前，整个 batch 已完成 preflight。</p>
+	</div>
+	<div class="figure">
+		<div class="cap">阶段二 · execute 并行</div>
+		<pre>const ordered = await Promise.all(
+  entries.map(entry =&gt;
+    typeof entry === "function"
+      ? entry()                  <span class="hot">// thunk 并行运行</span>
+      : Promise.resolve(entry)   <span class="dim">// immediate 占住源 index</span>
+  )
+);</pre>
+		<p><code>Promise.all</code> 的执行完成时间可以乱序，但返回数组仍按输入 index 排列。这是后面恢复 source-ordered messages 的关键。</p>
+		<details class="source"><summary>展开 parallel orchestrator 的完整核心结构</summary><pre>phase 1:
+  start c1 → prepare c1 → store thunk #1
+  start c2 → prepare c2 → store thunk #2
+  start c3 → prepare c3 → store thunk #3
+
+phase 2:
+  Promise.all([thunk #1, thunk #2, thunk #3])
+
+inside each thunk:
+  execute → finalize → emit tool_execution_end
+
+after Promise.all:
+  for outcome of ordered:
+    emit toolResult message_start/end</pre></details>
+	</div>
+</section>
+
+<section id="s4">
+	<div class="sec-head"><div class="sec-num">4</div><h2>双顺序：同一批结果为什么要排两次</h2></div>
+	<div class="figure">
+		<div class="cap">点击观察两种消费者</div>
+		<div class="order-grid">
+			<div class="order-box"><h3>UI：完成顺序</h3><div id="end-order"></div></div>
+			<div class="order-box"><h3>Model history：源顺序</h3><div id="message-order"></div></div>
+		</div>
+		<div class="btns">
+			<button class="primary" id="order-run">模拟工具完成</button>
+			<button id="order-reset">重置</button>
+		</div>
+		<div class="status" id="order-status">等待开始。</div>
+	</div>
+	<table>
+		<tr><th>如果只保留完成顺序</th><td>模型会看到 c2 result 在 c1 前，协议配对被运行时延迟污染。</td></tr>
+		<tr><th>如果所有事件等 source order</th><td>c2 已完成却要等 80ms 才更新 UI，实时反馈消失。</td></tr>
+		<tr><th>当前答案</th><td>end 在 thunk 内实时发；message 在 ordered 数组上按 index 发。</td></tr>
+	</table>
+</section>
+
+<section id="s5">
+	<div class="sec-head"><div class="sec-num">5</div><h2>同文件 mutation queue：并行不是无条件同时写</h2></div>
+	<p>两个 edit 即使改不同片段，也必须把 read/validate/write 放在同一把锁内。否则它们会读取相同旧内容，后写覆盖先写。</p>
+	<div class="figure">
+		<div class="cap">realpath-keyed queue</div>
+		<div class="queue">
+			<div class="qbox" id="m-call1">edit #1<br>a.txt</div>
+			<div class="qbox" id="m-realpath">realpath<br>/repo/a.txt</div>
+			<div class="qbox" id="m-call2">edit #2<br>alias.txt</div>
+			<div class="qbox" id="m-wait">同 key<br>排队等待</div>
+			<div class="qbox" id="m-result">ALPHA BETA<br>两次更新都保留</div>
+		</div>
+		<div class="status" id="mutation-status">等待开始。</div>
+		<div class="btns"><button class="primary" id="mutation-run">并发发起两个 edit</button><button id="mutation-reset">重置</button></div>
+	</div>
+	<pre>const key = await realpath(path);
+const previous = tails.get(key) ?? Promise.resolve();
+const tail = previous.then(() =&gt; current);
+tails.set(key, tail);
+
+await previous;
+try {
+  return await operation(); <span class="dim">// read → validate → write 全在里面</span>
+} finally {
+  release();
+  if (tails.get(key) === tail) tails.delete(key);
+}</pre>
+	<div class="callout"><span class="tag">额外竞态</span><p><code>realpath()</code> 本身也是异步的。Stage 6 最终只串行化“canonicalize + 注册 tail”，防止后调用因 realpath 更早返回而抢到第一位；不同文件的真正 operation 仍可并行。</p></div>
+</section>
+
+<section id="s6">
+	<div class="sec-head"><div class="sec-num">6</div><h2>降级与 Abort：并行不是永远更好</h2></div>
+	<table>
+		<tr><th>条件</th><th>模式</th><th>原因</th></tr>
+		<tr><td>Agent.toolExecution = sequential</td><td>整批串行</td><td>宿主明确要求可预测顺序</td></tr>
+		<tr><td>任一 ToolDef.executionMode = sequential</td><td>整批串行</td><td>避免半并行 batch</td></tr>
+		<tr><td>全部 parallel/未声明</td><td>prepare 串行、execute 并行</td><td>默认高吞吐</td></tr>
+	</table>
+	<div class="figure">
+		<div class="cap">Abort 发生在 phase 1 与 phase 2 之间</div>
+		<div class="order-grid">
+			<div class="order-box"><h3>已经 prepared 的 c1</h3><div class="chip bad">thunk 启动时发现 signal.aborted → Operation aborted</div></div>
+			<div class="order-box"><h3>尚未 prepare 的 c3</h3><div class="chip bad">仍发 start/end，直接 synthetic aborted outcome</div></div>
+		</div>
+		<p style="margin-top:14px">最终 toolResult 仍按 c1/c2/c3 源顺序进入历史，然后 Agent 追加 terminal aborted assistant。sequential 模式则不会为尚未开始的调用伪造 lifecycle。</p>
+	</div>
+</section>
+
+<section id="s7">
+	<div class="sec-head"><div class="sec-num">7</div><h2>回测：判断是否真的掌握双顺序</h2></div>
+	<div class="quiz-grid">
+		<div class="quiz"><h3>1. 为什么 prepare 不能 Promise.all？</h3><button data-answer="a1">查看参考答案</button><div class="answer" id="a1" hidden>prepare 包含权限 hook。并行会同时弹多个交互，并让顺序策略不可预测；所有 execute 也必须等 preflight 完成。</div></div>
+		<div class="quiz"><h3>2. 为什么 end 与 message 不同序？</h3><button data-answer="a2">查看参考答案</button><div class="answer" id="a2" hidden>end 服务 UI 实时反馈，message 服务模型协议配对；两个消费者需要不同顺序。</div></div>
+		<div class="quiz"><h3>3. 为什么 immediate outcome 也要占 index？</h3><button data-answer="a3">查看参考答案</button><div class="answer" id="a3" hidden>invalid/blocked 如果从 ordered entries 消失，后续 toolResult 会向前错位，无法与原 toolCall 一一对应。</div></div>
+		<div class="quiz"><h3>4. 为什么一个 sequential 工具让整批降级？</h3><button data-answer="a4">查看参考答案</button><div class="answer" id="a4" hidden>否则会形成“这个工具串行、其他工具同时跑”的半并行状态，依赖和事件语义难以预测。</div></div>
+		<div class="quiz"><h3>5. 为什么锁要包 read/validate/write？</h3><button data-answer="a5">查看参考答案</button><div class="answer" id="a5" hidden>只锁 write 时，两个 edit 已经基于相同旧内容计算，后写仍会覆盖先写。</div></div>
+		<div class="quiz"><h3>6. 为什么 queue key 用 realpath？</h3><button data-answer="a6">查看参考答案</button><div class="answer" id="a6" hidden>相对路径、绝对路径和 symlink 可能指向同一个文件；字符串不同不代表资源不同。</div></div>
+	</div>
+</section>
+
+<footer>对照源码：<code>execute-tool-calls.ts</code> · <code>execute-tool-calls-parallel.ts</code> · <code>tool-call-events.ts</code> · <code>file-mutation-queue.ts</code><br>学习文档：<code>docs/stages/06-parallel-tools.md</code></footer>
+</div>
+
+<script>
+const STEPS=[
+	{title:"模型给出源顺序",actor:"model",event:"assistant message_end",note:"模型一次性发出 c1 slow、c2 fast、c3 medium。源顺序从此固定。",model:"c1 → c2 → c3",prepare:"尚未开始",execute:[],output:"等待 runtime",messages:[["assistant","assistant · 3 toolCalls"]],why:"建立协议顺序。",input:"AssistantMessage.content",outputText:"ToolCall[]",state:"assistant 已入历史",counter:"若 runtime 自行重排 toolCall，模型意图被改变。",object:"ToolCall[3]",source:"const toolCalls = message.content.filter(c => c.type === \"toolCall\");"},
+	{title:"Start + Prepare c1",actor:"prepare",event:"tool_execution_start(c1)",note:"先发 start，再串行跑 schema 与 hook；此时没有工具执行。",model:"等待结果",prepare:"c1 prepare…",execute:[],output:"start(c1)",messages:[["assistant","assistant · 3 toolCalls"]],why:"UI 创建卡片，并保证权限在副作用前。",input:"c1 + tools + hook",outputText:"Prepared thunk #1",state:"events +1，history 不变",counter:"prepare 并行会同时触发权限 UI。",object:"PreparedToolCall c1",source:"await emitToolStart(c1);\nconst prep1 = await prepareToolCall(...);"},
+	{title:"Prepare c2 / c3",actor:"prepare",event:"serial prepare",note:"c2、c3 继续按源顺序 prepare。所有 execute 仍未开始。",model:"等待结果",prepare:"c1 ✓ → c2 ✓ → c3 ✓",execute:[],output:"3 prepared thunks",messages:[["assistant","assistant · 3 toolCalls"]],why:"完成整个 batch preflight。",input:"c2/c3",outputText:"entries[0..2]",state:"无 history 变化",counter:"边 prepare 边 execute 会让后面的权限检查落后于前面的副作用。",object:"Entry[3]",source:"for (const call of calls) entries.push(async () => execute(call));"},
+	{title:"Promise.all 启动",actor:"execute",event:"parallel phase begins",note:"三个 thunk 同时开始；Promise.all 保留 index，但不限制完成时间。",model:"等待结果",prepare:"全部完成 ✓",execute:[["prepare","c1 100ms"],["prepare","c2 20ms"],["prepare","c3 30ms"]],output:"running",messages:[["assistant","assistant · 3 toolCalls"]],why:"把总耗时压到最慢工具。",input:"Entry[3]",outputText:"Promise<Finalized[]>",state:"无 history 变化",counter:"串行执行总耗时是 150ms。",object:"3 running promises",source:"const ordered = await Promise.all(entries.map(run));"},
+	{title:"c2 最先完成",actor:"execute",event:"tool_execution_end(c2)",note:"fast 在 20ms 完成，立即向 UI 发 end；但 toolResult message 暂不发送。",model:"等待全部结果",prepare:"完成",execute:[["prepare","c1 80ms left"],["execute","c2 done"],["prepare","c3 10ms left"]],output:"end order: c2",messages:[["assistant","assistant · 3 toolCalls"]],why:"给 UI 最快反馈。",input:"finalized c2",outputText:"end event",state:"history 仍不变",counter:"若等 c1，UI 会误以为 c2 仍在运行。",object:"Finalized c2",source:"await emitToolEnd(finalizedC2, emit);"},
+	{title:"c3 第二完成",actor:"execute",event:"tool_execution_end(c3)",note:"medium 在 30ms 完成，end 顺序变成 c2,c3。",model:"等待 c1",prepare:"完成",execute:[["prepare","c1 70ms left"],["execute","c2 done"],["execute","c3 done"]],output:"end order: c2,c3",messages:[["assistant","assistant · 3 toolCalls"]],why:"完成顺序自然来自 thunk。",input:"finalized c3",outputText:"end event",state:"history 仍不变",counter:"强行 source-order end 会牺牲实时性。",object:"Finalized c3",source:"await emitToolEnd(finalizedC3, emit);"},
+	{title:"c1 最后完成",actor:"execute",event:"tool_execution_end(c1)",note:"100ms 时 slow 完成。所有 entries settle，Promise.all 返回源顺序数组。",model:"等待 messages",prepare:"完成",execute:[["execute","c1 done"],["execute","c2 done"],["execute","c3 done"]],output:"end order: c2,c3,c1",messages:[["assistant","assistant · 3 toolCalls"]],why:"结束并行 phase。",input:"all promises settled",outputText:"ordered=[c1,c2,c3]",state:"history 仍不变",counter:"完成顺序数组不能直接喂模型。",object:"Finalized[3] source-ordered",source:"// Promise.all returns values by input index\nordered === [c1,c2,c3];"},
+	{title:"按源顺序发 toolResult",actor:"output",event:"message_end c1 → c2 → c3",note:"runtime 遍历 ordered 数组，依次发送 toolResult messages。",model:"即将收到结果",prepare:"完成",execute:[],output:"messages: c1,c2,c3",messages:[["assistant","assistant · 3 toolCalls"],["tool","toolResult c1"],["tool","toolResult c2"],["tool","toolResult c3"]],why:"保持模型协议一一配对。",input:"ordered finalized outcomes",outputText:"ToolResultMessage[3]",state:"history +3，顺序稳定",counter:"按 end 顺序写历史会变成 c2,c3,c1。",object:"batch.messages",source:"for (const outcome of ordered)\n  await emitToolResultMessage(outcome.message, emit);"},
+	{title:"模型进入下一轮",actor:"model",event:"turn_start",note:"模型看到原始 toolCall 顺序与对应结果，继续生成最终回答。",model:"读取 c1/c2/c3 results",prepare:"空闲",execute:[],output:"assistant summary",messages:[["assistant","assistant · 3 toolCalls"],["tool","toolResult c1"],["tool","toolResult c2"],["tool","toolResult c3"],["assistant","assistant · summary"]],why:"工具结果最终要转化为用户回答。",input:"source-ordered context",outputText:"AssistantMessage",state:"turn_end → agent_end",counter:"没有稳定结果顺序，模型可能错误关联调用与结果。",object:"StreamContext",source:"if (!terminate) continue; // next model request"}
+];
+
+(() => {
+	const $=id=>document.getElementById(id);const actors=["model","prepare","execute","output"];let index=-1,timer=null;
+	const msgs=items=>items.map(([r,t])=>`<div class="msg ${r}">${t}</div>`).join("");
+	const bars=items=>items.map(([cls,t])=>`<div class="bar ${cls}" data-ms="${t.match(/\\d+ms/)?.[0]??""}">${t}</div>`).join("");
+	function pause(){clearInterval(timer);timer=null;$("play").textContent="▶ 自动播放"}
+	function render(){const s=index>=0?STEPS[index]:null;$("story-event").textContent=s?.event??"—";$("story-note").innerHTML=s?`<strong>第 ${index+1} 步 · ${s.title}</strong><br>${s.note}`:"按「自动播放」或「单步」开始。";$("count").textContent=`第 ${Math.max(index+1,0)} / ${STEPS.length} 步`;$("body-model").textContent=s?.model??"等待模型";$("body-prepare").textContent=s?.prepare??"等待 batch";$("body-execute").innerHTML=bars(s?.execute??[]);$("body-output").textContent=s?.output??"等待结果";$("body-messages").innerHTML=msgs(s?.messages??[]);actors.forEach(a=>$("lane-"+a).classList.toggle("focus",s?.actor===a));$("prev").disabled=index<0;$("next").disabled=index>=STEPS.length-1}
+	function next(){if(index<STEPS.length-1)index++;else pause();render()}
+	$("next").onclick=next;$("prev").onclick=()=>{if(index>=0)index--;render()};$("reset").onclick=()=>{pause();index=-1;render()};$("play").onclick=()=>{if(timer){pause();return}if(index>=STEPS.length-1)index=-1;$("play").textContent="Ⅱ 暂停";timer=setInterval(next,1200);next()};render();
+})();
+
+(() => {
+	const list=document.getElementById("debug-steps");
+	STEPS.forEach((s,i)=>{const b=document.createElement("button");b.className="step";b.textContent=`${String(i+1).padStart(2,"0")} · ${s.title}`;b.onclick=()=>select(i);list.appendChild(b)});
+	function select(i){const s=STEPS[i];document.querySelectorAll(".step").forEach((b,j)=>b.classList.toggle("active",i===j));document.getElementById("debug-title").textContent=`第 ${i+1} 步 · ${s.title}`;document.getElementById("d-why").textContent=s.why;document.getElementById("d-input").textContent=s.input;document.getElementById("d-output").textContent=s.outputText;document.getElementById("d-state").textContent=s.state;document.getElementById("d-counter").textContent=s.counter;document.getElementById("d-object").textContent=s.object;document.getElementById("d-source").textContent=s.source}select(0);
+})();
+
+(() => {
+	const end=document.getElementById("end-order"),message=document.getElementById("message-order"),status=document.getElementById("order-status");
+	document.getElementById("order-run").onclick=()=>{end.innerHTML='<div class="chip end">20ms · end(c2)</div><div class="chip end">30ms · end(c3)</div><div class="chip end">100ms · end(c1)</div>';message.innerHTML='<div class="chip message">message(c1)</div><div class="chip message">message(c2)</div><div class="chip message">message(c3)</div>';status.textContent="同一批 outcome 被两个消费者按不同顺序观察：UI 看完成时间，模型看源 index。"};
+	document.getElementById("order-reset").onclick=()=>{end.innerHTML="";message.innerHTML="";status.textContent="等待开始。"};
+})();
+
+(() => {
+	const $=id=>document.getElementById(id),ids=["m-call1","m-realpath","m-call2","m-wait","m-result"];
+	function reset(){ids.forEach(id=>$(id).className="qbox");$("mutation-status").textContent="等待开始。"}
+	$("mutation-run").onclick=()=>{$("m-call1").classList.add("done");$("m-realpath").classList.add("done");$("m-call2").classList.add("wait");$("m-wait").classList.add("wait");$("mutation-status").textContent="a.txt 与 alias.txt realpath 相同：edit #2 等待 #1 的 read/validate/write 全部完成。";setTimeout(()=>{$("m-call2").className="qbox done";$("m-wait").className="qbox done";$("m-result").className="qbox done";$("mutation-status").textContent="两次 edit 顺序应用，最终 ALPHA BETA；不同真实文件不使用同一 tail。"},900)};$("mutation-reset").onclick=reset;reset();
+})();
+
+document.querySelectorAll("[data-answer]").forEach(button=>{button.onclick=()=>{const a=document.getElementById(button.dataset.answer);a.hidden=!a.hidden;button.textContent=a.hidden?"查看参考答案":"收起"}});
+</script>
+</body>
+</html>
