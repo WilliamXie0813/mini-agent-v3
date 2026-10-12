@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import type { ToolDef, ToolResult } from "./tool.ts";
 
 const err = (text: string): ToolResult => ({ content: [{ type: "text", text }], isError: true });
@@ -55,18 +56,19 @@ export function createEditTool(): ToolDef<{ path: string; oldText: string; newTe
 			},
 			required: ["path", "oldText", "newText"],
 		},
-		execute: async ({ path, oldText, newText }) => {
-			const before = await readFile(path, "utf8");
-			const first = before.indexOf(oldText);
-			// split 计数而非正则：oldText 里的 * / ( 会让正则炸掉。
-			const count = first === -1 ? 0 : before.split(oldText).length - 1;
-			// 错误文案给修复动作——读者是模型，它要知道下一步做什么。非唯一时不写文件。
-			if (count === 0) return err(`oldText not found in ${path}. Read the file first; the text must match exactly, including whitespace.`);
-			if (count > 1) return err(`oldText appears ${count} times in ${path}. Include more surrounding context so it is unique.`);
-			// indexOf + 切片，不用 String.prototype.replace：$& / $' 等模式会被解释，newText 必须逐字写入。
-			await writeFile(path, before.slice(0, first) + newText + before.slice(first + oldText.length), "utf8");
-			return { content: [{ type: "text", text: `Edited ${path}.` }] };
-		},
+		execute: ({ path, oldText, newText }) =>
+			withFileMutationQueue(path, async () => {
+				const before = await readFile(path, "utf8");
+				const first = before.indexOf(oldText);
+				// split 计数而非正则：oldText 里的 * / ( 会让正则炸掉。
+				const count = first === -1 ? 0 : before.split(oldText).length - 1;
+				// 错误文案给修复动作——读者是模型，它要知道下一步做什么。非唯一时不写文件。
+				if (count === 0) return err(`oldText not found in ${path}. Read the file first; the text must match exactly, including whitespace.`);
+				if (count > 1) return err(`oldText appears ${count} times in ${path}. Include more surrounding context so it is unique.`);
+				// read/validate/write 必须在同一把锁内，否则两个并行 edit 都会基于旧内容写回。
+				await writeFile(path, before.slice(0, first) + newText + before.slice(first + oldText.length), "utf8");
+				return { content: [{ type: "text", text: `Edited ${path}.` }] };
+			}),
 	};
 }
 

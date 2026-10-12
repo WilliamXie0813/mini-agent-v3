@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import {
+	mkdtemp,
+	readFile,
+	rm,
+	symlink,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createReadTool, createEditTool, createBashTool } from "../src/tools.ts";
@@ -85,6 +91,47 @@ describe("edit tool", () => {
 		const r = await createEditTool().execute({ path: "a.txt", oldText: "value", newText: "$& and $' literal" });
 		expect(r.isError).toBeFalsy();
 		expect(await readFile("a.txt", "utf8")).toBe("$& and $' literal\n");
+	});
+
+	it("preserves both updates when two edits target the same file concurrently", async () => {
+		await writeFile("a.txt", "alpha beta\n");
+		const tool = createEditTool();
+
+		await Promise.all([
+			tool.execute({
+				path: "a.txt",
+				oldText: "alpha",
+				newText: "ALPHA",
+			}),
+			tool.execute({
+				path: "a.txt",
+				oldText: "beta",
+				newText: "BETA",
+			}),
+		]);
+
+		expect(await readFile("a.txt", "utf8")).toBe("ALPHA BETA\n");
+	});
+
+	it("serializes edits through a symlink alias", async () => {
+		await writeFile("a.txt", "alpha beta\n");
+		await symlink(join(dir, "a.txt"), "alias.txt");
+		const tool = createEditTool();
+
+		await Promise.all([
+			tool.execute({
+				path: "a.txt",
+				oldText: "alpha",
+				newText: "ALPHA",
+			}),
+			tool.execute({
+				path: "alias.txt",
+				oldText: "beta",
+				newText: "BETA",
+			}),
+		]);
+
+		expect(await readFile("a.txt", "utf8")).toBe("ALPHA BETA\n");
 	});
 });
 
