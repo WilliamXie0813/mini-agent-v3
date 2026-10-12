@@ -40,11 +40,14 @@
 
 	.order-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.order-box{border:1.5px solid var(--line);border-radius:9px;padding:16px}.order-box h3{margin-top:0}.chip{padding:7px 10px;margin-bottom:6px;border-radius:6px;font:12px "Cascadia Code",Consolas,monospace}.chip.end{background:rgba(43,74,203,.1);border-left:3px solid var(--blue)}.chip.message{background:rgba(180,122,21,.12);border-left:3px solid var(--gold)}.chip.good{background:rgba(46,125,79,.12);border-left:3px solid var(--green)}.chip.bad{background:rgba(214,64,31,.1);border-left:3px solid var(--accent)}
 	.queue{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}.qbox{position:relative;padding:13px 9px;border:1.5px solid var(--line);border-radius:8px;text-align:center;font:11.5px/1.55 "Cascadia Code",Consolas,monospace}.qbox::after{content:"→";position:absolute;right:-16px;top:38%;color:var(--muted)}.qbox:last-child::after{display:none}.qbox.wait{border-color:var(--accent);background:rgba(214,64,31,.09)}.qbox.done{border-color:var(--green);background:rgba(46,125,79,.1)}.status{margin-top:14px;padding:12px 15px;border-radius:8px;background:var(--deep);font:12.5px "Cascadia Code",Consolas,monospace}
+	.deep-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.deep-card{border:1.5px solid var(--line);border-radius:9px;padding:16px}.deep-card h3{margin-top:0}.trace{display:flex;flex-direction:column;gap:6px}.trace-row{display:grid;grid-template-columns:64px 1fr 1fr;gap:8px;padding:8px 10px;border-radius:6px;background:var(--deep);font:12px "Cascadia Code",Consolas,monospace}.trace-row.bad{border-left:3px solid var(--accent);background:rgba(214,64,31,.09)}.trace-row.good{border-left:3px solid var(--green);background:rgba(46,125,79,.1)}
+	.promise-map{display:grid;grid-template-columns:140px 1fr;gap:8px;align-items:center;font:12px "Cascadia Code",Consolas,monospace}.promise-map>div{padding:8px 10px;border-radius:6px;background:var(--deep)}.promise-map .key{background:rgba(43,74,203,.1);border-left:3px solid var(--blue)}.promise-map .value{background:rgba(46,125,79,.1);border-left:3px solid var(--green)}
+	.register-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.register-box{border:1.5px solid var(--line);border-radius:9px;padding:16px}.register-box h3{margin-top:0}.race-lanes{display:grid;grid-template-columns:90px 1fr;gap:7px;font:12px "Cascadia Code",Consolas,monospace}.race-lanes .label{padding:7px;color:var(--muted)}.race-lanes .track{padding:7px 10px;border-radius:6px;background:var(--deep)}.race-lanes .track.fast{border-left:3px solid var(--green)}.race-lanes .track.slow{border-left:3px solid var(--accent)}.race-lanes .track.wait{border-left:3px solid var(--gold)}
 	.quiz-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.quiz{padding:18px;border:1.5px solid var(--line);border-radius:10px;background:#fffdf7}.quiz h3{margin:0 0 10px;font-size:17px}.answer{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line);color:var(--soft)}
 	details.source{margin-top:12px;border:1px solid var(--line);border-radius:8px;padding:10px 13px}details.source summary{cursor:pointer;font-weight:700}details.source pre{margin-bottom:0;max-height:450px}
 	footer{border-top:3px double var(--ink);padding-top:30px;text-align:center;color:var(--muted);font-size:14px}
-	@media(max-width:850px){.story,.queue{grid-template-columns:1fr 1fr}.debugger,.order-grid{grid-template-columns:1fr}.steps{display:grid;grid-template-columns:1fr 1fr}.qbox:nth-child(2)::after,.qbox:nth-child(4)::after{display:none}}
-	@media(max-width:580px){.story,.queue,.detail,.quiz-grid,.steps{grid-template-columns:1fr}.qbox::after{display:none}h2{font-size:24px}.figure{padding:16px}table{font-size:13px}}
+	@media(max-width:850px){.story,.queue{grid-template-columns:1fr 1fr}.debugger,.order-grid,.deep-grid,.register-grid{grid-template-columns:1fr}.steps{display:grid;grid-template-columns:1fr 1fr}.qbox:nth-child(2)::after,.qbox:nth-child(4)::after{display:none}}
+	@media(max-width:580px){.story,.queue,.detail,.quiz-grid,.steps{grid-template-columns:1fr}.qbox::after{display:none}.trace-row{grid-template-columns:52px 1fr}.trace-row span:last-child{grid-column:2}h2{font-size:24px}.figure{padding:16px}table{font-size:13px}}
 	@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important}}
 </style>
 </head>
@@ -184,7 +187,49 @@ after Promise.all:
 
 <section id="s5">
 	<div class="sec-head"><div class="sec-num">5</div><h2>同文件 mutation queue：并行不是无条件同时写</h2></div>
-	<p>两个 edit 即使改不同片段，也必须把 read/validate/write 放在同一把锁内。否则它们会读取相同旧内容，后写覆盖先写。</p>
+	<p>工具层已经允许并行，但文件不是普通的独立任务。两个 edit 即使修改不同片段，也可能读取同一份旧快照，最后一个写入者会覆盖前一个结果。本章从这个完整失败现场开始，再逐层解释 queue 里的每个 Promise。</p>
+
+	<h3>5.1 没有 queue：为什么会丢更新</h3>
+	<p>初始文件是 <code>alpha beta</code>，两个 edit 同时开始：</p>
+	<div class="figure">
+		<div class="cap">Lost update · 两个工具都基于同一份旧内容计算</div>
+		<div class="trace">
+			<div class="trace-row"><span>T1</span><span>edit #1 read → "alpha beta"</span><span></span></div>
+			<div class="trace-row"><span>T2</span><span></span><span>edit #2 read → "alpha beta"</span></div>
+			<div class="trace-row"><span>T3</span><span>计算 → "ALPHA beta"</span><span></span></div>
+			<div class="trace-row"><span>T4</span><span></span><span>计算 → "alpha BETA"</span></div>
+			<div class="trace-row good"><span>T5</span><span>write → "ALPHA beta"</span><span></span></div>
+			<div class="trace-row bad"><span>T6</span><span></span><span>write → "alpha BETA"（覆盖 #1）</span></div>
+		</div>
+		<div class="status">最终文件是 <strong>alpha BETA</strong>：第一个 edit 的 ALPHA 丢失。</div>
+	</div>
+	<div class="callout"><span class="tag">前端类比</span><p>类似两个异步任务都读取同一个旧 state，再分别 <code>setState(update(oldState))</code>。后一次更新没有基于前一次的新 state 计算，因此覆盖了前一次结果。文件没有 React 的函数式更新，需要显式异步互斥。</p></div>
+
+	<h3>5.2 为什么不能只锁住 writeFile</h3>
+	<div class="deep-grid">
+		<div class="deep-card">
+			<h3>错误边界：只锁 write</h3>
+			<pre>const before = await readFile(path);
+const changed = edit(before);
+
+await lock(() =&gt;
+  writeFile(path, changed)
+);</pre>
+			<p>两个调用在进入锁之前已经读到了相同旧内容。write 虽然没有同时发生，第二个仍会写回基于旧快照计算的结果。</p>
+		</div>
+		<div class="deep-card">
+			<h3>正确边界：锁住完整事务</h3>
+			<pre>await withFileMutationQueue(path, async () =&gt; {
+  const before = await readFile(path);
+  validateUniqueOldText(before);
+  const changed = edit(before);
+  await writeFile(path, changed);
+});</pre>
+			<p>第二个 edit 只有在第一个完成后才重新读取文件，所以它读到的是 <code>ALPHA beta</code>，最终得到 <code>ALPHA BETA</code>。</p>
+		</div>
+	</div>
+
+	<h3>5.3 为什么 queue 按 realpath 分组</h3>
 	<div class="figure">
 		<div class="cap">realpath-keyed queue</div>
 		<div class="queue">
@@ -196,20 +241,99 @@ after Promise.all:
 		</div>
 		<div class="status" id="mutation-status">等待开始。</div>
 		<div class="btns"><button class="primary" id="mutation-run">并发发起两个 edit</button><button id="mutation-reset">重置</button></div>
+		<div class="foot"><code>a.txt</code>、绝对路径和指向它的 <code>alias.txt</code> 字符串不同，但 <code>realpath()</code> 都得到同一个真实路径，因此共享同一条 queue。</div>
 	</div>
-	<pre>const key = await realpath(path);
+
+	<h3>5.4 <code>tails</code> Map 存的不是结果，而是“前一位什么时候结束”</h3>
+	<div class="figure">
+		<div class="cap">Promise chain · 同一文件的三位排队者</div>
+		<div class="promise-map">
+			<div class="key">Map key</div><div class="value">/repo/a.txt（canonical realpath）</div>
+			<div class="key">tail #1</div><div class="value">edit #1 的完成信号 current #1</div>
+			<div class="key">tail #2</div><div class="value">tail #1.then(() =&gt; current #2)</div>
+			<div class="key">tail #3</div><div class="value">tail #2.then(() =&gt; current #3)</div>
+		</div>
+		<pre><span class="dim">// edit #2 到来时，Map 中的 tail #1 就是它的 previous</span>
 const previous = tails.get(key) ?? Promise.resolve();
+
+let release = () =&gt; {};
+const current = new Promise(resolve =&gt; {
+  release = resolve;
+});
+
 const tail = previous.then(() =&gt; current);
 tails.set(key, tail);
 
-await previous;
+<span class="hot">await previous;</span>  <span class="dim">// 等前一位 release</span>
 try {
-  return await operation(); <span class="dim">// read → validate → write 全在里面</span>
+  return await operation();
 } finally {
-  release();
-  if (tails.get(key) === tail) tails.delete(key);
+  <span class="good">release();</span>      <span class="dim">// 叫醒下一位</span>
 }</pre>
-	<div class="callout"><span class="tag">额外竞态</span><p><code>realpath()</code> 本身也是异步的。Stage 6 最终只串行化“canonicalize + 注册 tail”，防止后调用因 realpath 更早返回而抢到第一位；不同文件的真正 operation 仍可并行。</p></div>
+		<div class="foot">operation Promise 告诉当前调用方“成功还是失败”；queue Promise 只告诉下一位“前一个已经结束”。两个职责刻意分离。</div>
+	</div>
+
+	<h3>5.5 为什么失败不会把后续队列一起毒死</h3>
+	<p>即使 <code>operation()</code> throw，<code>finally</code> 仍会执行 <code>release()</code>。当前调用方拿到 rejection，但下一位等待的是独立的完成信号，它仍会正常被唤醒。</p>
+	<table>
+		<tr><th>错误做法</th><td>把 operation 自身的 rejected Promise 存进 Map；后续所有 <code>await previous</code> 都继承 rejection，队列永久中毒。</td></tr>
+		<tr><th>当前做法</th><td>operation 的成功/失败返回给调用方；内部 current 只负责 resolve“我结束了”，后续任务继续。</td></tr>
+	</table>
+
+	<h3>5.6 为什么删除 Map 时要判断 <code>tails.get(key) === tail</code></h3>
+	<p>edit #1 运行期间，edit #2 可能已经把 Map 更新为 tail #2。若 #1 完成时无条件 <code>delete(key)</code>，会误删 #2 的队列；随后 edit #3 会以为没人排队，与 #2 并行。</p>
+	<pre>finally {
+  release();
+
+  <span class="dim">// 只有自己仍是最后一位，才说明后面真的没人</span>
+  if (tails.get(key) === tail) {
+    tails.delete(key);
+  }
+}</pre>
+
+	<h3>5.7 <code>registrationTail</code>：防止异步 realpath 反转调用顺序</h3>
+	<p>这里解决的是一个更隐蔽的竞态：函数调用顺序是 #1、#2，但 <code>realpath()</code> 的返回顺序可能是 #2、#1。如果谁先拿到 realpath 谁先注册 Map，后调用的 #2 就可能排到 #1 前面。</p>
+	<div class="figure">
+		<div class="cap">Realpath registration race · 切换观察有无 registrationTail</div>
+		<div class="register-grid">
+			<div class="register-box">
+				<h3>调用顺序固定</h3>
+				<div class="race-lanes">
+					<div class="label">T0</div><div class="track">调用 edit #1（realpath 预计 80ms）</div>
+					<div class="label">T1</div><div class="track">调用 edit #2（realpath 预计 10ms）</div>
+				</div>
+			</div>
+			<div class="register-box">
+				<h3 id="registration-title">等待模拟</h3>
+				<div class="race-lanes" id="registration-result"></div>
+			</div>
+		</div>
+		<div class="btns">
+			<button id="registration-without">没有 registrationTail</button>
+			<button class="primary" id="registration-with">使用 registrationTail</button>
+			<button id="registration-reset">重置</button>
+		</div>
+		<div class="status" id="registration-status">请选择一种模式。</div>
+	</div>
+	<pre><span class="dim">// 每次调用一进入函数，就先在全局 registration queue 中占位</span>
+const waitForRegistration = registrationTail;
+
+let releaseRegistration = () =&gt; {};
+registrationTail = new Promise(resolve =&gt; {
+  releaseRegistration = resolve;
+});
+
+<span class="hot">await waitForRegistration;</span>
+
+try {
+  const key = await realpath(path);
+  const previous = tails.get(key) ?? Promise.resolve();
+  const tail = previous.then(() =&gt; current);
+  tails.set(key, tail);
+} finally {
+  <span class="good">releaseRegistration();</span>
+}</pre>
+	<div class="callout"><span class="tag">边界在哪里</span><p><code>registrationTail</code> 只串行化 <strong>realpath + 查询旧 tail + 注册新 tail</strong> 这段很短的 preflight。注册完成后，文件 A 与文件 B 的真实 operation 仍然可以并行；只有相同 realpath 的 operation 才等待彼此。</p></div>
 </section>
 
 <section id="s6">
@@ -282,8 +406,40 @@ const STEPS=[
 
 (() => {
 	const $=id=>document.getElementById(id),ids=["m-call1","m-realpath","m-call2","m-wait","m-result"];
-	function reset(){ids.forEach(id=>$(id).className="qbox");$("mutation-status").textContent="等待开始。"}
-	$("mutation-run").onclick=()=>{$("m-call1").classList.add("done");$("m-realpath").classList.add("done");$("m-call2").classList.add("wait");$("m-wait").classList.add("wait");$("mutation-status").textContent="a.txt 与 alias.txt realpath 相同：edit #2 等待 #1 的 read/validate/write 全部完成。";setTimeout(()=>{$("m-call2").className="qbox done";$("m-wait").className="qbox done";$("m-result").className="qbox done";$("mutation-status").textContent="两次 edit 顺序应用，最终 ALPHA BETA；不同真实文件不使用同一 tail。"},900)};$("mutation-reset").onclick=reset;reset();
+	let timer=null;
+	function reset(){clearTimeout(timer);timer=null;ids.forEach(id=>$(id).className="qbox");$("mutation-status").textContent="等待开始。"}
+	$("mutation-run").onclick=()=>{reset();$("m-call1").classList.add("done");$("m-realpath").classList.add("done");$("m-call2").classList.add("wait");$("m-wait").classList.add("wait");$("mutation-status").textContent="a.txt 与 alias.txt realpath 相同：edit #2 等待 #1 的 read/validate/write 全部完成。";timer=setTimeout(()=>{$("m-call2").className="qbox done";$("m-wait").className="qbox done";$("m-result").className="qbox done";$("mutation-status").textContent="两次 edit 顺序应用，最终 ALPHA BETA；不同真实文件不使用同一 tail。";timer=null},900)};$("mutation-reset").onclick=reset;reset();
+})();
+
+(() => {
+	const title=document.getElementById("registration-title");
+	const result=document.getElementById("registration-result");
+	const status=document.getElementById("registration-status");
+	function rows(items){return items.map(([label,text,cls])=>`<div class="label">${label}</div><div class="track ${cls??""}">${text}</div>`).join("")}
+	function withoutQueue(){
+		title.textContent="没有 registrationTail：顺序反转";
+		result.innerHTML=rows([
+			["10ms","edit #2 realpath 先返回，先注册 tail #2","fast"],
+			["80ms","edit #1 realpath 后返回，反而接到 #2 后面","slow"],
+			["结果","operation 顺序变成 #2 → #1","slow"],
+		]);
+		status.textContent="虽然调用顺序是 #1 → #2，但异步 realpath 的完成速度让注册顺序变成 #2 → #1。";
+	}
+	function withQueue(){
+		title.textContent="使用 registrationTail：保持调用顺序";
+		result.innerHTML=rows([
+			["T0","#1 进入 registration 区，#2 等待 registration #1","wait"],
+			["80ms","#1 realpath 完成并注册 tail #1，然后 releaseRegistration","slow"],
+			["随后","#2 才开始 realpath，并注册在 tail #1 后面","fast"],
+			["结果","operation 顺序保持 #1 → #2","fast"],
+		]);
+		status.textContent="registrationTail 按函数进入顺序串行化 canonicalize + 注册；真正 operation 在注册后仍按文件 key 决定是否并行。";
+	}
+	function reset(){title.textContent="等待模拟";result.innerHTML="";status.textContent="请选择一种模式。"}
+	document.getElementById("registration-without").onclick=withoutQueue;
+	document.getElementById("registration-with").onclick=withQueue;
+	document.getElementById("registration-reset").onclick=reset;
+	reset();
 })();
 
 document.querySelectorAll("[data-answer]").forEach(button=>{button.onclick=()=>{const a=document.getElementById(button.dataset.answer);a.hidden=!a.hidden;button.textContent=a.hidden?"查看参考答案":"收起"}});
