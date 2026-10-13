@@ -4,7 +4,8 @@
 	"type": "module",
 	"scripts": {
 		"dev": "pnpm --filter @mini-agent/cli run dev",
+		"dev:web": "pnpm --parallel --filter @mini-agent/server --filter @mini-agent/web run dev",
 		"test": "pnpm -r run test",
-		"check": "pnpm -r run check"
+		"check": "node scripts/check-lockfile-registry.mjs && pnpm -r run check"
 	}
 }
