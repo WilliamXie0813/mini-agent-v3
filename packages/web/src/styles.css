@@ -102,11 +102,13 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .timeline-row { width: 100%; display: flex; justify-content: space-between; gap: 6px; padding: 7px; border: 0; border-radius: 6px; background: transparent; text-align: left; }
 .timeline-row:hover, .timeline-row.selected { background: #eff4ff; }
 .timeline-row.diagnostic { color: #93370d; background: #fffaeb; }
-.event-details { min-height: 0; overflow: auto; padding: 0 12px 12px; background: white; border-top: 1px solid var(--color-border); }
+.event-details { min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 0 12px 12px; background: white; border-top: 1px solid var(--color-border); }
 .event-details-heading { padding-left: 0; padding-right: 0; }
 .event-details-heading button { margin-left: auto; }
 .event-meta { display: flex; gap: 12px; color: var(--color-muted); font-size: 12px; }
-.event-details pre { padding: 9px; overflow: auto; background: #f9fafb; border: 1px solid var(--color-border); border-radius: 7px; font-size: 11px; }
+.json-search { flex: 0 0 auto; padding: 9px 0; }
+.json-search input { width: 100%; padding: 7px 9px; border: 1px solid var(--color-border); border-radius: 7px; background: #f9fafb; color: var(--color-text); }
+.json-viewer { flex: 1; min-height: 0; overflow: auto; padding: 9px; border: 1px solid var(--color-border); border-radius: 7px; background: #f9fafb; font-size: 12px; }
 .empty-state { padding: 20px; color: var(--color-muted); text-align: center; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
 
