@@ -105,4 +105,79 @@ describe("real stream protocol through Agent", () => {
 		expect(agent.state.messages).toHaveLength(1);
 		expect(agent.state.isStreaming).toBe(false);
 	});
+
+	it("can prompt again after aborting a sequential tool batch", async () => {
+		const first = await fixture("mixed"), second = await fixture("text");
+		const requests: unknown[] = [];
+		vi.stubGlobal("fetch", vi.fn<typeof fetch>(async (_url, init) => {
+			requests.push(JSON.parse(String(init?.body)));
+			return sse(requests.length === 1 ? first : second);
+		}));
+		const executed: string[] = [];
+		const tools: ToolDef<{ path: string }>[] = ["slow_read", "fast_read"].map((name) => ({
+			name, description: "read", parameters: { type: "object" },
+			execute: async ({ path }) => {
+				executed.push(path);
+				return { content: [{ type: "text", text: path }] };
+			},
+		}));
+		const agent = new Agent({
+			system: "test", tools, toolExecution: "sequential",
+			streamFn: createAnthropicStreamFn({ apiKey: "test-key" }),
+		});
+		agent.subscribe((event) => {
+			if (event.type === "tool_execution_end" && event.toolCallId === "c1") agent.abort();
+		});
+		await agent.prompt("go");
+		const results = agent.state.messages.filter((m) => m.role === "toolResult");
+		expect(results).toMatchObject([{ toolCallId: "c1", isError: false }]);
+		expect(executed).toEqual(["a.txt"]);
+		await agent.prompt("second");
+		expect(requests[1]).toMatchObject({
+			messages: [{ role: "user" }, { role: "assistant" }, {
+				role: "user", content: [
+					{ type: "tool_result", tool_use_id: "c1", is_error: false },
+					{ type: "tool_result", tool_use_id: "c2", is_error: true },
+					{ type: "text", text: "second" },
+				],
+			}],
+		});
+		expect(agent.state.messages.filter((m) => m.role === "toolResult")).toEqual(results);
+		expect(agent.state.messages.at(-1)).toMatchObject({ stopReason: "stop" });
+	});
+
+	it("releases an open response after a listener rejects without changing the rejection", async () => {
+		const source = (await fixture("text")).split("event: message_stop")[0];
+		let body!: ReadableStream<Uint8Array>;
+		let controller!: ReadableStreamDefaultController<Uint8Array>;
+		let signal: AbortSignal | null | undefined;
+		vi.stubGlobal("fetch", vi.fn<typeof fetch>(async (_url, init) => {
+			signal = init?.signal;
+			body = new ReadableStream({
+				start(c) {
+					controller = c;
+					c.enqueue(new TextEncoder().encode(source));
+					signal?.addEventListener("abort", () => c.error(new DOMException("abort", "AbortError")), { once: true });
+				},
+			});
+			return new Response(body, { headers: { "content-type": "text/event-stream" } });
+		}));
+		const agent = new Agent({ system: "test", streamFn: createAnthropicStreamFn({ apiKey: "test-key" }) });
+		const failure = new Error("delivery failed");
+		const events: AgentEvent[] = [];
+		agent.subscribe((event) => {
+			events.push(event);
+			if (event.type === "message_update") throw failure;
+		});
+		try {
+			await expect(agent.prompt("go")).rejects.toBe(failure);
+			await agent.waitForIdle();
+			await vi.waitFor(() => expect(body.locked).toBe(false), { timeout: 500 });
+			expect(events.some((event) => event.type === "agent_end")).toBe(false);
+			expect(agent.state.messages).toHaveLength(1);
+			expect(agent.state.isStreaming).toBe(false);
+		} finally {
+			if (!signal?.aborted) controller.close();
+		}
+	});
 });

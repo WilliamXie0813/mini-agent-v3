@@ -14,6 +14,8 @@
 
 Tasks 1–6 的源码、本地验收与阶段文档已实施；具体提交见 `stage-7-anthropic-sse` 分支。用户选择在当前目录新建分支，而非 worktree。
 
+教学 HTML 已生成。最终独立审查发现的「中断批次缺配对结果」与「listener 拒绝后 HTTP 读取未取消」均已补复现回归测试并修复；恢复只调整 wire 副本，未记录结果明确标错，不假造执行成功。教学说明已与修复后的边界保持一致。
+
 Task 6 Step 6 **真实 API 联调待补验**：用户明确要求暂时跳过，之后手动补充 API key。没有外发仓库内容，不声称 Kimi 网关已验证。各任务以下 checkbox 保留原始执行步骤供追溯；实际交付与取舍见 [`../stages/07-anthropic-sse.md`](../stages/07-anthropic-sse.md)。
 
 ## Global Constraints

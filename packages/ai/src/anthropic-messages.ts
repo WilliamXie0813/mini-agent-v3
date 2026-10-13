@@ -37,6 +37,25 @@ export function toAnthropicRequest(
 		if (last?.role === role) last.content.push(...content);
 		else messages.push({ role, content });
 	}
+	for (let index = 0; index < messages.length; index++) {
+		const message = messages[index]!;
+		if (message.role !== "assistant") continue;
+		const calls = message.content.filter((value) => value.type === "tool_use");
+		const next = messages[index + 1];
+		const content = next?.role === "user" ? next.content : [];
+		const recorded = content.filter((value) => value.type === "tool_result");
+		if (calls.every((call) => recorded.some((result) => result.tool_use_id === call.id))) continue;
+		const results = calls.map<ToolResult>((call) =>
+			recorded.find((result) => result.tool_use_id === call.id) ?? {
+				type: "tool_result", tool_use_id: call.id, is_error: true,
+				content: [{ type: "text", text:
+					"No result was recorded: the previous run was interrupted. Do not assume the tool succeeded." }],
+			});
+		const repaired = [...results, ...content.filter((value) =>
+			value.type !== "tool_result" || !calls.some((call) => call.id === value.tool_use_id))];
+		if (next?.role === "user") next.content = repaired;
+		else messages.splice(index + 1, 0, { role: "user", content: repaired });
+	}
 	return {
 		model: options.model, max_tokens: options.maxTokens, stream: true,
 		system: context.system.content, messages,

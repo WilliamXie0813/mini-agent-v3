@@ -75,7 +75,7 @@ JSON 参数不做宽松修补。正常完成时，坏 JSON、null、数组都报
 
 error 的终止消息有 `content: []` 和 errorMessage。Agent 通过正常 message_end/turn_end/agent_end 收尾，不需要再合成第二条错误回复；下一次请求跳过诊断 assistant，并合并相邻 user 消息。
 
-listener reject 仍是交付故障，原样让 prompt reject；不能把它伪装成模型错误。缺少任何 terminal 的坏 StreamFn 仍由 Agent 既有兜底处理。
+listener reject 仍是交付故障，原样让 prompt reject；Agent 同时 abort 自己拥有的 run signal，停止无人消费的 HTTP 读取，但不向 listener 递归交付第二套错误生命周期。缺少任何 terminal 的坏 StreamFn 仍由 Agent 既有兜底处理。
 
 ### 5. toolResult 必须变成 user/tool_result
 
@@ -91,6 +91,8 @@ user      [tool_result(c1), tool_result(c2)]
 ```
 
 这是 Anthropic 的协议，不是 UI 偏好。阶段 6 的完成顺序 `[c2,c1]` 只影响 tool_execution_end；历史与 wire 仍是 `[c1,c2]`。转换器不对调用排序，也不修改原始 IR。
+
+顺序批次若在 c1 完成后中止，c2 没有实际结果，不能只跳过 aborted 诊断后继续发送缺配对的历史。转换器在 **wire 副本** 中按调用源顺序保留已记录结果，并为缺失结果补 `is_error: true` 的 tool_result，明确说明前一回合中断、不能假定工具成功。它不执行剩余工具，不假造成功或修改原始历史；即便工具曾产生副作用但结果未入历史，也不自动重试。
 
 ### 6. usage 不是每帧相加
 
@@ -137,6 +139,8 @@ pnpm dev
 `pnpm dev` 的工作目录是 `packages/cli`，工具相对路径以它为准；「读一下 package.json」会读 CLI 包文件。测试则把 CLI 子进程放进临时目录，只读取自建无敏感文件。
 
 五个 SSE fixtures 都是**手写协议样本**，不是实际 Kimi 录制。自动化覆盖本地 HTTP 子进程、工具回喂、双顺序、截断保护、HTTP/协议错误与取消。
+
+教学 HTML 的交互测试运行实际脚本，覆盖播放器与两个实验；尚未做真实浏览器视觉验收。CLI 子进程测试确认本地请求与文本/工具往返，不单凭 stdout 分块断言文本一定在响应完成之前到达。
 
 **真实 API 联调未执行。** 用户选择暂不发送真实请求，之后手动补充 API key。不能据此宣称 Kimi 网关兼容性已验证；thinking 字段不发送，但若网关主动返回 thinking block，当前会明确报不支持。不要伪造客户端身份或静默丢弃 thinking 来绕过问题。
 

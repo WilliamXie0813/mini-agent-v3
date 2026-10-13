@@ -78,4 +78,38 @@ describe("Anthropic request conversion", () => {
 			}],
 		}, settings)).toThrow(/tool result.*text/i);
 	});
+
+	it.each([undefined, "c1", "c2"])("pairs interrupted calls while preserving the recorded result %s", (completed) => {
+		const context: StreamContext = {
+			system: { role: "system", content: "" }, tools: [],
+			messages: [
+				{ role: "user", content: [text("go")] },
+				{ role: "assistant", stopReason: "toolUse", content: [
+					{ type: "toolCall", id: "c1", name: "read", arguments: { path: "a" } },
+					{ type: "toolCall", id: "c2", name: "read", arguments: { path: "b" } },
+				] },
+				...(completed ? [{
+					role: "toolResult" as const, toolCallId: completed, toolName: "read",
+					isError: false, content: [text("recorded")],
+				}] : []),
+				{ role: "assistant", stopReason: "aborted", content: [] },
+				{ role: "user", content: [text("next")] },
+			],
+		};
+		const before = structuredClone(context);
+		freeze(context);
+		const request = toAnthropicRequest(context, settings);
+		expect(request.messages).toHaveLength(3);
+		expect(request.messages[2]?.content).toMatchObject([
+			{ type: "tool_result", tool_use_id: "c1", is_error: completed !== "c1" },
+			{ type: "tool_result", tool_use_id: "c2", is_error: completed !== "c2" },
+			text("next"),
+		]);
+		for (const value of request.messages[2]!.content) {
+			if (value.type !== "tool_result") continue;
+			if (value.tool_use_id === completed) expect(value.content).toEqual([text("recorded")]);
+			else expect(value.content[0]?.text).toMatch(/interrupted.*not.*succeeded/i);
+		}
+		expect(context).toEqual(before);
+	});
 });

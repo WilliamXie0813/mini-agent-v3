@@ -208,6 +208,7 @@ user:
 历史消息：     toolResult(c1) → toolResult(c2)
 下一次请求：   user[tool_result(c1), tool_result(c2)]</pre>
 	<p>转换器创建新的 arrays/blocks，不修改原历史；schema 变成 input_schema，execute、replay、executionMode 都不发送给模型。阶段 8 尚未开始，system 仍取 <code>context.system.content</code>。</p>
+	<div class="callout"><span class="tag">中断后的配对</span><p>如果顺序批次只完成 c1 就被取消，下一次不能只跳过 aborted 诊断：c2 的 tool_use 仍需要配对。转换器仅在 wire 副本中补一个 c2 的 <code>is_error: true</code> 结果，说明前一回合中断、不能假定成功；保留 c1 的真实结果和调用源顺序，不执行 c2，也不修改历史。缺少结果不等于工具没有产生副作用，因此不能自动重试。</p></div>
 </section>
 
 <section id="s7">
@@ -227,7 +228,7 @@ cost:                        未提供 // 不是 0</pre>
 		<tr><th>错误</th><th>谁处理</th><th>可观察结果</th></tr>
 		<tr><td>缺 key / 非法 URL / maxTokens≤0</td><td>配置工厂，生命周期前</td><td>throw；CLI 明确失败，不退回 fake</td></tr>
 		<tr><td>HTTP / SSE / EOF / abort</td><td>provider 泵 + 状态机</td><td>terminal error；正常结束 run</td></tr>
-		<tr><td>listener reject</td><td>Agent 交付边界</td><td>prompt reject 原错误；不递归合成第二条 error</td></tr>
+		<tr><td>listener reject</td><td>Agent 交付边界</td><td>abort run signal 停止后台读取；prompt reject 原错误，不递归合成第二条 error</td></tr>
 	</table>
 	<p>状态机的内部 diagnostic formatter 在 error push 之前脱敏；HTTP 错误只显示状态码，拒绝自动 redirect。若成功 terminal 之后 reader cleanup 才失败，结果不能改写，只输出脱敏 cleanup 日志。</p>
 	<details><summary>为什么不立即重试 HTTP 错误？</summary><p>网络失败不等于服务端没执行；模型请求可能已消耗额度，而此前工具可能已有副作用。自动重试需要单独定义幂等与恢复语义，本阶段不偷跑阶段 9。</p></details>
@@ -239,7 +240,7 @@ cost:                        未提供 // 不是 0</pre>
 	<details><summary>② 若 toolcall_end 就开始执行，会怎样？</summary><p>那时还不知道整次 stopReason。后面的 max_tokens 可能说明另一条参数被截断；提前执行第一个调用就绕过了整批 length 保护，也破坏“done 才可入历史”的边界。</p></details>
 	<details><summary>③ EOF 为什么不能算正常 stop？</summary><p>EOF 只证明连接结束，不能证明模型回复结束。只有 message_stop 提供成功证据；没有它的半截回复可能缺 JSON、usage 或后续 content blocks。</p></details>
 	<details><summary>④ 为什么 core 必须先判断 error，再筛工具？</summary><p>即使一个坏 provider 在 error 消息里带了 toolCall，也不该执行。失败状态不是工具授权；这道 guard 保护所有 StreamFn 实现，而不只保护 Anthropic。</p></details>
-	<details><summary>⑤ 谁该处理 listener reject？</summary><p>这是 UI/持久化交付失败，不是模型网络故障。Agent 保留原异常；provider 不认识 listener，不能把交付失败包装成模型能纠正的错误。</p></details>
+	<details><summary>⑤ 谁该处理 listener reject？</summary><p>这是 UI/持久化交付失败，不是模型网络故障。Agent abort 自己拥有的 run signal，停止无人消费的读取，再保留原异常；provider 不认识 listener，不能把交付失败包装成模型能纠正的错误，也不能向已失败的 listener 补发第二套终止生命周期。</p></details>
 	<details><summary>⑥ 为什么两个工具完成得乱序，发给模型仍有序？</summary><p>tool_execution_end 是实时反馈，toolResult 是模型协议历史。Promise.all 的输入 index 保序；转换器忠实使用历史顺序，不再按时间重新排列。</p></details>
 	<h3>运行与源码导航</h3>
 	<pre>export ANTHROPIC_API_KEY='&lt;your-key&gt;'

@@ -183,6 +183,7 @@ export class Agent {
 			try {
 				await listener(event);
 			} catch (error) {
+				this.activeRun?.abortController.abort();
 				throw new AgentListenerFailure(error);
 			}
 		}
