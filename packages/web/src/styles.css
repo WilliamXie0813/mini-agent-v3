@@ -90,7 +90,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .danger-button { color: var(--color-danger); border-color: #fda29b; }
 .text-button { color: var(--color-primary); border: 0; }
 
-.inspector-column { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) 230px; overflow: hidden; border-left: 1px solid var(--color-border); }
+.inspector-column { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) clamp(300px, 45%, 480px); overflow: hidden; border-left: 1px solid var(--color-border); }
 .runtime-alerts { display: grid; gap: 6px; padding: 8px; border-bottom: 1px solid var(--color-border); background: #fffaeb; }
 .runtime-alert { width: 100%; padding: 7px; color: #93370d; border: 0; border-radius: 6px; background: transparent; text-align: left; }
 .turn-heading { width: 100%; margin: 0 0 8px; padding: 4px 6px; border: 0; border-radius: 5px; background: transparent; font-weight: 700; text-align: left; }

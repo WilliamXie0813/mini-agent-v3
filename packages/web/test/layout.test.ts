@@ -36,4 +36,10 @@ describe("workspace scroll containment", () => {
 		expect(rule(".prompt-composer")).toContain("flex: 0 0 auto");
 		expect(rule(".prompt-composer textarea")).toContain("resize: none");
 	});
+
+	it("gives the JSON inspector a larger responsive detail track", () => {
+		expect(rule(".inspector-column")).toContain(
+			"grid-template-rows: auto minmax(0, 1fr) clamp(300px, 45%, 480px)",
+		);
+	});
 });
