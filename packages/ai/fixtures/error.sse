@@ -1,0 +1,4 @@
+event: error
+data: {"type":"error","error":{"type":"overloaded_error","message":"Provider overloaded"}}
+
+
