@@ -127,7 +127,7 @@ v3 的目标不是"再写一个更好的 agent"，而是**用一条单线、无�
 export type StreamFn = (
 	context: { system: SystemMessage; messages: Message[]; tools: Tool[] },
 	signal?: AbortSignal,
-) => AsyncGenerator<AssistantMessageEvent>;
+) => AssistantMessageEventStream;
 
 // stream-fn.ts：20 行的单例插槽，供组装方安装默认实现
 export function setDefaultStreamFn(fn: StreamFn | undefined): void;
@@ -135,6 +135,10 @@ export function getDefaultStreamFn(): StreamFn; // 未设置时抛错
 
 // Agent 的 streamFn 构造参数可选，缺省时 fallback 到 getDefaultStreamFn()
 ```
+
+`AssistantMessageEventStream` 同时是 async-iterable 与推送式事件队列，并提供
+`result()` 取得权威终止消息。provider 可以立即返回 stream，再由独立 HTTP/SSE
+泵按网络节奏 `push()`；不能改回等待消费者拉取才继续的 `AsyncGenerator`。
 
 **Pi 的取舍**：用**函数**而不是 `interface Provider`。理由——只有一个方法时，接口会带来实现类、构造、注册表这一串仪式，而函数可以内联写（Pi 的 `coding-agent/src/core/sdk.ts:420` 就是一个内联 async 函数，里面做 cache warmer 启动 + 路由）。
 
@@ -237,7 +241,9 @@ type StopReason = "pending" | "stop" | "length" | "toolUse" | "error" | "aborted
 
 **为什么 `content` 必须是块数组**：一次 assistant 响应里可以既有 text 又有 toolCall，且**顺序有意义**（模型先说"我要读文件"，再发 read 调用）。扁平化成字符串就丢了这个结构，第 5 阶段的 `prepare/execute/finalize` 三段式也就无处安放。
 
-**`usage` 从第 7 阶段起填充**（token 计数 + 成本），第 10 阶段压缩阈值判定依赖它。
+**`usage` 从第 7 阶段起填充 token 计数**，包括 cache read/write 子计数；第 10
+阶段压缩阈值判定依赖它。成本不在第 7 阶段计算：没有经验证的模型价格表时，
+不能把未知费用写成 0；若后续引入计价，必须区分 uncached/cache-read/cache-write。
 
 ---
 
@@ -340,10 +346,10 @@ interface ToolResult { content: ContentBlock[]; isError?: boolean }
 | | |
 |---|---|
 | **新概念** | `AssistantMessageEvent` + **delta 与 done 的分离** |
-| **Pi 对应** | `ai/src/types.ts:801-817`（12 个变体）；`ai/src/utils/event-stream.ts:26`、`:97` |
+| **Pi 对应** | `ai/src/types.ts:801-817`（Pi 有 12 个变体）；v3 本阶段先落 `start` / `text_delta` / `done`，第 7 阶段扩为不含 thinking 的 9 个变体；`ai/src/utils/event-stream.ts:26`、`:97` |
 | **决策点** | 为什么 delta 事件不进消息历史，只有 `done` 携带的消息进？ |
 
-**范围**：`EventStream<T, R>` 泛型（async-iterable + `push`/`end`/`result()`）、`AssistantMessageEvent`、假模型改造为发 delta 序列、CLI 改为逐字打印。
+**范围**：`EventStream<T, R>` 泛型（async-iterable + `push`/`end`/`result()`）、`AssistantMessageEvent` 的文本最小子集、假模型改造为发 delta 序列、CLI 改为逐字打印。
 
 **核心约定**（v1 已确立，v3 保留）：
 
@@ -503,10 +509,16 @@ return executeParallel(...);
 | | |
 |---|---|
 | **新概念** | 裸写 Anthropic Messages 适配器：消息转换 / SSE 解析 / 事件映射 |
-| **Pi 对应** | `ai/src/types.ts:801`（`AssistantMessageEvent` 12 变体）；参考 v1 的 `src/anthropic.ts`（251 行）写法，**但不复用代码** |
+| **Pi 对应** | `ai/src/types.ts:801`（Pi 有 12 个变体）；v3 实现 text/toolcall/error 所需的 9 个变体，不实现 thinking；参考 v1 的 `src/anthropic.ts`（251 行）写法，**但不复用代码** |
 | **决策点** | 为什么 `StreamFn` 契约要求"不抛异常，失败编码为 error 事件"？ |
 
 **范围**：`anthropic.ts`，约 150 行。
+
+**事件范围决策**：本阶段实现
+`start`、`text_start`、`text_delta`、`text_end`、`toolcall_start`、
+`toolcall_delta`、`toolcall_end`、`done`、`error` 共 9 个变体。
+thinking 不在本阶段启用，请求体也不发送 `thinking` 字段；若网关主动返回
+thinking 语义块，适配器显式产生协议错误，不能静默丢弃。
 
 **三个必须自己撞的坑**：
 
@@ -715,7 +727,7 @@ cli（保留）        server（新增，~150 行）
 
 - 消息列表（user / assistant / toolResult 三种渲染）
 - 工具调用卡片：名称、参数、耗时、折叠的结果
-- token 用量与成本（从 `usage` 累计）
+- token 用量（从 `usage` 累计）；只有后续引入经验证的价格表时才显示成本
 - 流式文本的逐字追加
 - 压缩事件的时间线标记
 
@@ -878,7 +890,9 @@ cli → core → ai
 
 1. 代码 + 测试（`pnpm test` 与 `pnpm check` 全绿）
 2. `docs/stages/NN-<stage-name>.md`：**这个阶段解决了什么问题 / Pi 的哪条决策是答案 / 替代方案为什么更差 / 决策点是什么**
-3. 一次 git commit，message 形如 `feat(stage-NN): <新概念>`
+3. 每个可独立验证的任务一次原子 commit；message 使用
+   `feat(stage-NN): ...`、`fix(stage-NN): ...` 或 `docs(stage-NN): ...`。
+   阶段结束时工作区必须干净，不要求把任务提交 squash 成单个 commit。
 
 第 2 项是学习的主载体——**代码是我写的，但每阶段的"为什么"要写成你能追问的文档**。
 
@@ -899,7 +913,7 @@ cli → core → ai
 
 ## 9. 验收标准（整体）
 
-1. 13 个阶段全部完成，每阶段一次 commit，`pnpm test` 与 `pnpm check` 全绿。
+1. 13 个阶段全部完成，每阶段保留可追溯的原子任务 commits，`pnpm test` 与 `pnpm check` 全绿。
 2. 最终能真实干活：在终端输入"读一下 package.json 然后总结这个项目"，能看到流式文本 + 工具调用 + 最终总结；`edit` / `bash` 各验证一次。
 3. Web UI 可用，与 CLI 共享同一份 core。
 4. 会话可持久化、可 resume、可 branch、可压缩。
@@ -915,7 +929,7 @@ cli → core → ai
 1. 讲清问题、Pi 的决策、替代方案的代价（对应 §5 的「决策点」）
 2. 写验收测试（失败）
 3. 实现
-4. 全绿 + 写阶段文档 + commit
+4. 每个任务全绿后原子提交；阶段末写阶段文档并提交
 5. 用户回测追问 → 澄清 → 必要时修正文档
 
 **开始前需确认**：本 spec 通过后，用 writing-plans 技能生成阶段 1 的详细实施计划。
