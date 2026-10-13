@@ -10,6 +10,12 @@
 
 **Spec:** `docs/specs/2026-10-09-mini-agent-v3-design.md` §5 阶段 7、§3.2(a)、§4、§7.1–7.4；前置实现见 `docs/stages/06-parallel-tools.md`。
 
+## 执行记录（2026-10-13）
+
+Tasks 1–6 的源码、本地验收与阶段文档已实施；具体提交见 `stage-7-anthropic-sse` 分支。用户选择在当前目录新建分支，而非 worktree。
+
+Task 6 Step 6 **真实 API 联调待补验**：用户明确要求暂时跳过，之后手动补充 API key。没有外发仓库内容，不声称 Kimi 网关已验证。各任务以下 checkbox 保留原始执行步骤供追溯；实际交付与取舍见 [`../stages/07-anthropic-sse.md`](../stages/07-anthropic-sse.md)。
+
 ## Global Constraints
 
 - **只加一个新概念**：消息 IR 与真实 provider 协议之间的适配。不得提前实现阶段 8 的 SystemMessage 重放、阶段 9 的持久化或阶段 11 的扩展系统。

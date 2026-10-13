@@ -1,15 +1,15 @@
 import * as readline from "node:readline/promises";
 import { Agent, createDefaultTools } from "@mini-agent/core";
-import { createFakeStreamFn, setDefaultStreamFn } from "@mini-agent/ai";
+import { createAnthropicStreamFn, setDefaultStreamFn } from "@mini-agent/ai";
 import type { ContentBlock } from "@mini-agent/ai";
 
 // 组装根：cli 是唯一知道用哪个 provider 的地方（spec §3.2a）。
-// 必须发生在任何循环之前。问候文案刻意一眼能认出是假模型——
-// 阶段 7 接真实模型时，从输出就能判断切换是否成功。
-// 默认 chunkSize 1 + delayMs 25：肉眼能看到逐字出现（验收 #1）。
-// 测试里同样的 provider 用 chunkSize 3、delayMs 0。
 setDefaultStreamFn(
-	createFakeStreamFn(["Hello from the deterministic fake model."], { delayMs: 25 }),
+	createAnthropicStreamFn({
+		apiKey: process.env.ANTHROPIC_API_KEY ?? "",
+		baseUrl: process.env.ANTHROPIC_BASE_URL,
+		model: process.env.ANTHROPIC_MODEL,
+	}),
 );
 
 // content 是块数组；错误分支需要可读文本，只提 text 块拼起来（渲染 text 走 block.text，不经这里）。
@@ -56,10 +56,13 @@ agent.subscribe((event) => {
 			}
 			if (
 				event.message.role === "assistant" &&
-				event.message.stopReason === "error"
+				(event.message.stopReason === "error" || event.message.stopReason === "length")
 			) {
+				const diagnostic = event.message.errorMessage ??
+					(event.message.stopReason === "length" ? "Response hit the output token limit"
+						: textOf(event.message.content));
 				console.log(
-					`${streamed ? "\n" : ""}✗ ${textOf(event.message.content)}`,
+					`${streamed ? "\n" : ""}✗ ${diagnostic}`,
 				);
 			}
 			if (
@@ -83,7 +86,7 @@ rl.on("SIGINT", () => {
 	if (running) agent.abort();
 	else rl.close();
 });
-console.log("mini-agent (stage 4) — type /exit to quit");
+console.log("mini-agent (stage 7) — type /exit to quit");
 
 try {
 	process.stdout.write("> ");
