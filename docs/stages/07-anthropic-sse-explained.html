@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>从网络字节到工具循环 — 阶段 7 深度图解</title>
+<style>
+	:root{--paper:#f6f1e7;--deep:#efe7d8;--ink:#1c1a17;--soft:#4a453c;--muted:#8a8272;--accent:#d6401f;--blue:#2b4acb;--green:#2e7d4f;--gold:#b47a15;--line:#d8cfbd;--code:#221f1b;--code-fg:#e8e0d0}
+	*{box-sizing:border-box;margin:0;padding:0}html{scroll-behavior:smooth}
+	body{background:var(--paper);color:var(--ink);font-family:Georgia,"Songti SC","STSong","SimSun",serif;line-height:1.85;padding:0 24px 120px;background-image:radial-gradient(rgba(28,26,23,.045) 1px,transparent 1px);background-size:26px 26px}
+	.wrap{max-width:1040px;margin:auto}header{padding:85px 0 55px;border-bottom:3px double var(--ink);margin-bottom:65px}
+	.kicker{font:12px Consolas,monospace;letter-spacing:.28em;color:var(--accent);margin-bottom:18px}h1{font-size:clamp(36px,6vw,60px);line-height:1.2}header .sub{margin-top:24px;max-width:860px}
+	p{font-size:16.5px;color:var(--soft);margin-bottom:16px}p strong{color:var(--ink)}
+	.toc{display:flex;flex-wrap:wrap;gap:10px 20px;margin-top:28px}a{color:var(--blue);text-decoration:none;border-bottom:1px dashed var(--blue)}
+	.toc a{font:13px Consolas,monospace}section{margin-bottom:85px;scroll-margin-top:20px}.sec-head{display:flex;align-items:baseline;gap:20px;margin-bottom:25px}.sec-num{font-size:52px;color:var(--deep);-webkit-text-stroke:1.5px var(--accent);line-height:1}h2{font-size:29px}h3{font-size:20px;margin:28px 0 12px}
+	code{font:.88em Consolas,monospace;background:var(--deep);padding:2px 6px;border-radius:4px}pre{font:13px/1.7 Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--code);color:var(--code-fg);padding:20px;border-radius:9px;margin:16px 0;box-shadow:0 6px 20px rgba(28,26,23,.12)}
+	.figure{background:#fffdf7;border:1px solid var(--line);border-radius:12px;padding:25px;margin:22px 0}.cap{font:12px Consolas,monospace;letter-spacing:.1em;color:var(--muted);margin-bottom:16px}.foot{border-top:1px dashed var(--line);padding-top:12px;margin-top:18px;font-size:14px;color:var(--muted)}
+	.callout{background:var(--deep);border-left:4px solid var(--accent);padding:16px 22px;border-radius:0 8px 8px 0;margin:22px 0}.callout p{margin:0;font-size:15.5px}.tag{display:block;font:11px Consolas,monospace;letter-spacing:.18em;color:var(--accent);margin-bottom:6px}
+	button{background:transparent;border:1.5px solid var(--ink);border-radius:999px;font:13px Consolas,monospace;padding:9px 16px;cursor:pointer;transition:.15s}button:hover:not(:disabled),button.active{background:var(--ink);color:var(--paper)}button:disabled{opacity:.35;cursor:not-allowed}button.primary{border-color:var(--accent);color:var(--accent)}button.primary:hover:not(:disabled){background:var(--accent);color:white}button:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid var(--blue);outline-offset:4px}
+	.btns{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:18px}.counter{margin-left:auto;font:12px Consolas,monospace;color:var(--muted)}
+	.story{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.lane{padding:15px;border:1.5px solid var(--line);border-radius:10px;min-height:195px;transition:.15s}.lane.focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(214,64,31,.12)}.lane h4{font:11px Consolas,monospace;letter-spacing:.1em;border-bottom:1px solid var(--line);padding-bottom:9px;margin-bottom:10px;color:var(--muted)}.lane pre{font-size:11.5px;background:transparent;box-shadow:none;padding:0;color:var(--soft);margin:0}
+	.status{background:var(--deep);border-radius:8px;padding:13px 16px;margin-top:15px;font:13px/1.8 Consolas,monospace}.event{background:var(--code);color:var(--code-fg)}.event strong{color:#e8a04c}
+	.debugger{display:grid;grid-template-columns:225px 1fr;gap:18px}.steps{display:flex;flex-direction:column;gap:6px}.step{border-radius:6px;text-align:left;font-size:11.5px;padding:8px 10px}.step.active{background:var(--accent);color:white;border-color:var(--accent)}.detail{display:grid;grid-template-columns:1fr 1fr;gap:12px}.card{padding:15px;border:1.5px solid var(--line);border-radius:9px;min-height:100px}.card h4{font:11px Consolas,monospace;color:var(--muted);margin-bottom:8px}.card p{font-size:14px;margin:0}.source{grid-column:1/-1}.source pre{box-shadow:none;margin-bottom:0}
+	.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.grid .card{background:#fffdf7}.grid pre{font-size:12px}.map{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0}.chip{padding:9px 13px;background:var(--deep);border-radius:6px;border-left:3px solid var(--blue);font:12px Consolas,monospace}.chip.good{border-color:var(--green)}.chip.warn{border-color:var(--accent)}
+	table{border-collapse:collapse;width:100%;margin:20px 0;font-size:14.5px}th,td{border:1px solid var(--line);padding:11px 13px;vertical-align:top;text-align:left}th{background:var(--deep);font-family:Consolas,monospace}td{color:var(--soft)}
+	details{border:1px solid var(--line);padding:14px 17px;border-radius:9px;margin:12px 0;background:#fffdf7}summary{cursor:pointer;font-weight:700}details p{margin:15px 0 0;font-size:15px}.quiz{margin-top:16px;padding-top:15px;border-top:1px dashed var(--line)}
+	footer{border-top:3px double var(--ink);padding-top:28px;text-align:center;color:var(--muted);font-size:14px}
+	@media(max-width:850px){.story{grid-template-columns:1fr 1fr}.debugger{grid-template-columns:1fr}.steps{display:grid;grid-template-columns:1fr 1fr}}
+	@media(max-width:580px){body{padding:0 15px 80px}.story,.detail,.grid,.steps{grid-template-columns:1fr}h2{font-size:23px}.figure{padding:16px}table{font-size:12px}.counter{width:100%;margin:0}.lane{min-height:130px}}
+	@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important}}
+	@media print{body{background:white;padding:0}.btns,.steps{display:none}.figure,.card{break-inside:avoid}pre{box-shadow:none}header{padding:20px 0}section{margin-bottom:35px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+	<div class="kicker">mini-agent-v3 · 阶段 7 · 深度学习版</div>
+	<h1>从网络字节<br>到一次真实工具循环</h1>
+	<p class="sub">阶段 6 学的是一批工具的两种顺序；阶段 7 学的是一条回复的三种边界。先看模型怎样发 text 与两个 tool call，再沿同一条时间线下钻：fetch 字节、SSE 帧、partial、done、工具结果，以及下一次模型请求。</p>
+	<div class="toc">
+		<a href="#s0">全局地图</a><a href="#s1">① 完整故事</a><a href="#s2">② 同线调试器</a>
+		<a href="#s3">③ 字节实验</a><a href="#s4">④ 参数 JSON</a><a href="#s5">⑤ 终止分叉</a>
+		<a href="#s6">⑥ 协议转换</a><a href="#s7">⑦ Usage/错误边界</a><a href="#s8">⑧ 回测与运行</a>
+	</div>
+</header>
+
+<section id="s0">
+	<div class="sec-head"><div class="sec-num">0</div><h2>先分清三条时间线</h2></div>
+	<div class="map">
+		<span class="chip">网络：任意 bytes chunks</span><span class="chip">显示：start / delta / block end</span>
+		<span class="chip good">历史：完整 done / terminal 诊断</span>
+	</div>
+	<pre>网络 chunks ── TextDecoder + 行缓冲 ── SSE 帧
+SSE 帧     ── JSON + 协议状态机 ────── AssistantMessageEvent
+统一事件   ── core 映射 ────────────── AgentEvent → CLI
+message_stop ── 参数解析 / stopReason ── done → 完整 assistant 入历史</pre>
+	<div class="callout"><span class="tag">先记住这句话</span><p><strong>网络 chunk 不是事件，block 结束不是回复结束，partial 不是可执行参数。</strong>这三个“不是”分别是 SSE 解析器、响应状态机与 core 工具保护存在的理由。</p></div>
+	<p>本页交互是离线教学模拟，不发送 API 请求、不读取 key、不执行真实工具。源码已实现，本地 HTTP 验收已覆盖；<strong>真实 Kimi 联调按你的选择暂缓</strong>，需要之后手动补验。</p>
+</section>
+
+<section id="s1">
+	<div class="sec-head"><div class="sec-num">1</div><h2>第一遍：完整播放“读两个文件”</h2></div>
+	<p>沿用 <code>mixed.sse</code> 的故事：先说“先读两个文件”，再请求 <code>c1 slow_read(a.txt)</code> 与 <code>c2 fast_read(b.txt)</code>。工具仍由阶段 6 的 prepare/execute 调度，adapter 不执行工具。</p>
+	<div class="figure">
+		<div class="cap">完整故事播放器 · 与下面的源码调试器共用同一时刻</div>
+		<div class="story">
+			<div class="lane" id="lane-request"><h4>① Request / Wire</h4><pre id="body-request"></pre></div>
+			<div class="lane" id="lane-network"><h4>② Bytes / SSE</h4><pre id="body-network"></pre></div>
+			<div class="lane" id="lane-provider"><h4>③ Provider / Partial</h4><pre id="body-provider"></pre></div>
+			<div class="lane" id="lane-core"><h4>④ Core / History</h4><pre id="body-core"></pre></div>
+		</div>
+		<div class="status event" aria-live="polite">当前时刻：<strong id="story-event"></strong></div>
+		<div class="status" id="story-note"></div>
+		<div class="btns">
+			<button id="prev">← 上一步</button><button class="primary" id="next">单步 →</button>
+			<button id="play">▶ 自动播放</button><button id="reset">重置</button><span class="counter" id="count"></span>
+		</div>
+		<div class="foot">c2 的 end 事件先出现，但回喂模型的 tool_result 仍为 c1 → c2。阶段 7 验证了阶段 6 的顺序不是假模型特例。</div>
+	</div>
+</section>
+
+<section id="s2">
+	<div class="sec-head"><div class="sec-num">2</div><h2>第二遍：在同一时间线上逐步下钻</h2></div>
+	<div class="figure">
+		<div class="debugger">
+			<div class="steps" id="debug-steps" aria-label="选择故事步骤"></div>
+			<div>
+				<h3 id="debug-title" style="margin-top:0"></h3>
+				<div class="detail">
+					<div class="card"><h4>为什么存在</h4><p id="d-why"></p></div>
+					<div class="card"><h4>输入</h4><p id="d-input"></p></div>
+					<div class="card"><h4>输出</h4><p id="d-output"></p></div>
+					<div class="card"><h4>事件 / 历史</h4><p id="d-state"></p></div>
+					<div class="card"><h4>如果反过来</h4><p id="d-counter"></p></div>
+					<div class="card"><h4>到哪找源码</h4><p id="d-file"></p></div>
+					<div class="card source"><h4>关键源码摘录 / 有标记的省略</h4><pre id="d-source"></pre></div>
+				</div>
+			</div>
+		</div>
+	</div>
+</section>
+
+<section id="s3">
+	<div class="sec-head"><div class="sec-num">3</div><h2>网络边界：半个中文字符不是坏 JSON</h2></div>
+	<p>“你”的 UTF-8 是三个字节。网络可以在第一个字节之后截开。若每个 chunk 都单独 decode，半截字符变成 <code>�</code>；若使用 <code>decode(chunk, { stream: true })</code>，decoder 把半截字节留到下次。</p>
+	<div class="figure">
+		<div class="cap">逐 chunk 实验 · 故意切开“你”和“好”的 UTF-8</div>
+		<div class="grid">
+			<div class="card"><h4>本次 bytes（十六进制）</h4><pre id="bytes-current"></pre></div>
+			<div class="card"><h4>错误做法：每块独立 decode</h4><pre id="bytes-naive"></pre></div>
+			<div class="card"><h4>正确做法：流式 decode + buffer</h4><pre id="bytes-decoded"></pre></div>
+			<div class="card"><h4>只有遇到空行才派发</h4><pre id="bytes-frames"></pre></div>
+		</div>
+		<div class="btns"><button class="primary" id="bytes-next">读下一个 chunk →</button><button id="bytes-reset">重置</button><span class="counter" id="bytes-count"></span></div>
+		<div class="foot">这个实验只演示一帧 LF data。生产 readSse 另外处理 CRLF/CR、多条 data、注释、EOF、fatal 解码与 reader 清理；不要把教学实验当作可复制的完整 parser。</div>
+	</div>
+	<h3>帧解析器为什么不负责 JSON.parse？</h3>
+	<pre>// packages/ai/src/sse.ts（节选）
+const decoder = new TextDecoder("utf-8", { fatal: true });
+buffer += eof ? decoder.decode() : decoder.decode(chunk.value, { stream: true });
+// 按行积累 event 与 data；空行才派发：
+if (data.length) yield { event, data: data.join("\n") };</pre>
+	<p>SSE 帧只知道 event/data。下游才知道 <code>input_json_delta</code> 与 <code>message_delta</code>。分开之后，中文分片 bug 能在 sse.test.ts 中单独定位，不必同时猜模型状态。</p>
+	<div class="callout"><span class="tag">前端类比</span><p>fetch body chunk 像 socket 收到的字节批次；SSE 帧像一个完整消息 envelope。不要把 TCP/HTTP 的“刚好读到多少”当成应用层的“刚好一条”。</p></div>
+</section>
+
+<section id="s4">
+	<div class="sec-head"><div class="sec-num">4</div><h2>参数边界：字符串不是参数对象</h2></div>
+	<pre>tool_use c1: rawJSON = '{"path":' + '"a.txt"}'
+tool_use c2: rawJSON = '{"path":"b.txt"}'
+
+partial.content[1].arguments = {}   // 未解析，占位
+partial.content[2].arguments = {}   // 另一条独立 buffer
+
+content_block_stop → toolcall_end  // “这个 block 不再传”
+message_delta     → toolUse        // “模型为何停止”
+message_stop      → JSON.parse     // “现在才确认整次回复完成”</pre>
+	<div class="grid">
+		<div class="card"><h3>显示可以先发生</h3><p>UI 可以展示模型正在生成工具调用，也可以看 raw delta。但 partial 是 live 数据，想保留某一时刻必须复制；它不是执行授权。</p></div>
+		<div class="card"><h3>执行必须后发生</h3><p>core 等 terminal，完成历史入账后才筛 toolCalls。beforeToolCall、JSON Schema、并行调度仍在 core；provider 不能越界。</p></div>
+	</div>
+	<details><summary>展开实际 finalize 的核心（anthropic-stream.ts）</summary>
+		<pre>if (block.type !== "toolCall") continue;
+try {
+  block.arguments = state.json === ""
+    ? state.input
+    : object(JSON.parse(state.json));
+} catch {
+  check(stopReason === "length", `invalid tool JSON at block ${index}`);
+  block.arguments = {};
+  partial.errorMessage = `Tool arguments truncated at block ${index}; batch must not execute`;
+}</pre>
+	</details>
+	<p>这里的 <code>{}</code> 不是“坏输入默认成功”。它与 <code>length</code> 和截断诊断一起出现；core 整批产生 isError toolResult，execute 次数为 0。正常 stop/toolUse 的坏 JSON 则直接报 error，不做 JSON repair。</p>
+</section>
+
+<section id="s5">
+	<div class="sec-head"><div class="sec-num">5</div><h2>终止边界：同一条参数流的四种结局</h2></div>
+	<div class="figure">
+		<div class="cap">终止分叉实验 · 点击场景比较历史与副作用</div>
+		<div class="btns">
+			<button id="case-success">完整 tool_use</button><button id="case-length">max_tokens + stop</button>
+			<button id="case-eof">缺 message_stop 的 EOF</button><button id="case-abort">用户 abort</button>
+		</div>
+		<div class="grid" style="margin-top:18px">
+			<div class="card"><h4>统一终止事件</h4><pre id="case-result"></pre></div>
+			<div class="card"><h4>真正 execute 的次数</h4><pre id="case-execute"></pre></div>
+			<div class="card"><h4>进入历史的语义记录</h4><pre id="case-history"></pre></div>
+			<div class="card"><h4>接下来怎么办</h4><p id="case-next"></p></div>
+		</div>
+	</div>
+	<table>
+		<tr><th>区别</th><th>length</th><th>error / aborted</th></tr>
+		<tr><td>证据</td><td>收到 max_tokens 与 message_stop</td><td>没有完整回复，或用户主动停止</td></tr>
+		<tr><td>保留什么</td><td>工具 id/name；完整参数或带诊断的占位参数</td><td>content:[] 的终止诊断；半截 toolCall 不保留</td></tr>
+		<tr><td>工具</td><td>整批 isError 回喂，包括参数完整的调用</td><td>core 直接关 turn/run，不执行，不自动重试</td></tr>
+		<tr><td>下一次请求</td><td>模型看到原调用及对应错误结果</td><td>跳过 error/aborted assistant，不把诊断伪装成回答</td></tr>
+	</table>
+	<pre>// packages/core/src/agent-loop.ts（节选）
+if (message.stopReason === "error" || message.stopReason === "aborted") {
+  await emit({ type: "turn_end", message, toolResults: [] });
+  await emit({ type: "agent_end", messages: newMessages });
+  return options.messages;
+}
+// 只有经过这道门，才会进入 length 或正常工具执行分支。</pre>
+	<div class="callout"><span class="tag">失败不等于抛给调用者</span><p>HTTP 500 已发生在独立泵里，原调用早就返回了 stream。把错误编码成 terminal，才能让 iterator、result()、Agent 与 CLI 一起收尾。只写 catch → end() 会丢掉原始诊断。</p></div>
+</section>
+
+<section id="s6">
+	<div class="sec-head"><div class="sec-num">6</div><h2>模型边界：工具结果为什么穿 user 的外衣</h2></div>
+	<div class="grid">
+		<div class="card"><h4>内部 IR</h4><pre>assistant:
+  text("先读两个文件。")
+  toolCall(c1, slow_read, {path:"a.txt"})
+  toolCall(c2, fast_read, {path:"b.txt"})
+toolResult(c1, "a.txt")
+toolResult(c2, "b.txt")</pre></div>
+		<div class="card"><h4>Anthropic wire</h4><pre>assistant:
+  text("先读两个文件。")
+  tool_use(c1, slow_read, input)
+  tool_use(c2, fast_read, input)
+user:
+  tool_result(tool_use_id:c1)
+  tool_result(tool_use_id:c2)</pre></div>
+	</div>
+	<p><strong>toolResult 不是用户真的打了一句话。</strong>这是 Anthropic 的传输协议；IR 保持自己的语义角色，adapter 在边界转换。相邻同角色 wire 消息合并 blocks，连续结果不排序，源顺序仍为 c1 → c2。</p>
+	<pre>工具执行事件： end(c2) → end(c1)          // 给实时 UI
+历史消息：     toolResult(c1) → toolResult(c2)
+下一次请求：   user[tool_result(c1), tool_result(c2)]</pre>
+	<p>转换器创建新的 arrays/blocks，不修改原历史；schema 变成 input_schema，execute、replay、executionMode 都不发送给模型。阶段 8 尚未开始，system 仍取 <code>context.system.content</code>。</p>
+</section>
+
+<section id="s7">
+	<div class="sec-head"><div class="sec-num">7</div><h2>两个容易忽略的边界：计量与错误归属</h2></div>
+	<h3>7.1 Token 不做逐帧求和</h3>
+	<pre>input_tokens                = 10  // uncached
+cache_read_input_tokens     = 20
+cache_creation_input_tokens =  5
+Usage.inputTokens           = 35
+
+message_delta.output_tokens: 2 → 7
+Usage.outputTokens:          7     // 覆盖累计值，不是 2 + 7
+cost:                        未提供 // 不是 0</pre>
+	<p>cacheReadTokens/cacheWriteTokens 作为子计数保留；未来计算成本时，必须分别计价。durationMs 由 event stream 的单调时钟结算，done 和 error 都有收尾时刻。</p>
+	<h3>7.2 三种错误，三个负责人</h3>
+	<table>
+		<tr><th>错误</th><th>谁处理</th><th>可观察结果</th></tr>
+		<tr><td>缺 key / 非法 URL / maxTokens≤0</td><td>配置工厂，生命周期前</td><td>throw；CLI 明确失败，不退回 fake</td></tr>
+		<tr><td>HTTP / SSE / EOF / abort</td><td>provider 泵 + 状态机</td><td>terminal error；正常结束 run</td></tr>
+		<tr><td>listener reject</td><td>Agent 交付边界</td><td>prompt reject 原错误；不递归合成第二条 error</td></tr>
+	</table>
+	<p>状态机的内部 diagnostic formatter 在 error push 之前脱敏；HTTP 错误只显示状态码，拒绝自动 redirect。若成功 terminal 之后 reader cleanup 才失败，结果不能改写，只输出脱敏 cleanup 日志。</p>
+	<details><summary>为什么不立即重试 HTTP 错误？</summary><p>网络失败不等于服务端没执行；模型请求可能已消耗额度，而此前工具可能已有副作用。自动重试需要单独定义幂等与恢复语义，本阶段不偷跑阶段 9。</p></details>
+</section>
+
+<section id="s8">
+	<div class="sec-head"><div class="sec-num">8</div><h2>把决策说清楚，而不只是记住 API</h2></div>
+	<details><summary>① 为什么 StreamFn 不返回 Promise&lt;AssistantMessage&gt;？</summary><p>只有最终 Promise 无法表达增量；而 Promise&lt;Stream&gt; 又不必要地把拿到消费句柄推迟到 HTTP 完成。同步返回 stream，异步泵 push，让显示与生产解耦。</p></details>
+	<details><summary>② 若 toolcall_end 就开始执行，会怎样？</summary><p>那时还不知道整次 stopReason。后面的 max_tokens 可能说明另一条参数被截断；提前执行第一个调用就绕过了整批 length 保护，也破坏“done 才可入历史”的边界。</p></details>
+	<details><summary>③ EOF 为什么不能算正常 stop？</summary><p>EOF 只证明连接结束，不能证明模型回复结束。只有 message_stop 提供成功证据；没有它的半截回复可能缺 JSON、usage 或后续 content blocks。</p></details>
+	<details><summary>④ 为什么 core 必须先判断 error，再筛工具？</summary><p>即使一个坏 provider 在 error 消息里带了 toolCall，也不该执行。失败状态不是工具授权；这道 guard 保护所有 StreamFn 实现，而不只保护 Anthropic。</p></details>
+	<details><summary>⑤ 谁该处理 listener reject？</summary><p>这是 UI/持久化交付失败，不是模型网络故障。Agent 保留原异常；provider 不认识 listener，不能把交付失败包装成模型能纠正的错误。</p></details>
+	<details><summary>⑥ 为什么两个工具完成得乱序，发给模型仍有序？</summary><p>tool_execution_end 是实时反馈，toolResult 是模型协议历史。Promise.all 的输入 index 保序；转换器忠实使用历史顺序，不再按时间重新排列。</p></details>
+	<h3>运行与源码导航</h3>
+	<pre>export ANTHROPIC_API_KEY='&lt;your-key&gt;'
+export ANTHROPIC_BASE_URL='https://api.kimi.com/coding/'
+export ANTHROPIC_MODEL='kimi-for-coding'
+pnpm dev
+
+# 未配置 key 会明确失败；不加载 .env，不支持 auth token fallback。</pre>
+	<p><code>pnpm dev</code> 的工作目录是 <code>packages/cli</code>，工具相对路径以它为准。真实补验建议使用自建无敏感目录；不要用验证步骤自动外发仓库代码。请求不发送 thinking 字段，若网关仍返回 thinking block，目前会明确报不支持。</p>
+	<div class="map">
+		<a class="chip" href="../../packages/ai/src/anthropic-messages.ts">消息转换</a>
+		<a class="chip" href="../../packages/ai/src/sse.ts">SSE 解析</a>
+		<a class="chip" href="../../packages/ai/src/anthropic-stream.ts">响应状态机</a>
+		<a class="chip" href="../../packages/ai/src/anthropic.ts">HTTP 泵</a>
+		<a class="chip" href="07-anthropic-sse.md">阶段文档</a>
+	</div>
+	<p class="foot">Pi 对照沿用总设计的 ai/src/types.ts:801；本地 Pi 源码未复核。五份 fixtures 是手写协议样本，不能当作 Kimi 真实录制。真实网关认证、thinking 默认行为与 usage 差异待手动确认。</p>
+</section>
+<footer>mini-agent-v3 · 阶段 7 · 同一条时间线，四个真实边界。无需外部脚本、字体或网络。</footer>
+</div>
+
+<script>
+(() => {
+	const $ = (id) => document.getElementById(id);
+	const steps = [
+		{ title:"prompt → Agent 快照", lane:"request", why:"loop 不直接改 Agent 的内部状态。", input:"用户问题、既有历史、工具表。", output:"一次 run 与本轮 context。", state:"user 先通过 message_end 入历史。", counter:"provider 若能改 Agent，假/真模型就有不同状态规则。", file:"core/src/agent.ts / agent-loop.ts", source:"await agentLoop({\n  messages: this._state.messages.slice(),\n  streamFn: this.streamFn,\n  // 其余配置省略\n});" },
+		{ title:"toAnthropicRequest → wire", lane:"request", why:"内部角色和 Anthropic 协议不同。", input:"StreamContext，system 仍是字符串消息。", output:"system、messages、tools.input_schema。", state:"原始 messages 不变；这里只生成请求副本。", counter:"在 core 里转换，会把 provider 协议渗入运行时。", file:"ai/src/anthropic-messages.ts", source:"body: JSON.stringify(\n  toAnthropicRequest(context, { model, maxTokens })\n)" },
+		{ title:"fetch → 立刻已有 stream", lane:"network", why:"生产源按网络节奏推进，消费者不能控制字节到达。", input:"API key、URL、POST body、AbortSignal。", output:"同步返回 stream；微任务里等 HTTP。", state:"start 已入事件队列；还没有完整 assistant。", counter:"await HTTP 再返回消费句柄，会失去早期事件与错误收尾位置。", file:"ai/src/anthropic.ts", source:"const stream = createAssistantMessageEventStream();\nconst state = createAnthropicStreamState(stream, diagnostic);\nqueueMicrotask(async () => { /* HTTP 泵，省略 */ });\nreturn stream;" },
+		{ title:"readSse → bytes 变帧", lane:"network", why:"网络 chunks 没有 JSON 边界。", input:"任意分片的 Uint8Array。", output:"空行分隔的 {event,data}。", state:"中文字节与行缓冲还在传输层。", counter:"每块独立 decode/parse，切开的中文与 JSON 会坏。", file:"ai/src/sse.ts", source:"buffer += eof ? decoder.decode()\n  : decoder.decode(chunk.value, { stream: true });\n// 空行时：\nif (data.length) yield { event, data: data.join(\"\\n\") };" },
+		{ title:"text_delta → 即时显示", lane:"provider", why:"不必等完整回复就让人看到进展。", input:"content_block_delta(text_delta)。", output:"text_delta + live partial。", state:"CLI 写字；历史仍没有完整 assistant。", counter:"每个 delta 入历史，会把一句话变成几十条消息。", file:"ai/src/anthropic-stream.ts / core/src/stream-assistant.ts", source:"if (block.type === \"text\") block.text += value;\n// 统一事件再被 core 包成 message_update。" },
+		{ title:"toolcall_delta / toolcall_end", lane:"provider", why:"两个工具的参数字符串必须分开攒。", input:"c1/c2 的 input_json_delta 碎片。", output:"各自 rawJSON；partial.arguments 仍 {}。", state:"block_stop 不是 terminal，不进入执行。", counter:"解析半截参数或 block_stop 就执行，会越过整批保护。", file:"ai/src/anthropic-stream.ts", source:"else state.json += value;\nstream.push({\n  type: block.type === \"text\" ? \"text_delta\" : \"toolcall_delta\",\n  contentIndex: index, delta: value, partial\n});" },
+		{ title:"message_stop → done(toolUse)", lane:"provider", why:"只有此刻证明整次响应完整。", input:"全部 blocks、rawJSON、tool_use stop_reason、usage。", output:"解析后的 arguments 与权威 message。", state:"done 和 result() 指向同一份终止结果。", counter:"把 message_delta 当 done，会在 message_stop 缺失时误报成功。", file:"ai/src/anthropic-stream.ts / event-stream.ts", source:"// message_stop 分支中的节选：\nblock.arguments = state.json === \"\"\n  ? state.input : object(JSON.parse(state.json));\n// 校验完成后：\nstream.push({ type: \"done\", message: { ...partial, stopReason } });" },
+		{ title:"message_end → assistant 入历史", lane:"core", why:"只有语义完整的回复能参与下一次请求。", input:"done.message，经 consumeAssistantMessage。", output:"message_end；loop 保存 assistant。", state:"历史：[user, assistant(text+c1+c2)]。", counter:"若历史含 raw 参数碎片，resume/模型回喂都没有稳定单位。", file:"core/src/stream-assistant.ts / agent-loop.ts", source:"case \"done\":\n  await emit({ type: \"message_end\", message: event.message });\n  break;\n// loop 再以 message.stopReason 决定后续路径。" },
+		{ title:"prepare 串行 → execute 并行", lane:"core", why:"阶段 7 不重写阶段 6 的调度。", input:"完整 c1/c2，schema 与 beforeToolCall。", output:"先完成两个 prepare，再执行两个 thunk。", state:"工具执行事件不等于工具结果消息。", counter:"adapter 自己执行工具，就绕过权限 hook 和文件队列。", file:"core/src/execute-tool-calls-parallel.ts", source:"// 调度结构示意，不是新 provider 代码：\nprepare(c1); prepare(c2);\nPromise.all([execute(c1), execute(c2)]);" },
+		{ title:"c2 完成 → end(c2)", lane:"core", why:"UI 应立即看到快工具完成。", input:"fast_read 的真实结果。", output:"tool_execution_end(c2)。", state:"c1 还在等；toolResult 未按完成顺序入历史。", counter:"等 c1 才显示 c2，就牺牲实时反馈。", file:"core/src/execute-tool-calls-parallel.ts", source:"// end 在各 thunk 内实时发。\n// ordered outcomes 尚未整批 settle。" },
+		{ title:"c1 完成 → end(c1)", lane:"core", why:"慢工具完成后，整批才有全部结果。", input:"slow_read 的真实结果。", output:"tool_execution_end(c1)；ordered=[c1,c2]。", state:"完成顺序是 c2→c1，返回数组仍 c1→c2。", counter:"按 Promise 完成时间生成历史，会破坏源顺序。", file:"core/src/execute-tool-calls-parallel.ts", source:"// Promise.all 按输入 index 保序，\n// 不是按 promise resolve 时间排序。" },
+		{ title:"toolResult → 源顺序入历史", lane:"core", why:"模型按发出的调用顺序理解结果。", input:"ordered outcomes [c1,c2]。", output:"两个 toolResult message_start/end。", state:"历史追加 toolResult(c1), toolResult(c2)。", counter:"把 end 事件当历史消息，两个消费者就混在一起。", file:"core/src/tool-call-events.ts / agent-loop.ts", source:"// 批次完成后，按 ordered 遍历发结果消息。\noptions.messages.push(...toolResults);" },
+		{ title:"下一次请求 → user/tool_result", lane:"request", why:"Anthropic 不接受 IR 的 toolResult 角色。", input:"assistant(tool_use×2) 后的连续结果。", output:"一条 user 包含 c1/c2 tool_result。", state:"再调用同一个 StreamFn，不额外建 provider 通道。", counter:"每个结果乱序或独立错配，会污染模型协议输入。", file:"ai/src/anthropic-messages.ts", source:"{ type: \"tool_result\",\n  tool_use_id: message.toolCallId,\n  is_error: message.isError,\n  content: /* text blocks */ [] }\n// 连续相同 role 合并 content。" },
+		{ title:"最终文本 → turn_end → agent_end", lane:"core", why:"没有工具调用，循环自然收敛。", input:"下一轮 done(stop) 的总结。", output:"完整总结、turn_end、agent_end。", state:"最后的 listener 被 await 后，Agent 才 idle。", counter:"不等 listener，落盘/显示可能在 idle 之后才完成。", file:"core/src/agent.ts / agent-loop.ts", source:"await emit({ type: \"turn_end\", message, toolResults: [] });\nawait emit({ type: \"agent_end\", messages: newMessages });\nreturn options.messages;" }
+	];
+	let at = 0, timer;
+	const debugButtons = [];
+	function stopPlay() {
+		if (timer !== undefined) clearInterval(timer);
+		timer = undefined;
+		$("play").textContent = "▶ 自动播放";
+	}
+	function render() {
+		const step = steps[at];
+		$("story-event").textContent = step.title;
+		$("story-note").textContent = step.why + " " + step.state;
+		$("count").textContent = `${at + 1} / ${steps.length}`;
+		$("prev").disabled = at === 0;
+		$("next").disabled = at === steps.length - 1;
+		$("body-request").textContent = at === 0 ? "prompt(\"读两个文件\")\nuser → history" : at < 12
+			? "POST /coding/v1/messages\nsystem + user\ninput_schema × 2\nstream: true"
+			: "assistant[tool_use c1,c2]\nuser[tool_result c1,c2]\n→ 再问模型";
+		$("body-network").textContent = at < 3 ? "等待 HTTP/SSE…" : at < 6
+			? "bytes（任意分片）\n→ SSE 空行分帧\ncontent_block_*"
+			: "message_delta(tool_use)\nmessage_stop\n本轮传输结束";
+		$("body-provider").textContent = at < 4 ? "partial:\ncontent: []\nstopReason: pending" : at < 5
+			? "text: 先读两个文件。\nstopReason: pending" : at < 6
+			? "text + c1{} + c2{}\nrawJSON 分别积累\nstopReason: pending"
+			: "done(toolUse)\nc1 {path: a.txt}\nc2 {path: b.txt}\nusage 完整";
+		$("body-core").textContent = at < 7 ? "history: [user]\n工具执行次数: 0" : at < 9
+			? "history: [user,assistant]\nprepare c1 → c2\nexecute c1 ∥ c2" : at === 9
+			? "end(c2)\nc1 等待中\n结果尚未入历史" : at === 10
+			? "end(c2) → end(c1)\nordered = [c1,c2]" : at < 13
+			? "history:\nuser, assistant,\ntoolResult(c1), toolResult(c2)"
+			: "history 再追加总结\nturn_end → agent_end\nlisteners settle → idle";
+		for (const lane of ["request", "network", "provider", "core"])
+			$("lane-" + lane).classList.toggle("focus", lane === step.lane);
+		$("debug-title").textContent = step.title;
+		for (const key of ["why", "input", "output", "state", "counter", "file", "source"])
+			$("d-" + key).textContent = step[key];
+		debugButtons.forEach((button, index) => button.classList.toggle("active", index === at));
+	}
+	function advance() {
+		if (at < steps.length - 1) at++;
+		render();
+		if (at === steps.length - 1) stopPlay();
+	}
+	steps.forEach((step, index) => {
+		const button = document.createElement("button");
+		button.className = "step";
+		button.textContent = `${String(index + 1).padStart(2, "0")} ${step.title}`;
+		button.addEventListener("click", () => { stopPlay(); at = index; render(); });
+		$("debug-steps").append(button);
+		debugButtons.push(button);
+	});
+	$("next").addEventListener("click", () => { stopPlay(); advance(); });
+	$("prev").addEventListener("click", () => { stopPlay(); at = Math.max(0, at - 1); render(); });
+	$("reset").addEventListener("click", () => { stopPlay(); at = 0; render(); });
+	$("play").addEventListener("click", () => {
+		if (timer !== undefined) { stopPlay(); return; }
+		if (at === steps.length - 1) at = 0;
+		render();
+		$("play").textContent = "⏸ 暂停";
+		timer = setInterval(advance, window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 2500 : 1600);
+	});
+	render();
+
+	const source = 'data: {"text":"你好"}\n\n';
+	const bytes = new TextEncoder().encode(source);
+	const han = new TextEncoder().encode('data: {"text":"').length;
+	const cuts = [0, 5, han + 1, han + 2, han + 3, han + 4, bytes.length - 1, bytes.length];
+	let chunkIndex, decoder, decoded, naive, buffer, frames;
+	function resetBytes() {
+		chunkIndex = 0; decoder = new TextDecoder("utf-8", { fatal: true });
+		decoded = ""; naive = ""; buffer = ""; frames = [];
+		$("bytes-current").textContent = "尚未读取";
+		renderBytes();
+	}
+	function renderBytes() {
+		$("bytes-naive").textContent = naive || "等待";
+		$("bytes-decoded").textContent = decoded || "等待";
+		$("bytes-frames").textContent = frames.length ? frames.join("\n") : "尚无完整帧";
+		$("bytes-count").textContent = `${chunkIndex} / ${cuts.length - 1} chunks`;
+		$("bytes-next").disabled = chunkIndex === cuts.length - 1;
+	}
+	$("bytes-next").addEventListener("click", () => {
+		if (chunkIndex === cuts.length - 1) return;
+		const chunk = bytes.slice(cuts[chunkIndex], cuts[chunkIndex + 1]);
+		chunkIndex++;
+		$("bytes-current").textContent = Array.from(chunk, (byte) => byte.toString(16).padStart(2, "0")).join(" ");
+		naive += new TextDecoder().decode(chunk);
+		const text = decoder.decode(chunk, { stream: true });
+		decoded += text; buffer += text;
+		let boundary;
+		while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+			frames.push(buffer.slice(0, boundary).replace(/^data: /, ""));
+			buffer = buffer.slice(boundary + 2);
+		}
+		renderBytes();
+	});
+	$("bytes-reset").addEventListener("click", resetBytes);
+	resetBytes();
+
+	const cases = {
+		success: ["done(toolUse)", "2 次；prepare 后并行 execute", "user → assistant(c1,c2) → toolResult(c1) → toolResult(c2)", "按源顺序回喂结果，再问模型。"],
+		length: ["done(length) + 截断诊断", "0 次；整批保护", "user → assistant(length,c1,c2) → isError toolResult(c1) → isError toolResult(c2)", "完整 c1 也不执行；模型看到错误后可重发完整调用。"],
+		eof: ["error(error)；缺少 message_stop", "0 次；不能猜成功", "user → assistant(error, content:[])", "结束 run，不自动重试；下次请求跳过诊断 assistant。"],
+		abort: ["error(aborted)；用户主动停止", "0 次；不执行半截工具", "user → assistant(aborted, content:[])", "关闭生命周期，返回 prompt；half partial 不进历史。"]
+	};
+	function renderCase(name) {
+		const value = cases[name];
+		["result", "execute", "history", "next"].forEach((key, index) => { $("case-" + key).textContent = value[index]; });
+		Object.keys(cases).forEach((key) => $("case-" + key).classList.toggle("active", key === name));
+	}
+	Object.keys(cases).forEach((key) => $("case-" + key).addEventListener("click", () => renderCase(key)));
+	renderCase("success");
+})();
+</script>
+</body>
+</html>
