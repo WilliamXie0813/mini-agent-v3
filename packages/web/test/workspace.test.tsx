@@ -297,7 +297,11 @@ describe("Workspace timeline", () => {
 		expect(screen.getByText("Run run-1")).toBeInTheDocument();
 		expect(screen.getByText("Sequence 9")).toBeInTheDocument();
 		expect(screen.getByText("Elapsed 90ms")).toBeInTheDocument();
-		expect(screen.getByText(/"toolCallId": "c2"/)).toBeInTheDocument();
+		expect(screen.getByRole("searchbox", { name: "Search JSON" }))
+			.toBeInTheDocument();
+		const viewer = screen.getByTestId("json-viewer");
+		expect(within(viewer).getByText("toolCallId")).toBeInTheDocument();
+		expect(within(viewer).getByText(/c2/)).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Copy JSON" })).toBeInTheDocument();
 	});
 
@@ -310,7 +314,8 @@ describe("Workspace timeline", () => {
 
 		expect(callbacks.onSelectTimelineItem)
 			.toHaveBeenCalledWith("run-1:turn:1:1");
-		expect(screen.getByText(/"type": "turn_start"/)).toBeInTheDocument();
-		expect(screen.getByText(/"type": "turn_end"/)).toBeInTheDocument();
+		const viewer = screen.getByTestId("json-viewer");
+		expect(within(viewer).getByText(/turn_start/)).toBeInTheDocument();
+		expect(within(viewer).getByText(/turn_end/)).toBeInTheDocument();
 	});
 });

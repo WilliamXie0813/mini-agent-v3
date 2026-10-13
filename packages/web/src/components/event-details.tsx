@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { JsonViewer } from "json-edit-react";
 import type { TimelineItem } from "../state/types.ts";
 
 export function EventDetails({
@@ -7,6 +8,7 @@ export function EventDetails({
 	item?: TimelineItem;
 }): React.JSX.Element {
 	const [copyError, setCopyError] = useState<string>();
+	const [searchText, setSearchText] = useState("");
 	if (!item) {
 		return (
 			<section className="event-details">
@@ -18,11 +20,8 @@ export function EventDetails({
 		? [item.start, ...(item.end ? [item.end] : [])]
 		: item.envelopes;
 	const first = envelopes[0];
-	const json = JSON.stringify(
-		envelopes.length === 1 ? first : envelopes,
-		null,
-		2,
-	);
+	const data = envelopes.length === 1 ? first : envelopes;
+	const json = JSON.stringify(data, null, 2);
 	async function copy(): Promise<void> {
 		setCopyError(undefined);
 		try {
@@ -45,7 +44,23 @@ export function EventDetails({
 				<span>Elapsed {first.elapsedMs}ms</span>
 			</div>
 			{copyError && <div role="alert">Copy failed: {copyError}</div>}
-			<pre>{json}</pre>
+			<label className="json-search">
+				<span className="sr-only">Search JSON</span>
+				<input
+					type="search"
+					aria-label="Search JSON"
+					value={searchText}
+					placeholder="Search keys and values..."
+					onChange={(event) => setSearchText(event.target.value)}
+				/>
+			</label>
+			<div className="json-viewer" data-testid="json-viewer">
+				<JsonViewer
+					data={data}
+					searchText={searchText || undefined}
+					searchFilter="all"
+				/>
+			</div>
 		</section>
 	);
 }
