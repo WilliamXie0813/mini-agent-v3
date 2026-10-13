@@ -18,7 +18,10 @@ function count(value: unknown): number {
 	return value;
 }
 
-export function createAnthropicStreamState(stream: AssistantMessageEventStream) {
+export function createAnthropicStreamState(
+	stream: AssistantMessageEventStream,
+	formatError: (message: string) => string = (message) => message,
+) {
 	const partial: AssistantMessage = { role: "assistant", content: [], stopReason: "pending" };
 	const blocks: { open: boolean; json: string; input: Record<string, unknown> }[] = [];
 	let started = false, completed = false;
@@ -29,7 +32,7 @@ export function createAnthropicStreamState(stream: AssistantMessageEventStream) 
 		completed = true;
 		stream.push({ type: "error", reason, error: {
 			role: "assistant", content: [], stopReason: reason,
-			errorMessage: message, usage: partial.usage,
+			errorMessage: formatError(message), usage: partial.usage,
 		} });
 	};
 	return {
@@ -37,7 +40,10 @@ export function createAnthropicStreamState(stream: AssistantMessageEventStream) 
 		fail,
 		accept(frame: SseFrame): void {
 			if (completed) return;
-			const event = object(JSON.parse(frame.data));
+			let parsed: unknown;
+			try { parsed = JSON.parse(frame.data); }
+			catch { throw new Error("Anthropic protocol: invalid JSON"); }
+			const event = object(parsed);
 			const type = string(event.type, true);
 			check(frame.event === "message" || frame.event === type, "event/type mismatch");
 			if (type === "error") {

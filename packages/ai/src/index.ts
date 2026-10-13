@@ -5,4 +5,6 @@ export type {
 	StreamFn,
 } from "./stream-fn.ts";
 export { createFakeStreamFn } from "./fake.ts";
+export { createAnthropicStreamFn } from "./anthropic.ts";
+export type { AnthropicStreamOptions } from "./anthropic.ts";
 export { EventStream, AssistantMessageEventStream, createAssistantMessageEventStream } from "./event-stream.ts";
