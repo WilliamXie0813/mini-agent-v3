@@ -55,6 +55,17 @@ describe("stream-fn slot", () => {
 });
 
 describe("consumeAssistantMessage", () => {
+	it("returns the error terminal as the authoritative message", async () => {
+		const stream = createAssistantMessageEventStream();
+		const error: AssistantMessage = {
+			role: "assistant", content: [], stopReason: "aborted", errorMessage: "Operation aborted",
+		};
+		stream.push({ type: "start", partial: pendingMessage() });
+		stream.push({ type: "error", reason: "aborted", error });
+		stream.end(error);
+		await expect(consumeAssistantMessage(stream)).resolves.toBe(error);
+	});
+
 	it("awaits each event handler before consuming the next event", async () => {
 		let active = 0;
 		let maxActive = 0;

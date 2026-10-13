@@ -68,19 +68,15 @@ export function createFakeStreamFn(
 		// 消费者的 for await 因此是在「流已经可能有一批事件了」之后才开始读的，
 		// 这正是 EventStream 的队列存在的原因。
 		queueMicrotask(async () => {
-			// 泵里的任何 throw（被中止打断的 setTimeout、坏脚本）都不能把消费者吊死：
-			// 兜底的 end() 让 for await 正常收尾，循环在「没有 done」的具名错误上炸，
-			// 而不是无声挂起——决策 D 在 provider 侧的同一层。阶段 7 会换成真的 error 事件。
+			const partial: AssistantMessage = {
+				role: "assistant", content: [], stopReason: "pending",
+			};
+			stream.push({ type: "start", partial: { ...partial } });
 			try {
+				signal?.throwIfAborted();
 				const step = script[Math.min(callIndex, script.length - 1)];
 				callIndex++;
 				const { content, stopReason } = normalize(step);
-				const partial: AssistantMessage = {
-					role: "assistant",
-					content: [],
-					stopReason: "pending",
-				};
-				stream.push({ type: "start", partial: { ...partial } });
 				for (let index = 0; index < content.length; index++) {
 					const block = content[index];
 					// 工具调用块本阶段不分片（toolcall_delta 是阶段 7 的）。
@@ -91,10 +87,7 @@ export function createFakeStreamFn(
 					partial.content = [...partial.content, { type: "text", text: "" }];
 					for (const chunk of splitIntoDeltas(block.text, chunkSize)) {
 						if (delayMs > 0) await setTimeout(delayMs, undefined, { signal });
-						if (signal?.aborted) {
-							stream.end();
-							return;
-						}
+						signal?.throwIfAborted();
 						const target = partial.content[index];
 						if (target.type === "text") target.text += chunk;
 						stream.push({
@@ -115,7 +108,14 @@ export function createFakeStreamFn(
 				};
 				stream.push({ type: "done", message });
 				stream.end(message);
-			} catch {
+			} catch (error) {
+				const reason = signal?.aborted ? "aborted" : "error";
+				stream.push({ type: "error", reason, error: {
+					role: "assistant", content: [], stopReason: reason,
+					errorMessage: reason === "aborted" ? "Operation aborted"
+						: error instanceof Error ? error.message : String(error),
+				} });
+			} finally {
 				stream.end();
 			}
 		});

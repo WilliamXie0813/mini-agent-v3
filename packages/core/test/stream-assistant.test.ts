@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createFakeStreamFn } from "@mini-agent/ai";
+import { createFakeStreamFn, createAssistantMessageEventStream } from "@mini-agent/ai";
 import type {
 	AssistantMessage,
 	AssistantMessageEventStream,
@@ -35,6 +35,25 @@ function deferred(): {
 }
 
 describe("streamAssistantMessage", () => {
+	it("maps every block event and closes an error message exactly once", async () => {
+		const stream = createAssistantMessageEventStream();
+		const partial: AssistantMessage = { role: "assistant", content: [], stopReason: "pending" };
+		stream.push({ type: "start", partial });
+		for (const type of ["text_start", "text_delta", "text_end", "toolcall_start", "toolcall_delta", "toolcall_end"] as const) {
+			if (type === "text_delta" || type === "toolcall_delta")
+				stream.push({ type, partial, contentIndex: 0, delta: "x" });
+			else stream.push({ type, partial, contentIndex: 0 });
+		}
+		const error: AssistantMessage = { role: "assistant", content: [], stopReason: "error" };
+		stream.push({ type: "error", reason: "error", error });
+		stream.end(error);
+		const events: AgentEvent[] = [];
+		await expect(streamAssistantMessage(stream, (event) => { events.push(event); })).resolves.toBe(error);
+		expect(events.map((event) => event.type)).toEqual([
+			"message_start", ...Array(6).fill("message_update"), "message_end",
+		]);
+	});
+
 	it("maps start, deltas, and done to message lifecycle events", async () => {
 		const events: AgentEvent[] = [];
 		const message = await streamAssistantMessage(

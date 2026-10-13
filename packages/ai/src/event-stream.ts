@@ -120,9 +120,10 @@ export class AssistantMessageEventStream extends EventStream<
 
 	constructor() {
 		super(
-			(event) => event.type === "done",
+			(event) => event.type === "done" || event.type === "error",
 			(event) => {
 				if (event.type === "done") return event.message;
+				if (event.type === "error") return event.error;
 				throw new Error("Unexpected event type for final result");
 			},
 		);
@@ -130,6 +131,7 @@ export class AssistantMessageEventStream extends EventStream<
 
 	override push(event: AssistantMessageEvent): void {
 		if (event.type === "done") this.#time(event.message);
+		if (event.type === "error") this.#time(event.error);
 		super.push(event);
 	}
 

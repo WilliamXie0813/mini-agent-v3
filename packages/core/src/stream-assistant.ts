@@ -18,6 +18,11 @@ export async function streamAssistantMessage(
 				});
 				break;
 			case "text_delta":
+			case "text_start":
+			case "text_end":
+			case "toolcall_start":
+			case "toolcall_delta":
+			case "toolcall_end":
 				await emit({
 					type: "message_update",
 					message: { ...event.partial },
@@ -26,6 +31,9 @@ export async function streamAssistantMessage(
 				break;
 			case "done":
 				await emit({ type: "message_end", message: event.message });
+				break;
+			case "error":
+				await emit({ type: "message_end", message: event.error });
 				break;
 		}
 	});

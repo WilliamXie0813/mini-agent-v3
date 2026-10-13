@@ -18,6 +18,7 @@ export interface AssistantMessage {
 	stopReason: StopReason;
 	usage?: Usage;
 	durationMs?: number;
+	errorMessage?: string;
 }
 export interface ToolResultMessage {
 	role: "toolResult";
@@ -28,7 +29,10 @@ export interface ToolResultMessage {
 }
 export type Message = SystemMessage | UserMessage | AssistantMessage | ToolResultMessage;
 
-export interface Usage { inputTokens: number; outputTokens: number }
+export interface Usage {
+	inputTokens: number; outputTokens: number;
+	cacheReadTokens?: number; cacheWriteTokens?: number;
+}
 
 // 手写 JSON Schema。本阶段只用到 required 与 properties 的 type 字段；完整校验在阶段 5。
 export type JSONSchema = Record<string, unknown>;
@@ -43,7 +47,8 @@ export interface Tool {
 export interface StreamContext { system: SystemMessage; messages: Message[]; tools: Tool[] }
 
 // 流式事件协议（spec §5 阶段 3）。本阶段只有文本 delta——
-// thinking_* 与 toolcall_* 是阶段 7 随真实 SSE 一起加。
+// text 起止、toolcall_* 与 error 是阶段 7 随真实 SSE 一起加；
+// thinking_* 不在当前阶段启用，也不发送对应请求字段。
 //
 // 字段名两种：delta 类变体用 partial（"到目前为止攒出来的东西"，不是快照——
 // text 块靠 *_delta 增长，只有 done 里那份才是权威），done 用 message。
@@ -55,4 +60,8 @@ export interface StreamContext { system: SystemMessage; messages: Message[]; too
 export type AssistantMessageEvent =
 	| { type: "start"; partial: AssistantMessage }
 	| { type: "text_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
+	| { type: "text_start" | "text_end" | "toolcall_start" | "toolcall_end";
+		contentIndex: number; partial: AssistantMessage }
+	| { type: "toolcall_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
+	| { type: "error"; reason: "error" | "aborted"; error: AssistantMessage }
 	| { type: "done"; message: AssistantMessage };

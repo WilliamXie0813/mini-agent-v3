@@ -170,7 +170,7 @@ describe("agentLoop (stage 2: tool loop)", () => {
 		expect(messages).toHaveLength(0);
 	});
 
-	it("rejects between turns without re-asking the model after an abort", async () => {
+	it("settles an aborted provider without re-asking the model", async () => {
 		const controller = new AbortController();
 		const messages: Message[] = [];
 		const inner = createFakeStreamFn([
@@ -187,10 +187,10 @@ describe("agentLoop (stage 2: tool loop)", () => {
 		await expect(agentLoop({
 			...base(), messages, prompt: "go", tools: [echoTool],
 			signal: controller.signal, streamFn,
-		})).rejects.toThrow(/agent loop aborted/);
+		})).resolves.toBe(messages);
 		expect(modelCalls).toBe(2); // 没有第三次请求
 		// signal 已在第二批执行前中止：不为尚未开始的 c2 伪造 toolResult。
-		expect(messages.at(-1)).toMatchObject({ role: "assistant" });
+		expect(messages.at(-1)).toMatchObject({ role: "assistant", stopReason: "aborted", content: [] });
 		expect(
 			messages.some(
 				(message) =>
@@ -248,16 +248,17 @@ describe("agentLoop (stage 3: streaming)", () => {
 			return stream;
 		};
 		await expect(agentLoop({ ...base(), prompt: "hi", streamFn: broken })).rejects.toThrow(
-			/without a done event/,
+			/without a done or error event/,
 		);
 	});
 
-	it("rejects when aborted mid-stream so Agent can finish the lifecycle", async () => {
+	it("records only a terminal diagnostic when aborted mid-stream", async () => {
 		const controller = new AbortController();
 		const deltas: string[] = [];
+		const messages: Message[] = [];
 		await expect(
 			agentLoop({
-				...base(), prompt: "hi", signal: controller.signal,
+				...base(), messages, prompt: "hi", signal: controller.signal,
 				emit: (event) => {
 					if (
 						event.type === "message_update" &&
@@ -269,8 +270,9 @@ describe("agentLoop (stage 3: streaming)", () => {
 				},
 				streamFn: createFakeStreamFn(["abcdef"], { delayMs: 30 }),
 			}),
-		).rejects.toThrow(/without a done event/);
+		).resolves.toBe(messages);
 		expect(deltas).toEqual(["a"]);
+		expect(messages.at(-1)).toMatchObject({ stopReason: "aborted", content: [] });
 	});
 });
 

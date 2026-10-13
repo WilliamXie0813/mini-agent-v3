@@ -74,6 +74,11 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 		);
 		options.messages.push(message);
 		newMessages.push(message);
+		if (message.stopReason === "error" || message.stopReason === "aborted") {
+			await emit({ type: "turn_end", message, toolResults: [] });
+			await emit({ type: "agent_end", messages: newMessages });
+			return options.messages;
+		}
 
 		// length 保护：参数 JSON 被 token 上限截断，半截参数「解析成功但不完整」，
 		// 执行它可能删错文件。整批判失败回喂，模型可重发。

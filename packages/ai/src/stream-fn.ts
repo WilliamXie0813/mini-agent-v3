@@ -46,10 +46,11 @@ export async function consumeAssistantMessage(
 		if (event.type === "done") {
 			done = event.message;
 		}
+		if (event.type === "error") done = event.error;
 	}
 	// 契约违反：provider 结束流却没发 done。没有这条，result() 会永远挂着，
 	// 排查成本是「终端不动，什么都没有」。
 	if (done === undefined)
-		throw new Error("assistant stream ended without a done event");
+		throw new Error("assistant stream ended without a done or error event");
 	return done;
 }

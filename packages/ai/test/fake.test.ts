@@ -192,11 +192,28 @@ describe("createFakeStreamFn (stage 3: delta sequence)", () => {
 		// 没有这条，本用例会跑到 vitest 超时。
 		expect(types[0]).toBe("start");
 		expect(types).toContain("text_delta");
+		expect(types.at(-1)).toBe("error");
+		await expect(stream.result()).resolves.toMatchObject({
+			stopReason: "aborted", content: [],
+		});
 	});
 
 	it("ends the stream instead of hanging when the script is empty", async () => {
 		const events = await run(createFakeStreamFn([]));
-		expect(events).toEqual([]);
+		expect(events.map((event) => event.type)).toEqual(["start", "error"]);
+		expect(events.at(-1)).toMatchObject({
+			error: { stopReason: "error", content: [], errorMessage: expect.any(String) },
+		});
+	});
+
+	it("emits a terminal even when the signal was already aborted", async () => {
+		const stream = createFakeStreamFn(["never"])({
+			system: { role: "system", content: "" }, messages: [], tools: [],
+		}, AbortSignal.abort());
+		const types = [];
+		for await (const event of stream) types.push(event.type);
+		expect(types).toEqual(["start", "error"]);
+		await expect(stream.result()).resolves.toMatchObject({ stopReason: "aborted", content: [] });
 	});
 
 	it("mutates a partial stored before done as later deltas arrive", async () => {

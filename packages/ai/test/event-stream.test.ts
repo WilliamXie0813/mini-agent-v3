@@ -54,6 +54,27 @@ describe("EventStream", () => {
 });
 
 describe("AssistantMessageEventStream", () => {
+	it("settles an error terminal and ignores subsequent terminals", async () => {
+		const stream = createAssistantMessageEventStream();
+		const error: AssistantMessage = {
+			role: "assistant", content: [], stopReason: "error", errorMessage: "HTTP 500",
+		};
+		stream.push({ type: "error", reason: "error", error });
+		stream.push({ type: "done", message: textMessage("too late") });
+		stream.end();
+		const seen = [];
+		for await (const event of stream) seen.push(event.type);
+		expect(seen).toEqual(["error"]);
+		await expect(stream.result()).resolves.toBe(error);
+		expect(error.durationMs).toBeGreaterThanOrEqual(0);
+	});
+
+	it("rejects result when ended without any terminal", async () => {
+		const stream = createAssistantMessageEventStream();
+		stream.end();
+		await expect(stream.result()).rejects.toThrow(/completion event/);
+	});
+
 	it("stamps durationMs on the done message", async () => {
 		const stream = createAssistantMessageEventStream();
 		const message = textMessage("hi");

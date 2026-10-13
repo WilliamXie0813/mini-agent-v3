@@ -133,6 +133,7 @@ describe("Agent", () => {
 			system: "test",
 			streamFn: createFakeStreamFn(["never"]),
 		});
+
 		const events: AgentEvent[] = [];
 		agent.subscribe((event) => {
 			events.push(event);
@@ -142,6 +143,38 @@ describe("Agent", () => {
 
 		expect(events).toEqual([]);
 		expect(agent.state.messages).toEqual([]);
+	});
+
+	it.each([
+		["error", "error"], ["aborted", "error"], ["error", "done"], ["aborted", "done"],
+	] as const)("does not execute calls with stopReason %s via %s", async (reason, terminal) => {
+		const execute = vi.fn(echoTool.execute);
+		const streamFn: StreamFn = () => {
+			const stream = createAssistantMessageEventStream();
+			const partial = { role: "assistant" as const, content: [], stopReason: "pending" as const };
+			const error = {
+				role: "assistant" as const, stopReason: reason,
+				content: [{ type: "toolCall" as const, id: "bad", name: "echo", arguments: { text: "never" } }],
+			};
+			stream.push({ type: "start", partial });
+			if (terminal === "error") stream.push({ type: "error", reason, error });
+			else stream.push({ type: "done", message: error });
+			stream.end(error);
+			return stream;
+		};
+		const provider = vi.fn(streamFn);
+		const agent = new Agent({ system: "test", streamFn: provider, tools: [{ ...echoTool, execute }] });
+		const events: AgentEvent[] = [];
+		agent.subscribe((event) => { events.push(event); });
+		await agent.prompt("go");
+		await agent.waitForIdle();
+		expect(execute).not.toHaveBeenCalled();
+		expect(provider).toHaveBeenCalledTimes(1);
+		expect(agent.state.messages).toHaveLength(2);
+		expect(agent.state.messages.at(-1)).toMatchObject({ stopReason: reason });
+		expect(events.filter((event) => event.type === "agent_end")).toHaveLength(1);
+		expect(events.filter((event) => event.type === "turn_end")).toMatchObject([{ toolResults: [] }]);
+		expect(agent.state.isStreaming).toBe(false);
 	});
 
 	it("copies tools before external mutation", async () => {
@@ -724,7 +757,7 @@ describe("Agent", () => {
 		const last = agent.state.messages.at(-1);
 		if (last?.role !== "assistant") throw new Error("missing error message");
 		expect(last.stopReason).toBe("error");
-		expect(textOf(last.content)).toMatch(/without a done event/);
+		expect(textOf(last.content)).toMatch(/without a done or error event/);
 		expect(events.slice(-4).map((event) => event.type)).toEqual([
 			"message_start",
 			"message_end",
