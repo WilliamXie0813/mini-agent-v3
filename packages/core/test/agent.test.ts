@@ -8,7 +8,9 @@ import {
 import type {
 	ContentBlock,
 	Message,
+	StreamContext,
 	StreamFn,
+	SystemSection,
 } from "@mini-agent/ai";
 import { Agent } from "../src/agent.ts";
 import type { AgentEvent } from "../src/agent-event.ts";
@@ -44,6 +46,17 @@ const echoTool: ToolDef<{ text: string }> = {
 		content: [{ type: "text", text }],
 	}),
 };
+
+// 捕获每次 provider 调用的 context 快照，用来断言 transcript 重放结果。
+function captureContexts(script: Parameters<typeof createFakeStreamFn>[0]) {
+	const contexts: StreamContext[] = [];
+	const inner = createFakeStreamFn(script);
+	const streamFn: StreamFn = (context, signal) => {
+		contexts.push(structuredClone(context));
+		return inner(context, signal);
+	};
+	return { contexts, streamFn };
+}
 
 describe("Agent", () => {
 	beforeEach(() => setDefaultStreamFn(undefined));
@@ -991,6 +1004,184 @@ describe("Agent", () => {
 				role: "system",
 				sections: [{ text: "one" }, { text: "two" }],
 			});
+		});
+	});
+
+	describe("Agent (stage 8: incremental system history)", () => {
+		it("appends system sections as a new entry without touching the old one", async () => {
+			const { contexts, streamFn } = captureContexts(["one", "two"]);
+			const agent = new Agent({ system: "base", streamFn });
+			await agent.prompt("first");
+			const firstSystem = agent.state.messages[0];
+
+			agent.appendSystemSections([{ tag: "workspace", text: "repo only" }]);
+			await agent.prompt("second");
+
+			expect(agent.state.messages.filter((message) => message.role === "system"))
+				.toHaveLength(2);
+			// 旧 entry 原样保留（同一引用），新 section 只出现在追加的 entry 里。
+			expect(agent.state.messages[0]).toBe(firstSystem);
+			expect(contexts[1]!.system.sections).toEqual([
+				{ text: "base" },
+				{ tag: "workspace", text: "repo only" },
+			]);
+		});
+
+		it("keeps the recorded sections immutable against later caller mutation", async () => {
+			const { streamFn } = captureContexts(["one"]);
+			const agent = new Agent({ system: "base", streamFn });
+			const sections: SystemSection[] = [{ tag: "workspace", text: "repo only" }];
+
+			agent.appendSystemSections(sections);
+			sections[0]!.text = "mutated";
+			sections.push({ text: "sneaky" });
+
+			const recorded = agent.state.messages.at(-1);
+			expect(recorded).toEqual({
+				role: "system",
+				sections: [{ tag: "workspace", text: "repo only" }],
+			});
+		});
+
+		it("treats an empty section array as a no-op", () => {
+			const agent = new Agent({
+				system: "base",
+				streamFn: createFakeStreamFn(["never"]),
+			});
+			agent.appendSystemSections([]);
+			expect(agent.state.messages.filter((m) => m.role === "system")).toHaveLength(1);
+		});
+
+		it("records tool changes as minimal deltas and keeps the cache prefix stable", async () => {
+			const { contexts, streamFn } = captureContexts(["one", "two", "three"]);
+			const agent = new Agent({ system: "base", tools: [echoTool], streamFn });
+			await agent.prompt("one");
+			const systemCount = () =>
+				agent.state.messages.filter((m) => m.role === "system").length;
+			expect(systemCount()).toBe(1);
+
+			// 相同声明 → registry 可更新但不新增 system entry（cache 前缀稳定）
+			agent.setTools([echoTool]);
+			expect(systemCount()).toBe(1);
+			expect(agent.state.tools).toEqual([echoTool]);
+
+			// 新增 read → 新 entry 只有 toolsAdded
+			const readTool: ToolDef<{ path: string }> = {
+				name: "read",
+				description: "read a file",
+				parameters: {
+					type: "object",
+					properties: { path: { type: "string" } },
+					required: ["path"],
+				},
+				execute: async ({ path }) => ({ content: [{ type: "text", text: path }] }),
+			};
+			agent.setTools([echoTool, readTool]);
+			expect(systemCount()).toBe(2);
+			expect(agent.state.messages.at(-1)).toEqual({
+				role: "system",
+				sections: [],
+				toolsAdded: [{
+					name: "read",
+					description: "read a file",
+					parameters: readTool.parameters,
+				}],
+			});
+
+			// 删除 echo → 下一条 entry 只有 toolsRemoved
+			agent.setTools([readTool]);
+			expect(systemCount()).toBe(3);
+			expect(agent.state.messages.at(-1)).toEqual({
+				role: "system",
+				sections: [],
+				toolsRemoved: ["echo"],
+			});
+
+			// 同名 read 的 description/schema 变化 → 同一 entry remove + add
+			const readV2: ToolDef<{ path: string }> = {
+				...readTool,
+				description: "read a file v2",
+			};
+			agent.setTools([readV2]);
+			expect(systemCount()).toBe(4);
+			expect(agent.state.messages.at(-1)).toEqual({
+				role: "system",
+				sections: [],
+				toolsRemoved: ["read"],
+				toolsAdded: [{
+					name: "read",
+					description: "read a file v2",
+					parameters: readTool.parameters,
+				}],
+			});
+		});
+
+		it("swaps the execute closure without a system delta when the declaration is unchanged", async () => {
+			const oldExecute = vi.fn(echoTool.execute);
+			const newExecute = vi.fn(async ({ text }: { text: string }) => ({
+				content: [{ type: "text" as const, text: `new:${text}` }],
+			}));
+			const { streamFn } = captureContexts([
+				[{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "x" } }],
+				"done",
+			]);
+			const agent = new Agent({
+				system: "base",
+				tools: [{ ...echoTool, execute: oldExecute }],
+				streamFn,
+			});
+			const systemCount = () =>
+				agent.state.messages.filter((m) => m.role === "system").length;
+
+			agent.setTools([{ ...echoTool, execute: newExecute }]);
+			expect(systemCount()).toBe(1); // 声明没变，无 delta
+
+			await agent.prompt("go");
+			expect(newExecute).toHaveBeenCalledTimes(1);
+			expect(oldExecute).not.toHaveBeenCalled();
+			expect(systemCount()).toBe(1);
+		});
+
+		it("copies the tools array so later caller mutation stays out of the registry", () => {
+			const agent = new Agent({
+				system: "base",
+				streamFn: createFakeStreamFn(["never"]),
+			});
+			const tools = [echoTool];
+			agent.setTools(tools);
+			tools.length = 0;
+			expect(agent.state.tools).toEqual([echoTool]);
+		});
+
+		it("rejects prompt and tool mutations during an active run", async () => {
+			const agent = new Agent({
+				system: "base",
+				tools: [echoTool],
+				streamFn: createFakeStreamFn(["ok"]),
+			});
+			const gate = deferred();
+			const endReached = deferred();
+			agent.subscribe(async (event) => {
+				if (event.type === "agent_end") {
+					endReached.resolve();
+					await gate.promise;
+				}
+			});
+			const prompt = agent.prompt("hi");
+			await endReached.promise; // run 仍 active：agent_end listener 未放行
+
+			const messagesBefore = agent.state.messages.slice();
+			const toolsBefore = agent.state.tools.slice();
+			expect(() => agent.appendSystemSections([{ text: "nope" }]))
+				.toThrow(/appendSystemSections.*active run|active run.*appendSystemSections/i);
+			expect(() => agent.setTools([]))
+				.toThrow(/setTools.*active run|active run.*setTools/i);
+			// 拒绝不得留下副作用：transcript 与 registry 完全不变
+			expect(agent.state.messages).toEqual(messagesBefore);
+			expect(agent.state.tools).toEqual(toolsBefore);
+
+			gate.resolve();
+			await prompt;
 		});
 	});
 });

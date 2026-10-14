@@ -1,11 +1,11 @@
 import { getDefaultStreamFn } from "@mini-agent/ai";
-import type { AssistantMessage, Message, StreamFn } from "@mini-agent/ai";
+import type { AssistantMessage, Message, StreamFn, SystemSection } from "@mini-agent/ai";
 import { agentLoop } from "./agent-loop.ts";
 import type { AgentOptions } from "./agent-options.ts";
 import type { AgentEvent, AgentEventListener } from "./agent-event.ts";
-import { createAgentState, reduceAgentState } from "./agent-state.ts";
+import { appendSystemSections, createAgentState, reduceAgentState, replaceAgentTools } from "./agent-state.ts";
 import type { AgentState } from "./agent-state.ts";
-import type { BeforeToolCall, ToolExecutionMode } from "./tool.ts";
+import type { BeforeToolCall, ToolDef, ToolExecutionMode } from "./tool.ts";
 
 type ActiveRun = {
 	promise: Promise<void>; resolve: () => void; abortController: AbortController;
@@ -54,6 +54,22 @@ export class Agent {
 
 	abort(): void {
 		this.activeRun?.abortController.abort();
+	}
+
+	// 运行中禁止改 prompt/工具：单次 run 的 provider snapshot、执行表和历史不能中途分叉。
+	appendSystemSections(sections: readonly SystemSection[]): void {
+		this.assertIdle("appendSystemSections");
+		appendSystemSections(this._state, sections);
+	}
+
+	setTools(tools: ToolDef<any>[]): void {
+		this.assertIdle("setTools");
+		replaceAgentTools(this._state, tools);
+	}
+
+	private assertIdle(operation: string): void {
+		if (this.activeRun)
+			throw new Error(`Cannot ${operation} while the agent has an active run`);
 	}
 
 	waitForIdle(): Promise<void> {
