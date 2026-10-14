@@ -64,14 +64,14 @@ describe("Anthropic response state", () => {
 	});
 
 	// 真实联调记录：Kimi 网关在未请求 thinking 时仍主动返回 thinking block
-	//（thinking_delta + signature_delta，文本在 index 1）。显式报错，不静默丢弃。
-	it("rejects a proactively returned thinking block with an explicit error", async () => {
+	//（thinking_delta + signature_delta，文本在 index 1）。显式跳过：
+	// 不进历史、不发事件；text block 正常映射，contentIndex 保持 provider 序号。
+	it("skips a proactively returned thinking block explicitly", async () => {
 		const { events, message } = await eventsFor(await frames("thinking"));
-		expect(events.filter((e) => e.type === "done")).toHaveLength(0);
-		expect(message).toMatchObject({
-			stopReason: "error", content: [],
-			errorMessage: expect.stringMatching(/unsupported content block 0/),
-		});
+		expect(message.stopReason).toBe("stop");
+		expect(message.content).toEqual([{ type: "text", text: "你好" }]);
+		expect(message.usage).toEqual({ inputTokens: 35, outputTokens: 7, cacheReadTokens: 20, cacheWriteTokens: 5 });
+		expect(events.map((e) => e.type)).toEqual(["start", "text_start", "text_delta", "text_end", "done"]);
 	});
 
 	it("does not finalize or parse arguments until message_stop", async () => {
@@ -119,7 +119,10 @@ describe("Anthropic response state", () => {
 		[start(), tool(0, null)], [start(), tool(0, [])],
 		[start(), tool(0, {}, "")],
 		[start(), frame({ type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "c1", name: "", input: {} } })],
-		[start(), frame({ type: "content_block_start", index: 0, content_block: { type: "thinking" } })],
+		[start(), frame({ type: "content_block_start", index: 0, content_block: { type: "server_tool_use" } })],
+		[start(),
+			frame({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } }),
+			frame({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "x" } })],
 		[start(), frame({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "x" } })],
 		[start(), frame({ type: "message_delta", delta: { stop_reason: "unknown" }, usage: { output_tokens: 1 } })],
 		[frame({ type: "message_stop" })],

@@ -1,5 +1,5 @@
 import type { AssistantMessageEventStream } from "./event-stream.ts";
-import type { AssistantMessage, StopReason } from "./types.ts";
+import type { AssistantMessage, ContentBlock, StopReason } from "./types.ts";
 import type { SseFrame } from "./sse.ts";
 
 function check(value: unknown, detail: string): asserts value {
@@ -23,7 +23,9 @@ export function createAnthropicStreamState(
 	formatError: (message: string) => string = (message) => message,
 ) {
 	const partial: AssistantMessage = { role: "assistant", content: [], stopReason: "pending" };
-	const blocks: { open: boolean; json: string; input: Record<string, unknown> }[] = [];
+	// blocks 按 provider index 对齐每个 content block；block 为 undefined 表示
+	// 被显式跳过的块（thinking）——参与开闭校验，但不进 partial.content、不发事件。
+	const blocks: { open: boolean; json: string; input: Record<string, unknown>; block?: ContentBlock }[] = [];
 	let started = false, completed = false;
 	let stopReason: StopReason = "pending";
 	stream.push({ type: "start", partial });
@@ -83,9 +85,9 @@ export function createAnthropicStreamState(
 				const tools = partial.content.filter((block) => block.type === "toolCall");
 				check(stopReason !== "toolUse" || tools.length > 0, "tool_use without tool blocks");
 				check(stopReason !== "stop" || tools.length === 0, "tool blocks without tool_use");
-				for (let index = 0; index < partial.content.length; index++) {
-					const block = partial.content[index], state = blocks[index];
-					if (block.type !== "toolCall") continue;
+				for (let index = 0; index < blocks.length; index++) {
+					const state = blocks[index], block = state.block;
+					if (block?.type !== "toolCall") continue;
 					try { block.arguments = state.json === "" ? state.input : object(JSON.parse(state.json)); }
 					catch {
 						check(stopReason === "length", `invalid tool JSON at block ${index}`);
@@ -101,25 +103,37 @@ export function createAnthropicStreamState(
 			if (type === "content_block_start") {
 				check(index === blocks.length, `duplicate or out-of-order block ${index}`);
 				const block = object(event.content_block);
+				// 网关可能未请求也返回 thinking（Kimi 实测如此）。显式跳过：
+				// 校验其 delta 与闭合，但不映射为内容——IR 本阶段没有 thinking 块类型。
+				if (block.type === "thinking") {
+					blocks.push({ open: true, json: "", input: {} });
+					return;
+				}
 				let input: Record<string, unknown> = {};
+				let content: ContentBlock;
 				if (block.type === "text") {
-					partial.content.push({ type: "text", text: string(block.text) });
+					content = { type: "text", text: string(block.text) };
 				} else {
 					check(block.type === "tool_use", `unsupported content block ${index}`);
 					const id = string(block.id, true), name = string(block.name, true);
 					check(!partial.content.some((c) => c.type === "toolCall" && c.id === id), "duplicate tool id");
 					input = object(block.input);
-					partial.content.push({ type: "toolCall", id, name, arguments: {} });
+					content = { type: "toolCall", id, name, arguments: {} };
 				}
-				blocks.push({ open: true, json: "", input });
-				stream.push({ type: block.type === "text" ? "text_start" : "toolcall_start", contentIndex: index, partial });
+				partial.content.push(content);
+				blocks.push({ open: true, json: "", input, block: content });
+				stream.push({ type: content.type === "text" ? "text_start" : "toolcall_start", contentIndex: index, partial });
 				return;
 			}
-			const block = partial.content[index], state = blocks[index];
+			const state = blocks[index];
 			check(state?.open, `missing or closed block ${index}`);
+			const block = state.block;
 			if (type === "content_block_stop") {
 				state.open = false;
-				stream.push({ type: block.type === "text" ? "text_end" : "toolcall_end", contentIndex: index, partial });
+				if (block) stream.push({ type: block.type === "text" ? "text_end" : "toolcall_end", contentIndex: index, partial });
+			} else if (!block) {
+				const delta = object(event.delta);
+				check(delta.type === "thinking_delta" || delta.type === "signature_delta", `invalid delta at block ${index}`);
 			} else {
 				const delta = object(event.delta);
 				check(delta.type === (block.type === "text" ? "text_delta" : "input_json_delta"), `invalid delta at block ${index}`);

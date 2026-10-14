@@ -141,9 +141,9 @@ pnpm dev
 
 教学 HTML 的交互测试运行实际脚本，覆盖播放器与两个实验；尚未做真实浏览器视觉验收。CLI 子进程测试确认本地请求与文本/工具往返，不单凭 stdout 分块断言文本一定在响应完成之前到达。
 
-**真实 API 联调已执行（2026-10-14）。** 在只含自建无敏感 `package.json` 的临时目录运行 CLI。已验证：`x-api-key` 认证通过（HTTP 200）；URL 拼接保留 `/coding/` 前缀；usage 携带 cache 子计数字段（该次请求均为 0），`message_delta` 另带 `output_tokens_details.thinking_tokens`（解析器按未知字段忽略）。
+**真实 API 联调已执行（2026-10-14）。** 在只含自建无敏感 `package.json` 的临时目录运行 CLI，完整走通「流式文本 → `read` 工具调用 → 结果回喂 → 最终总结」，进程干净退出。已验证：`x-api-key` 认证通过（HTTP 200）；URL 拼接保留 `/coding/` 前缀；usage 携带 cache 子计数字段（该次请求均为 0），`message_delta` 另带 `output_tokens_details.thinking_tokens`（解析器按未知字段忽略）。流中 Ctrl+C 需要在真实 TTY 里按（管道 stdin 不会触发 readline 的 SIGINT），留作手动抽查；abort 路径由自动化测试覆盖。
 
-**确认的网关偏差：Kimi 在未请求 `thinking` 时仍主动返回 thinking 语义块**（index 0 的 `thinking` block + `thinking_delta` + `signature_delta`，正文 text 在 index 1）。适配器按本阶段契约显式报 `unsupported content block 0`，不静默丢弃；已固化脱敏回归样本 `fixtures/thinking.sse`（thinking 内容与签名是占位符，非真实录制值）与对应测试。是否在未来的阶段显式支持跳过 thinking block 留作决策点——本阶段保持严格报错。
+**确认的网关偏差：Kimi 在未请求 `thinking` 时仍主动返回 thinking 语义块**（index 0 的 `thinking` block + `thinking_delta` + `signature_delta`，正文 text 在 index 1）。处理是**显式跳过**而非静默丢弃（2026-10-14 用户决策）：状态机校验 thinking block 的开闭与 delta 类型（携带 text_delta 仍报协议错误），但它不进历史、不发事件、对 UI 不可见——IR 本阶段没有 thinking 块类型。已固化脱敏回归样本 `fixtures/thinking.sse`（thinking 内容与签名是占位符，非真实录制值）与对应测试。正式支持 thinking（IR 块类型、事件变体、UI 显示）留待后续阶段。
 
 ## 实施中明确的取舍
 

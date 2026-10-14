@@ -16,7 +16,7 @@ Tasks 1–6 的源码、本地验收与阶段文档已实施；具体提交见 `
 
 教学 HTML 已生成。最终独立审查发现的「中断批次缺配对结果」与「listener 拒绝后 HTTP 读取未取消」均已补复现回归测试并修复；恢复只调整 wire 副本，未记录结果明确标错，不假造执行成功。教学说明已与修复后的边界保持一致。
 
-Task 6 Step 6 **真实 API 联调待补验**：用户明确要求暂时跳过，之后手动补充 API key。没有外发仓库内容，不声称 Kimi 网关已验证。各任务以下 checkbox 保留原始执行步骤供追溯；实际交付与取舍见 [`../stages/07-anthropic-sse.md`](../stages/07-anthropic-sse.md)。
+Task 6 Step 6 **真实 API 联调已补验（2026-10-14）**：在只含自建无敏感 `package.json` 的临时目录完成「流式文本 → read → 总结」全链路；认证与 URL 拼接正确。发现 Kimi 网关在未请求时主动返回 thinking block，用户决策**显式跳过**（校验其生命周期但不进历史、不发事件），已加脱敏回归 fixture `thinking.sse`；详见 [`../stages/07-anthropic-sse.md`](../stages/07-anthropic-sse.md)。另应用户要求，CLI 增加 Node 内建 `loadEnvFile` 的 `.env` 默认配置（零依赖，shell 变量优先）。各任务以下 checkbox 保留原始执行步骤供追溯；实际交付与取舍见阶段文档。
 
 ## Global Constraints
 
