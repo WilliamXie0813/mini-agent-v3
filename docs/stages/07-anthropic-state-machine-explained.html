@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>把 SSE 一帧帧喂给状态机 — 阶段 7 交互教程</title>
+<style>
+	:root{--paper:#f6f1e7;--panel:#fffdf7;--ink:#1c1a17;--soft:#565044;--line:#d8cfbd;--accent:#d6401f;--blue:#2b4acb;--green:#2e7d4f;--deep:#efe7d8;--code:#221f1b}
+	*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--paper);color:var(--ink);font:17px/1.85 Georgia,"Songti SC","STSong",serif;padding:0 24px 80px}
+	.wrap{max-width:1280px;margin:auto}header{padding:65px 0 32px;border-bottom:3px double var(--ink);margin-bottom:35px}.kicker{color:var(--accent);font:12px Consolas,monospace;letter-spacing:.18em}
+	h1{font-size:clamp(32px,5vw,56px);line-height:1.25;margin:18px 0}h2{font-size:26px;margin:36px 0 16px}h3{font-size:19px;margin:0 0 12px}p{color:var(--soft);margin:12px 0}strong{color:var(--ink)}
+	a{color:var(--blue);text-decoration:none;border-bottom:1px dashed var(--blue)}code{background:var(--deep);padding:2px 5px;font:.88em Consolas,monospace;border-radius:4px}
+	pre{margin:0;border-radius:8px;background:var(--code);color:#e8e0d0;padding:16px;font:12.5px/1.75 Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;max-height:370px;overflow:auto}
+	.callout{border-left:4px solid var(--accent);background:var(--deep);padding:15px 20px;border-radius:0 8px 8px 0;margin:20px 0}.callout p{margin:0}
+	.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--panel);padding:18px;border:1px solid var(--line);border-radius:10px}
+	label{font-size:14px;font-weight:bold}select{max-width:100%;font:14px/1.5 system-ui,sans-serif;padding:9px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink)}
+	button{border:1.5px solid var(--ink);background:transparent;color:var(--ink);padding:9px 15px;border-radius:999px;font:13px/1.5 system-ui,sans-serif;cursor:pointer}
+	button:hover:not(:disabled),button.active{background:var(--ink);color:var(--paper)}button.primary{border-color:var(--accent);color:var(--accent)}button.primary:hover:not(:disabled){background:var(--accent);color:white}
+	button:disabled{opacity:.35;cursor:not-allowed}button:focus-visible,select:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid var(--blue);outline-offset:4px}.counter{font:12px Consolas,monospace;color:var(--soft);margin-left:auto}
+	.hint{min-height:50px;font-size:15px}.graph{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0}.node{font:12px/1.6 Consolas,monospace;background:var(--deep);padding:9px 12px;border-radius:7px;border:2px solid transparent}
+	.node.active{border-color:var(--accent);background:var(--panel)}.flags{font:13px/1.8 Consolas,monospace;border:1px dashed var(--line);padding:12px 15px;margin-bottom:20px;border-radius:8px}
+	.simulator{display:grid;grid-template-columns:240px minmax(0,1fr);gap:20px}.sidebar{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:15px;align-self:start}
+	.sidebar p{font-size:13px}.timeline{display:flex;flex-direction:column;gap:7px;max-height:650px;overflow:auto}.timeline button{text-align:left;border-radius:6px;font:11.5px/1.6 Consolas,monospace;padding:8px 10px}
+	.timeline button.active{background:var(--accent);border-color:var(--accent);color:white}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.card{min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px}
+	.card.full{grid-column:1/-1}.card small{display:block;color:var(--soft);font-size:13px;margin:-5px 0 12px}.card p{font-size:15px}.changed pre{border-left:4px solid var(--accent)}
+	.banner{border-left:4px solid var(--green);background:var(--deep);padding:15px 18px;border-radius:0 8px 8px 0;margin:0 0 16px}.banner h3{margin-bottom:5px}.banner p{margin:4px 0;font-size:15px}
+	table{width:100%;border-collapse:collapse;margin:20px 0;font-size:15px}th,td{border:1px solid var(--line);padding:11px 13px;text-align:left;vertical-align:top}th{background:var(--deep)}td{color:var(--soft)}
+	details{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:15px 18px;margin:12px 0}summary{cursor:pointer;font-weight:bold}details p{font-size:15px}details pre{margin-top:15px}
+	.reading{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:15px}.reading p{font-size:15px}footer{border-top:3px double var(--ink);margin-top:45px;padding-top:24px;color:var(--soft);font-size:14px}
+	@media(max-width:1000px){.simulator{grid-template-columns:1fr}.timeline{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));max-height:240px}.reading{grid-template-columns:1fr}}
+	@media(max-width:650px){body{padding:0 14px 55px}header{padding-top:38px}.grid{grid-template-columns:1fr}.timeline{grid-template-columns:repeat(2,minmax(0,1fr))}.counter{width:100%;margin:0}table{font-size:12px}th,td{padding:8px}.card{padding:14px}}
+	@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+	@media print{body{background:white;padding:0}.controls,.sidebar{display:none}.simulator{display:block}pre{max-height:none}.card{break-inside:avoid}header{padding-top:15px}}
+</style>
+</head>
+<body>
+<main class="wrap">
+<header>
+	<div class="kicker">mini-agent-v3 · 第 7 点的专项教程 · 离线可交互</div>
+	<h1>把 SSE 一帧帧<br>喂给状态机</h1>
+	<p>不用先背整个函数。每按一次“单步”，只观察一帧的处理过程：<strong>输入 → 命中的分支 → 状态变化 → 发出的事件</strong>。默认用一个 read 工具调用，重点看参数什么时候还是字符串、什么时候才成为对象。</p>
+	<p><a href="07-anthropic-sse-explained.html">返回阶段 7 全链路图解</a> · <a href="../../packages/ai/src/anthropic-stream.ts">打开实际 TypeScript 源码</a> · <a href="#read">阅读顺序</a> · <a href="#questions">回测问题</a></p>
+</header>
+
+<div class="callout"><p><strong>模拟的边界：</strong>输入已经是完整 SSE 帧，不模拟 fetch 或 UTF-8 解码。本页内嵌当前仓库状态机的 JavaScript 编译副本，只增加只读 <code>snapshot</code> 观察口；选择场景时离线生成逐步轨迹，按钮切换观察位置。没有 API 请求、凭据读取或真实工具执行。事件与面板在每步冻结快照，生产代码中的 <code>partial</code> 本身仍是 live 对象。</p></div>
+
+<section aria-labelledby="lab-title">
+	<h2 id="lab-title">实验台：一次只改变一个时刻</h2>
+	<div class="controls">
+		<label for="scenario">选择场景</label><select id="scenario"></select>
+		<button id="prev">← 上一步</button><button id="next" class="primary">单步 →</button>
+		<button id="play">▶ 自动播放</button><button id="reset">重置</button><button id="jump-end">跳到结尾</button>
+		<span id="count" class="counter"></span>
+	</div>
+	<p id="scenario-hint" class="hint"></p>
+	<div class="graph" aria-label="正常响应的协议阶段；内容块可以重复循环">
+		<span id="flow-0" class="node">创建 → start</span><span id="flow-1" class="node">message_start</span>
+		<span id="flow-2" class="node">block_start / delta ↻</span><span id="flow-3" class="node">block_stop ↻</span>
+		<span id="flow-4" class="node">message_delta</span><span id="flow-5" class="node">message_stop / error</span>
+	</div>
+	<div id="state-flags" class="flags"></div>
+	<div class="simulator">
+		<aside class="sidebar">
+			<h3>输入时间线</h3>
+			<p>点击任意一步可往返。回退查看已保存的独立快照，不是反向修改状态；播放中导航、重置或换场景会暂停。</p>
+			<nav id="timeline" class="timeline" aria-label="状态机步骤"></nav>
+		</aside>
+		<div>
+			<div class="banner" role="status" aria-live="polite">
+				<h3 id="step-title"></h3>
+				<p id="explanation"></p><p id="decision"></p>
+			</div>
+			<div class="grid">
+				<div class="card"><h3>① 送入的输入</h3><small>普通步骤调用 accept(frame)；EOF / abort 来自 HTTP 泵，而不是 SSE 事件。</small><pre id="input"></pre></div>
+				<div class="card"><h3>② 命中的代码分支（节选 / 示意）</h3><small id="branch"></small><pre id="source"></pre></div>
+				<div class="card"><h3>③ 执行前</h3><small>上一时刻的独立快照。</small><pre id="before"></pre></div>
+				<div class="card"><h3>④ 执行后</h3><small>partial、blocks 与三个控制状态的真实观察值。</small><pre id="after"></pre></div>
+				<div class="card changed full"><h3>⑤ 这一帧具体改了什么？</h3><small>字段路径：旧值 → 新值。没有变化也会明确显示。</small><pre id="changes"></pre></div>
+				<div class="card"><h3>工具 JSON 缓冲：blocks[index]</h3><small>每个块自己的 open / json / input；文本块不需要参数缓冲。</small><pre id="raw-json"></pre></div>
+				<div class="card"><h3>工具参数：partial.content[index]</h3><small>raw JSON 完整，不代表 arguments 已经可以执行。</small><pre id="parsed-args"></pre></div>
+				<div class="card"><h3>⑥ 本步新发出的事件</h3><small>初始 start 不来自网络 message_start。不是每一帧都会发统一事件。</small><pre id="new-events"></pre></div>
+				<div class="card"><h3>累计事件日志</h3><small>按发出顺序记录；终止最多一次。</small><pre id="all-events"></pre></div>
+				<div class="card full"><h3>⑦ 权威终止结果</h3><small>done.message 或 error.error。这里才对应可以交给上层处理的结果；不是左侧 partial 的别名。</small><pre id="terminal"></pre></div>
+			</div>
+		</div>
+	</div>
+</section>
+
+<section id="read">
+	<h2>先按这三遍读，不必一次理解所有分支</h2>
+	<div class="reading">
+		<div class="card"><h3>第一遍：正常工具调用</h3><p>默认场景中停在第一条参数 delta。比较 <code>blocks[0].json</code> 与 <code>partial.content[0].arguments</code>。再走到 block_stop：open 变 false，但 arguments 仍是 {}。</p></div>
+		<div class="card"><h3>第二遍：两个 stopReason</h3><p>停在 message_delta：局部 <code>stopReason</code> 变 toolUse，但 <code>partial.stopReason</code> 仍 pending。最后一步的 done.message 用完整结果里的 stopReason 覆盖 pending。</p></div>
+		<div class="card"><h3>第三遍：比较失败</h3><p>先选 length，再选没有 message_stop 的 EOF。前者有成功终止证据，但输出被截断；后者连响应完成都无法确认。两者都不能执行半截工具，却不该混为同一种结果。</p></div>
+	</div>
+	<h2>五份状态分别记什么？</h2>
+	<table>
+		<thead><tr><th>变量</th><th>它回答的问题</th><th>不要误读成</th></tr></thead>
+		<tbody>
+			<tr><td><code>partial</code></td><td>到目前累积了哪些文本、调用身份与 usage？</td><td>已经提交的历史消息或随时可执行的参数</td></tr>
+			<tr><td><code>blocks[index]</code></td><td>这个块还开着吗？它自己的参数字符串拼到哪里了？</td><td>所有工具共用的一个 JSON 字符串</td></tr>
+			<tr><td><code>started</code></td><td>网络 message_start 是否成功通过校验？</td><td>是否已经发过统一事件 start；start 在创建时就发了</td></tr>
+			<tr><td><code>stopReason</code></td><td>message_delta 报告的整次响应停止原因是什么？</td><td>参数已经解析、响应已经终止</td></tr>
+			<tr><td><code>completed</code></td><td>是否已经发出 done / error，不能再处理响应？</td><td>当前某个 content block 关闭了</td></tr>
+		</tbody>
+	</table>
+	<div class="callout"><p><strong>失败后为什么执行后面板仍可能看到 partial 的旧内容？</strong>fail() 创建新的 <code>content: []</code> 终止诊断，并不擦除本地过程对象。请看“权威终止结果”，不能把残留的 partial 当失败历史或工具执行许可。</p></div>
+</section>
+
+<section id="questions">
+	<h2>把几个容易混淆的边界说清楚</h2>
+	<details><summary>工具 JSON 已完整，为什么 block_stop 时仍不能执行？</summary><p>还不知道整次 stopReason。后面可能出现 max_tokens；本阶段 core 的规则是 length 整批不执行，即使某一个工具参数完整。参数在 message_stop 才解析，工具执行更在状态机之后。</p></details>
+	<details><summary>state.completed 和 stream.end() 是一件事吗？</summary><p>不是。completed 是状态机防止重复终止、继续解析的控制状态；HTTP 泵看到它会停止读帧。stream.end() 是事件流的资源/迭代收尾。本页只模拟前者，没有网络连接或 EventStream 的时钟结算。</p></details>
+	<details><summary>thinking 为什么会报错，而不是跳过？</summary><p>当前 IR 只支持 text / toolCall。thinking 是内容语义，不是 ping。accept 的检查会抛出协议错误；本页模拟 HTTP 泵捕获后调用 fail(error)，产生一个 error terminal。请求省略 thinking 字段，并不保证网关不会返回它。</p></details>
+	<details><summary>两个工具会不会把参数拼到一起？</summary><p>选“文本 + 两个工具”场景，看 index 1、2 各自的 json。contentIndex 同时索引 partial.content 与 blocks，两个数组保持对齐。每个 input_json_delta 只追加到对应 index。</p></details>
+	<details><summary>message_delta 的 usage 为什么不是逐帧累加？</summary><p>输入总量是 uncached + cache read + cache creation。样本中是 10 + 20 + 5 = 35。output_tokens 是累计值，后续帧覆盖，不把旧累计值再相加。本页不计算成本。</p></details>
+	<details><summary>正常完成遇到坏工具 JSON，能不能用 {} 修补？</summary><p>不能。只有 length 场景允许用 {} 保留调用身份，同时记录截断诊断，随后 core 整批判失败。正常 toolUse 下的坏 JSON 必须 error；偷偷用 {} 会把协议失败伪装成可执行调用。</p></details>
+	<details><summary>查看本页实际运行的状态机副本</summary><p>函数来自当前 <code>anthropic-stream.ts</code>，只增加 snapshot getter 以观察闭包变量。上层 buildTrace 冻结每步状态，并模拟 HTTP 泵的错误归一化。若未来源码变化，本页也需要同步更新。</p><pre id="full-core"></pre></details>
+</section>
+<footer>手写 fixtures 衍生的教学场景，不是真实网关录制。支持单步、回退、自动播放、任意步骤跳转；键盘 ← / → 单步，空格播放或暂停。<br>本页仅解释状态机；CLI、工具调度与消息回喂请回到全链路图解。</footer>
+</main>
+
+<script data-lesson-core>
+// Compiled from packages/ai/src/anthropic-stream.ts; source SHA256: 35ea4c5ffce2930b0c2e45ff88f27d4fca5c3c7c073f262e55c363fa1cfaa33d
+function check(value, detail) {
+    if (!value)
+        throw new Error(`Anthropic protocol: ${detail}`);
+}
+function object(value) {
+    check(value !== null && typeof value === "object" && !Array.isArray(value), "expected object");
+    return value;
+}
+function string(value, nonempty = false) {
+    check(typeof value === "string" && (!nonempty || value.trim().length > 0), "expected string");
+    return value;
+}
+function count(value) {
+    check(typeof value === "number" && Number.isSafeInteger(value) && value >= 0, "invalid token count/index");
+    return value;
+}
+function createAnthropicStreamState(stream, formatError = (message) => message) {
+    const partial = { role: "assistant", content: [], stopReason: "pending" };
+    const blocks = [];
+    let started = false, completed = false;
+    let stopReason = "pending";
+    stream.push({ type: "start", partial });
+    const fail = (reason, message) => {
+        if (completed)
+            return;
+        completed = true;
+        stream.push({ type: "error", reason, error: {
+                role: "assistant", content: [], stopReason: reason,
+                errorMessage: formatError(message), usage: partial.usage,
+            } });
+    };
+    return {
+        get snapshot() { return structuredClone({ partial, blocks, started, completed, stopReason }); },
+        get completed() { return completed; },
+        fail,
+        accept(frame) {
+            if (completed)
+                return;
+            let parsed;
+            try {
+                parsed = JSON.parse(frame.data);
+            }
+            catch {
+                throw new Error("Anthropic protocol: invalid JSON");
+            }
+            const event = object(parsed);
+            const type = string(event.type, true);
+            check(frame.event === "message" || frame.event === type, "event/type mismatch");
+            if (type === "error") {
+                const error = object(event.error);
+                fail("error", `${string(error.type, true)}: ${string(error.message)}`);
+                return;
+            }
+            if (type === "message_start") {
+                check(!started, "duplicate message_start");
+                const message = object(event.message), usage = object(message.usage);
+                check(message.role === "assistant", "expected assistant role");
+                const read = count(usage.cache_read_input_tokens ?? 0);
+                const write = count(usage.cache_creation_input_tokens ?? 0);
+                partial.usage = {
+                    inputTokens: count(usage.input_tokens) + read + write,
+                    outputTokens: count(usage.output_tokens), cacheReadTokens: read, cacheWriteTokens: write,
+                };
+                count(partial.usage.inputTokens);
+                started = true;
+                return;
+            }
+            if (!["content_block_start", "content_block_delta", "content_block_stop", "message_delta", "message_stop"].includes(type))
+                return;
+            check(started, `${type} before message_start`);
+            if (type === "message_delta") {
+                const reason = object(event.delta).stop_reason;
+                if (reason !== null) {
+                    check(reason === "end_turn" || reason === "stop_sequence" ||
+                        reason === "tool_use" || reason === "max_tokens", "unknown stop_reason");
+                    stopReason = reason === "tool_use" ? "toolUse" : reason === "max_tokens" ? "length" : "stop";
+                }
+                partial.usage.outputTokens = count(object(event.usage).output_tokens);
+                return;
+            }
+            if (type === "message_stop") {
+                check(stopReason !== "pending", "message_stop without stop_reason");
+                check(stopReason === "length" || blocks.every((block) => !block.open), "unclosed content block");
+                const tools = partial.content.filter((block) => block.type === "toolCall");
+                check(stopReason !== "toolUse" || tools.length > 0, "tool_use without tool blocks");
+                check(stopReason !== "stop" || tools.length === 0, "tool blocks without tool_use");
+                for (let index = 0; index < partial.content.length; index++) {
+                    const block = partial.content[index], state = blocks[index];
+                    if (block.type !== "toolCall")
+                        continue;
+                    try {
+                        block.arguments = state.json === "" ? state.input : object(JSON.parse(state.json));
+                    }
+                    catch {
+                        check(stopReason === "length", `invalid tool JSON at block ${index}`);
+                        block.arguments = {};
+                        partial.errorMessage = `Tool arguments truncated at block ${index}; batch must not execute`;
+                    }
+                }
+                completed = true;
+                stream.push({ type: "done", message: { ...partial, stopReason } });
+                return;
+            }
+            const index = count(event.index);
+            if (type === "content_block_start") {
+                check(index === blocks.length, `duplicate or out-of-order block ${index}`);
+                const block = object(event.content_block);
+                let input = {};
+                if (block.type === "text") {
+                    partial.content.push({ type: "text", text: string(block.text) });
+                }
+                else {
+                    check(block.type === "tool_use", `unsupported content block ${index}`);
+                    const id = string(block.id, true), name = string(block.name, true);
+                    check(!partial.content.some((c) => c.type === "toolCall" && c.id === id), "duplicate tool id");
+                    input = object(block.input);
+                    partial.content.push({ type: "toolCall", id, name, arguments: {} });
+                }
+                blocks.push({ open: true, json: "", input });
+                stream.push({ type: block.type === "text" ? "text_start" : "toolcall_start", contentIndex: index, partial });
+                return;
+            }
+            const block = partial.content[index], state = blocks[index];
+            check(state?.open, `missing or closed block ${index}`);
+            if (type === "content_block_stop") {
+                state.open = false;
+                stream.push({ type: block.type === "text" ? "text_end" : "toolcall_end", contentIndex: index, partial });
+            }
+            else {
+                const delta = object(event.delta);
+                check(delta.type === (block.type === "text" ? "text_delta" : "input_json_delta"), `invalid delta at block ${index}`);
+                const value = string(block.type === "text" ? delta.text : delta.partial_json);
+                if (block.type === "text")
+                    block.text += value;
+                else
+                    state.json += value;
+                stream.push({ type: block.type === "text" ? "text_delta" : "toolcall_delta",
+                    contentIndex: index, delta: value, partial });
+            }
+        },
+    };
+}
+
+</script>
+<script data-lesson-ui>
+"use strict";
+const scenarios = {
+  "text": {
+    "name": "正常文本：增量 → stop",
+    "hint": "观察 text 累积；没有工具 JSON 缓冲。message_delta 后仍需要 message_stop。",
+    "actions": [
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_start",
+          "data": "{\"type\":\"message_start\",\"message\":{\"id\":\"msg_text\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"test\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0,\"cache_read_input_tokens\":20,\"cache_creation_input_tokens\":5}}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_start",
+          "data": "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_delta",
+          "data": "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"你好，\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_delta",
+          "data": "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"文件已读。\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_stop",
+          "data": "{\"type\":\"content_block_stop\",\"index\":0}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_delta",
+          "data": "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":null,\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_delta",
+          "data": "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":7}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_stop",
+          "data": "{\"type\":\"message_stop\"}"
+        }
+      }
+    ]
+  },
+  "tool": {
+    "name": "正常工具：JSON 片段 → toolUse",
+    "hint": "推荐第一遍：关注 blocks[0].json 与 arguments 的分离；block_stop 不是执行时机。",
+    "actions": [
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_start",
+          "data": "{\"type\":\"message_start\",\"message\":{\"id\":\"msg_tool\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"test\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0,\"cache_read_input_tokens\":20,\"cache_creation_input_tokens\":5}}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_start",
+          "data": "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"c1\",\"name\":\"read\",\"input\":{}}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_delta",
+          "data": "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_delta",
+          "data": "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"package.json\\\"}\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_stop",
+          "data": "{\"type\":\"content_block_stop\",\"index\":0}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_delta",
+          "data": "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":7}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_stop",
+          "data": "{\"type\":\"message_stop\"}"
+        }
+      }
+    ]
+  },
+  "mixed": {
+    "name": "文本 + 两个工具：独立 index",
+    "hint": "index 0 是文本，index 1、2 是工具；两个 JSON buffer 独立存在，不会串线。",
+    "actions": [
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_start",
+          "data": "{\"type\":\"message_start\",\"message\":{\"id\":\"msg_mixed\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"test\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0,\"cache_read_input_tokens\":20,\"cache_creation_input_tokens\":5}}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_start",
+          "data": "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_delta",
+          "data": "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"先读两个文件。\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_stop",
+          "data": "{\"type\":\"content_block_stop\",\"index\":0}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_start",
+          "data": "{\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"c1\",\"name\":\"slow_read\",\"input\":{}}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_delta",
+          "data": "{\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_delta",
+          "data": "{\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"a.txt\\\"}\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_stop",
+          "data": "{\"type\":\"content_block_stop\",\"index\":1}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_start",
+          "data": "{\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"tool_use\",\"id\":\"c2\",\"name\":\"fast_read\",\"input\":{}}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_delta",
+          "data": "{\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"b.txt\\\"}\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_stop",
+          "data": "{\"type\":\"content_block_stop\",\"index\":2}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_delta",
+          "data": "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":7}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_stop",
+          "data": "{\"type\":\"message_stop\"}"
+        }
+      }
+    ]
+  },
+  "length": {
+    "name": "max_tokens：截断但正常终止",
+    "hint": "c1 参数完整、c2 参数截断。done(length) 不等于可执行；core 整批保护，不执行任何工具。",
+    "actions": [
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_start",
+          "data": "{\"type\":\"message_start\",\"message\":{\"id\":\"msg_length\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"test\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0,\"cache_read_input_tokens\":20,\"cache_creation_input_tokens\":5}}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_start",
+          "data": "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"c1\",\"name\":\"slow_read\",\"input\":{}}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_delta",
+          "data": "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"a.txt\\\"}\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_stop",
+          "data": "{\"type\":\"content_block_stop\",\"index\":0}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_start",
+          "data": "{\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"c2\",\"name\":\"fast_read\",\"input\":{}}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_delta",
+          "data": "{\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_stop",
+          "data": "{\"type\":\"content_block_stop\",\"index\":1}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_delta",
+          "data": "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":7}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_stop",
+          "data": "{\"type\":\"message_stop\"}"
+        }
+      }
+    ]
+  },
+  "eof": {
+    "name": "EOF：缺少 message_stop",
+    "hint": "工具 JSON 已完整、块已关、tool_use 原因已收到，却缺少最终 message_stop。仍然是 error，不猜成功。",
+    "actions": [
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_start",
+          "data": "{\"type\":\"message_start\",\"message\":{\"id\":\"msg_tool\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"test\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0,\"cache_read_input_tokens\":20,\"cache_creation_input_tokens\":5}}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_start",
+          "data": "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"c1\",\"name\":\"read\",\"input\":{}}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_delta",
+          "data": "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_delta",
+          "data": "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"package.json\\\"}\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_stop",
+          "data": "{\"type\":\"content_block_stop\",\"index\":0}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_delta",
+          "data": "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":7}}"
+        }
+      },
+      {
+        "kind": "eof"
+      }
+    ]
+  },
+  "abort": {
+    "name": "用户取消：半截参数 → aborted",
+    "hint": "只收到第一个参数片段就取消。注意 local partial 与空 content 的权威失败结果是两份对象。",
+    "actions": [
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_start",
+          "data": "{\"type\":\"message_start\",\"message\":{\"id\":\"msg_tool\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"test\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0,\"cache_read_input_tokens\":20,\"cache_creation_input_tokens\":5}}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_start",
+          "data": "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"c1\",\"name\":\"read\",\"input\":{}}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_delta",
+          "data": "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\"}}"
+        }
+      },
+      {
+        "kind": "abort"
+      }
+    ]
+  },
+  "thinking": {
+    "name": "thinking：不支持的语义块",
+    "hint": "不是静默忽略：content_block_start 的校验抛错，HTTP 泵归一为一个 error terminal。",
+    "actions": [
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_start",
+          "data": "{\"type\":\"message_start\",\"message\":{\"id\":\"msg_tool\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"test\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0,\"cache_read_input_tokens\":20,\"cache_creation_input_tokens\":5}}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_start",
+          "data": "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}"
+        }
+      }
+    ]
+  },
+  "badJson": {
+    "name": "正常 toolUse + 坏 JSON：协议错误",
+    "hint": "与 length 对照：同样是半截字符串，正常 toolUse 完成时不得用 {} 假装修好。",
+    "actions": [
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_start",
+          "data": "{\"type\":\"message_start\",\"message\":{\"id\":\"msg_tool\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"test\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0,\"cache_read_input_tokens\":20,\"cache_creation_input_tokens\":5}}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_start",
+          "data": "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"c1\",\"name\":\"read\",\"input\":{}}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_delta",
+          "data": "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_stop",
+          "data": "{\"type\":\"content_block_stop\",\"index\":0}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_delta",
+          "data": "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":7}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_stop",
+          "data": "{\"type\":\"message_stop\"}"
+        }
+      }
+    ]
+  }
+};
+
+function buildTrace(scenario) {
+	const events = [];
+	const state = createAnthropicStreamState({ push: (event) => events.push(structuredClone(event)) });
+	const traces = [{
+		action: { kind: "init" }, before: null, after: state.snapshot,
+		emitted: structuredClone(events), events: structuredClone(events), failure: null,
+	}];
+	for (const action of scenario.actions) {
+		const before = state.snapshot, offset = events.length;
+		let failure = null;
+		try {
+			if (action.kind === "frame") state.accept(action.frame);
+			else if (!state.completed) state.fail(
+				action.kind === "abort" ? "aborted" : "error",
+				action.kind === "abort" ? "Operation aborted" : "Anthropic stream ended without message_stop",
+			);
+		} catch (error) {
+			failure = error instanceof Error ? error.message : String(error);
+			state.fail("error", failure);
+		}
+		traces.push({
+			action, before, after: state.snapshot, failure,
+			emitted: structuredClone(events.slice(offset)), events: structuredClone(events),
+		});
+	}
+	return traces;
+}
+
+const branches = {
+	init: ["创建：初始化闭包并发 start", "注意 started 还是 false：它记录网络 message_start，不记录本地 start。",
+		'const partial = { role: "assistant", content: [], stopReason: "pending" };\nconst blocks = [];\nlet started = false, completed = false;\nlet stopReason = "pending";\nstream.push({ type: "start", partial });'],
+	message_start: ["初始化 usage / started", "没有第二个 start 事件。输入 token 包括两种缓存计数，输出从累计起点开始。",
+		"partial.usage = {\n  inputTokens: count(usage.input_tokens) + read + write,\n  outputTokens: count(usage.output_tokens),\n  cacheReadTokens: read, cacheWriteTokens: write,\n};\nstarted = true;"],
+	content_block_start: ["创建内容块，并让两个数组 index 对齐", "text 块保存文本；tool_use 块只先保存 id/name，arguments 暂时为 {}。thinking 等不支持的块会报错。",
+		'check(index === blocks.length, "duplicate or out-of-order block");\n// text → { type: "text", text }\n// tool_use → { type: "toolCall", id, name, arguments: {} }\nblocks.push({ open: true, json: "", input });\n// push text_start 或 toolcall_start'],
+	content_block_delta: ["只更新这个 index 的文本或 JSON buffer", "input_json_delta 只是字符串片段。不要在每次 delta 都 JSON.parse，也不要跨工具混用 buffer。",
+		'check(state?.open, "missing or closed block");\nif (block.type === "text") block.text += value;\nelse state.json += value;\n// push text_delta 或 toolcall_delta'],
+	content_block_stop: ["关闭一个内容块，不结束整次响应", "open 从 true 变 false。即使 json 已经完整，toolcall_end 时仍没有解析 arguments，也没有执行工具。",
+		'state.open = false;\nstream.push({\n  type: block.type === "text" ? "text_end" : "toolcall_end",\n  contentIndex: index, partial,\n});'],
+	message_delta: ["记录停止原因与累计输出用量", "局部 stopReason 更新，partial.stopReason 仍是 pending。completed 仍 false：必须继续等 message_stop。",
+		'stopReason = reason === "tool_use" ? "toolUse"\n  : reason === "max_tokens" ? "length" : "stop";\npartial.usage.outputTokens = count(event.usage.output_tokens);'],
+	message_stop: ["整次响应完成：检查、解析参数、done", "此时才解析工具 JSON。正常完成的坏 JSON 报错；length 可保留调用身份并标记截断，core 整批不执行。",
+		'// 校验 stopReason、块关闭状态与工具匹配。\nblock.arguments = state.json === ""\n  ? state.input : object(JSON.parse(state.json));\n// length 的解析失败 → arguments={} + 截断诊断。\ncompleted = true;\nstream.push({ type: "done", message: { ...partial, stopReason } });'],
+	eof: ["HTTP 泵：EOF 没有 message_stop", "即便 JSON 完整、块已关闭、停止原因已收到，也不能证明整次响应完成。终止 error，不猜 stop 或 length。",
+		'if (!state.completed)\n  state.fail("error", "Anthropic stream ended without message_stop");'],
+	abort: ["HTTP 泵：用户取消", "不继续消费半截响应。fail 创建空 content 的 aborted 诊断；本地 partial 不是失败回合的权威历史。",
+		'state.fail("aborted", "Operation aborted");'],
+};
+const $ = (id) => document.getElementById(id);
+const pretty = (value) => JSON.stringify(value, null, 2);
+const valueText = (value) => value === undefined ? "（不存在）" : JSON.stringify(value);
+function differences(before, after, path = "") {
+	if (JSON.stringify(before) === JSON.stringify(after)) return [];
+	if (before && after && typeof before === "object" && typeof after === "object") {
+		const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])];
+		return keys.flatMap((key) => differences(before[key], after[key],
+			Array.isArray(after) ? `${path}[${key}]` : path ? `${path}.${key}` : key));
+	}
+	return [`${path || "state"}:\n  ${valueText(before)}\n  → ${valueText(after)}`];
+}
+function eventLine(event, index) {
+	const at = "contentIndex" in event ? ` [index=${event.contentIndex}]` : "";
+	const delta = "delta" in event ? ` ${JSON.stringify(event.delta)}` : "";
+	const reason = event.type === "done" ? ` (${event.message.stopReason})`
+		: event.type === "error" ? ` (${event.reason})` : "";
+	return `${index + 1}. ${event.type}${at}${delta}${reason}`;
+}
+function title(action) {
+	if (action.kind === "init") return "创建状态机 → start";
+	if (action.kind === "eof") return "EOF：没有 message_stop";
+	if (action.kind === "abort") return "用户 abort → fail";
+	const payload = JSON.parse(action.frame.data);
+	return `${action.frame.event}${payload.index === undefined ? "" : ` [index=${payload.index}]`}`;
+}
+
+let step = 0, timer = null, traces = [];
+function pause() {
+	if (timer !== null) clearInterval(timer);
+	timer = null;
+	$("play").textContent = "▶ 自动播放";
+}
+function render() {
+	const trace = traces[step], action = trace.action, snapshot = trace.after;
+	const type = action.kind === "frame" ? JSON.parse(action.frame.data).type : action.kind;
+	const [branch, explanation, source] = branches[type];
+	const terminal = trace.events.find((event) => event.type === "done" || event.type === "error");
+	$("step-title").textContent = `${step}. ${title(action)}`;
+	$("explanation").textContent = trace.failure
+		? `accept 校验失败：${trace.failure}。随后由模拟 HTTP 泵调用 fail("error", ...)；这不是静默跳过。`
+		: explanation;
+	$("branch").textContent = trace.failure ? `${branch} → 校验抛错 → HTTP 泵 → fail` : branch;
+	$("source").textContent = source + (trace.failure
+		? '\n\n// HTTP 泵归一化：\ncatch (error) { state.fail("error", error.message); }' : "");
+	$("input").textContent = action.kind === "frame"
+		? `accept(frame)\n\nSSE event: ${action.frame.event}\n\nJSON payload:\n${pretty(JSON.parse(action.frame.data))}`
+		: action.kind === "init" ? "createAnthropicStreamState(stream)\n\n此刻尚未送入网络帧。"
+			: `${action.kind} 是传输层动作，不是模型发出的 SSE frame。`;
+	$("before").textContent = trace.before === null ? "尚未创建状态机。" : pretty(trace.before);
+	$("after").textContent = pretty(snapshot);
+	$("changes").textContent = trace.before === null
+		? "创建 partial、blocks、started、completed、stopReason；立即发出一个 start。"
+		: differences(trace.before, snapshot).join("\n\n") || "本帧没有改变状态。";
+	$("raw-json").textContent = snapshot.blocks.length ? pretty(snapshot.blocks.map((block, index) => ({
+		index, type: snapshot.partial.content[index].type, open: block.open,
+		json: block.json, input: block.input,
+	}))) : "尚未创建内容块。";
+	const tools = snapshot.partial.content.flatMap((block, index) => block.type === "toolCall"
+		? [{ index, id: block.id, name: block.name, arguments: block.arguments }] : []);
+	$("parsed-args").textContent = tools.length ? pretty(tools) : "当前没有 toolCall。";
+	$("new-events").textContent = trace.emitted.length ? pretty(trace.emitted) : "本步没有发出统一事件。";
+	$("all-events").textContent = trace.events.map(eventLine).join("\n");
+	$("terminal").textContent = terminal ? pretty(terminal)
+		: "尚无 done / error。过程状态不能替代权威结果。";
+	$("decision").textContent = !terminal ? "不能执行工具：还没有权威终止结果。"
+		: terminal.type === "error" ? "不能执行工具：失败诊断 content=[]，run 结束；不把 partial 交给工具。"
+			: terminal.message.stopReason === "length" ? "整批不执行：即使部分参数完整，也由 core 产生错误结果回喂。"
+				: terminal.message.stopReason === "toolUse" ? "完整调用可交给 core：这里只生成消息，实际权限检查与工具执行在上层。"
+					: "文本响应完整：交给上层入历史；没有工具需要执行。";
+	$("state-flags").textContent =
+		`started=${snapshot.started} · completed=${snapshot.completed} · 局部 stopReason=${snapshot.stopReason} · partial.stopReason=${snapshot.partial.stopReason}`;
+	$("count").textContent = `${step} / ${traces.length - 1} 步`;
+	$("prev").disabled = step === 0;
+	$("next").disabled = step === traces.length - 1;
+	$("play").disabled = step === traces.length - 1;
+	$("jump-end").disabled = step === traces.length - 1;
+	for (const [index, button] of Array.from($("timeline").children).entries()) {
+		button.classList.toggle("active", index === step);
+		button.setAttribute("aria-current", index === step ? "step" : "false");
+	}
+	const phase = snapshot.completed ? 5 : type === "message_delta" ? 4
+		: type === "content_block_stop" ? 3
+			: type.startsWith("content_block_") ? 2 : snapshot.started ? 1 : 0;
+	for (let index = 0; index < 6; index++) $("flow-" + index).classList.toggle("active", index === phase);
+}
+function move(next) {
+	step = Math.max(0, Math.min(traces.length - 1, next));
+	if (step === traces.length - 1) pause();
+	render();
+}
+function togglePlay() {
+	if (timer !== null) { pause(); return; }
+	if (step === traces.length - 1) return;
+	timer = setInterval(() => move(step + 1), 1200);
+	$("play").textContent = "Ⅱ 暂停";
+}
+function selectScenario() {
+	pause();
+	const scenario = scenarios[$("scenario").value];
+	traces = buildTrace(scenario);
+	step = 0;
+	$("scenario-hint").textContent = scenario.hint;
+	$("timeline").replaceChildren();
+	for (const [index, trace] of traces.entries()) {
+		const button = document.createElement("button");
+		button.textContent = `${index}. ${title(trace.action)}`;
+		button.addEventListener("click", () => { pause(); move(index); });
+		$("timeline").append(button);
+	}
+	render();
+}
+for (const [key, scenario] of Object.entries(scenarios)) {
+	const option = document.createElement("option");
+	option.value = key; option.textContent = scenario.name;
+	$("scenario").append(option);
+}
+$("scenario").value = "tool";
+$("scenario").addEventListener("change", selectScenario);
+$("prev").addEventListener("click", () => { pause(); move(step - 1); });
+$("next").addEventListener("click", () => { pause(); move(step + 1); });
+$("reset").addEventListener("click", () => { pause(); move(0); });
+$("jump-end").addEventListener("click", () => { pause(); move(traces.length - 1); });
+$("play").addEventListener("click", togglePlay);
+document.addEventListener("keydown", (event) => {
+	if (["SELECT", "INPUT", "TEXTAREA", "BUTTON", "SUMMARY", "A"].includes(event.target?.tagName)) return;
+	if (event.key === "ArrowRight") { event.preventDefault(); pause(); move(step + 1); }
+	if (event.key === "ArrowLeft") { event.preventDefault(); pause(); move(step - 1); }
+	if (event.key === " ") { event.preventDefault(); togglePlay(); }
+});
+$("full-core").textContent = [check, object, string, count, createAnthropicStreamState].map((fn) => fn.toString()).join("\n\n");
+selectScenario();
+</script>
+</body>
+</html>
