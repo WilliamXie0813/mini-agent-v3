@@ -1,0 +1,1161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>System prompt 即历史 — 阶段 8 交互教学</title>
+<style>
+	:root {
+		--night: #111827;
+		--night-soft: #1f2937;
+		--paper: #f4efe3;
+		--panel: #fffaf0;
+		--ink: #172033;
+		--soft: #586174;
+		--line: #d8cfbe;
+		--orange: #d95d39;
+		--blue: #2457d6;
+		--green: #26845b;
+		--gold: #b98518;
+		--red: #b83c3c;
+		--code: #0d1322;
+		--code-fg: #e5e9f2;
+	}
+	* { box-sizing: border-box; }
+	html { scroll-behavior: smooth; }
+	body {
+		margin: 0;
+		color: var(--ink);
+		background:
+			linear-gradient(rgba(17, 24, 39, .035) 1px, transparent 1px),
+			linear-gradient(90deg, rgba(17, 24, 39, .035) 1px, transparent 1px),
+			var(--paper);
+		background-size: 28px 28px;
+		font: 17px/1.8 Georgia, "Songti SC", "STSong", serif;
+	}
+	a {
+		color: var(--blue);
+		text-decoration: none;
+		border-bottom: 1px dashed currentColor;
+	}
+	code {
+		padding: 2px 6px;
+		border-radius: 5px;
+		background: #e8e1d2;
+		font: .88em Consolas, "SFMono-Regular", monospace;
+	}
+	pre {
+		margin: 0;
+		padding: 17px;
+		overflow: auto;
+		border-radius: 9px;
+		background: var(--code);
+		color: var(--code-fg);
+		font: 12.5px/1.7 Consolas, "SFMono-Regular", monospace;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+	button, select {
+		font: 13px/1.5 system-ui, sans-serif;
+	}
+	button {
+		padding: 9px 15px;
+		border: 1.5px solid var(--ink);
+		border-radius: 999px;
+		background: transparent;
+		color: var(--ink);
+		cursor: pointer;
+		transition: .15s ease;
+	}
+	button:hover:not(:disabled), button.active {
+		background: var(--ink);
+		color: var(--paper);
+	}
+	button.primary {
+		border-color: var(--orange);
+		color: var(--orange);
+	}
+	button.primary:hover:not(:disabled) {
+		background: var(--orange);
+		color: white;
+	}
+	button:disabled {
+		opacity: .35;
+		cursor: not-allowed;
+	}
+	button:focus-visible, select:focus-visible, a:focus-visible, summary:focus-visible {
+		outline: 3px solid var(--blue);
+		outline-offset: 4px;
+	}
+	select {
+		max-width: 100%;
+		padding: 9px 12px;
+		border: 1px solid var(--line);
+		border-radius: 7px;
+		background: var(--panel);
+		color: var(--ink);
+	}
+	.shell {
+		max-width: 1240px;
+		margin: auto;
+		padding: 0 24px 90px;
+	}
+	header {
+		position: relative;
+		margin-bottom: 58px;
+		padding: 75px 0 46px;
+		border-bottom: 4px double var(--night);
+	}
+	header::after {
+		content: "APPEND ONLY";
+		position: absolute;
+		right: 0;
+		bottom: 50px;
+		color: rgba(217, 93, 57, .12);
+		font: 700 clamp(30px, 7vw, 82px)/1 Consolas, monospace;
+		letter-spacing: -.05em;
+		pointer-events: none;
+	}
+	.kicker {
+		color: var(--orange);
+		font: 12px Consolas, monospace;
+		letter-spacing: .22em;
+		text-transform: uppercase;
+	}
+	h1 {
+		position: relative;
+		z-index: 1;
+		max-width: 900px;
+		margin: 15px 0 20px;
+		font-size: clamp(38px, 7vw, 72px);
+		line-height: 1.08;
+		letter-spacing: -.035em;
+	}
+	h2 {
+		margin: 0;
+		font-size: clamp(25px, 4vw, 34px);
+		line-height: 1.25;
+	}
+	h3 {
+		margin: 0 0 10px;
+		font-size: 19px;
+	}
+	p {
+		margin: 12px 0;
+		color: var(--soft);
+	}
+	.lead {
+		position: relative;
+		z-index: 1;
+		max-width: 900px;
+		font-size: 19px;
+	}
+	.toc {
+		position: relative;
+		z-index: 1;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 9px 18px;
+		margin-top: 25px;
+	}
+	.toc a {
+		font: 12px Consolas, monospace;
+	}
+	section {
+		margin: 0 0 78px;
+		scroll-margin-top: 18px;
+	}
+	.section-title {
+		display: grid;
+		grid-template-columns: 72px minmax(0, 1fr);
+		align-items: center;
+		gap: 15px;
+		margin-bottom: 24px;
+	}
+	.section-number {
+		color: transparent;
+		font: 700 58px/1 Consolas, monospace;
+		-webkit-text-stroke: 1.5px var(--orange);
+	}
+	.callout {
+		margin: 22px 0;
+		padding: 17px 21px;
+		border-left: 4px solid var(--orange);
+		border-radius: 0 9px 9px 0;
+		background: #e9e2d3;
+	}
+	.callout p { margin: 0; }
+	.label {
+		display: block;
+		margin-bottom: 6px;
+		color: var(--orange);
+		font: 11px Consolas, monospace;
+		letter-spacing: .17em;
+	}
+	.grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 16px;
+	}
+	.grid.three {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+	.card {
+		min-width: 0;
+		padding: 19px;
+		border: 1px solid var(--line);
+		border-radius: 11px;
+		background: rgba(255, 250, 240, .92);
+		box-shadow: 0 8px 25px rgba(17, 24, 39, .05);
+	}
+	.card p:last-child { margin-bottom: 0; }
+	.card.dark {
+		border-color: var(--night-soft);
+		background: var(--night);
+		color: white;
+	}
+	.card.dark p { color: #c8d0df; }
+	.card.full { grid-column: 1 / -1; }
+	.badge {
+		display: inline-block;
+		margin-bottom: 10px;
+		padding: 4px 8px;
+		border-radius: 999px;
+		background: #e8e1d2;
+		color: var(--soft);
+		font: 11px Consolas, monospace;
+	}
+	.badge.good { background: #dcecdf; color: var(--green); }
+	.badge.warn { background: #f3dfd7; color: var(--red); }
+	.flow {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: 10px;
+		margin: 22px 0;
+	}
+	.flow-step {
+		position: relative;
+		padding: 16px;
+		border: 1px solid var(--line);
+		border-radius: 9px;
+		background: var(--panel);
+		font: 13px/1.6 Consolas, monospace;
+	}
+	.flow-step:not(:last-child)::after {
+		content: "→";
+		position: absolute;
+		top: 50%;
+		right: -12px;
+		z-index: 2;
+		color: var(--orange);
+		font-weight: 700;
+		transform: translateY(-50%);
+	}
+	table {
+		width: 100%;
+		margin: 20px 0;
+		border-collapse: collapse;
+		font-size: 14.5px;
+	}
+	th, td {
+		padding: 11px 13px;
+		border: 1px solid var(--line);
+		text-align: left;
+		vertical-align: top;
+	}
+	th {
+		background: #e8e1d2;
+		font-family: Consolas, monospace;
+	}
+	td { color: var(--soft); }
+	.lab {
+		overflow: hidden;
+		border: 1px solid #394156;
+		border-radius: 14px;
+		background: var(--night);
+		box-shadow: 0 18px 55px rgba(17, 24, 39, .2);
+	}
+	.lab-head {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 10px;
+		align-items: center;
+		padding: 16px;
+		border-bottom: 1px solid #394156;
+		background: #182033;
+	}
+	.lab-head label {
+		color: #d7deea;
+		font: 12px Consolas, monospace;
+	}
+	.lab-head button {
+		border-color: #8290aa;
+		color: #e7ecf4;
+	}
+	.lab-head button:hover:not(:disabled), .lab-head button.active {
+		background: #e7ecf4;
+		color: var(--night);
+	}
+	.lab-head button.primary {
+		border-color: #ff8a64;
+		color: #ff9b7b;
+	}
+	.lab-head button.primary:hover:not(:disabled) {
+		background: #ff8a64;
+		color: var(--night);
+	}
+	.lab-head .counter {
+		margin-left: auto;
+		color: #9faabd;
+		font: 12px Consolas, monospace;
+	}
+	.lab-body {
+		display: grid;
+		grid-template-columns: 250px minmax(0, 1fr);
+		min-height: 650px;
+	}
+	.timeline-wrap {
+		padding: 16px;
+		border-right: 1px solid #394156;
+		background: #141b2b;
+	}
+	.timeline-wrap h3 {
+		color: white;
+	}
+	.timeline-wrap p {
+		margin: 5px 0 14px;
+		color: #98a5ba;
+		font-size: 13px;
+	}
+	.timeline {
+		display: flex;
+		flex-direction: column;
+		gap: 7px;
+		max-height: 570px;
+		overflow: auto;
+	}
+	.timeline button {
+		width: 100%;
+		padding: 9px 10px;
+		border-radius: 6px;
+		border-color: #4c5871;
+		color: #cfd7e5;
+		text-align: left;
+		font: 11.5px/1.5 Consolas, monospace;
+	}
+	.timeline button.active {
+		border-color: var(--orange);
+		background: var(--orange);
+		color: white;
+	}
+	.workspace {
+		min-width: 0;
+		padding: 18px;
+	}
+	.step-banner {
+		margin-bottom: 15px;
+		padding: 15px 17px;
+		border-left: 4px solid #ff8a64;
+		border-radius: 0 8px 8px 0;
+		background: #202a40;
+	}
+	.step-banner h3 { color: white; }
+	.step-banner p {
+		margin: 5px 0;
+		color: #b9c4d6;
+		font-size: 14px;
+	}
+	.step-banner strong { color: #ffb195; }
+	.panels {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 12px;
+	}
+	.panel {
+		min-width: 0;
+		padding: 14px;
+		border: 1px solid #394156;
+		border-radius: 9px;
+		background: #151d2e;
+	}
+	.panel.full { grid-column: 1 / -1; }
+	.panel h4 {
+		margin: 0 0 8px;
+		color: #aab6ca;
+		font: 11px Consolas, monospace;
+		letter-spacing: .08em;
+	}
+	.panel pre {
+		max-height: 255px;
+		padding: 0;
+		background: transparent;
+		color: #e4e9f2;
+		box-shadow: none;
+	}
+	.panel.prompt { border-color: #596fc8; }
+	.panel.tools { border-color: #448869; }
+	.panel.cache { border-color: #a87927; }
+	.compare {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 14px;
+	}
+	.compare .bad { border-top: 4px solid var(--red); }
+	.compare .good { border-top: 4px solid var(--green); }
+	details {
+		margin: 12px 0;
+		padding: 14px 17px;
+		border: 1px solid var(--line);
+		border-radius: 9px;
+		background: var(--panel);
+	}
+	summary { cursor: pointer; font-weight: 700; }
+	details p { font-size: 15px; }
+	footer {
+		margin-top: 55px;
+		padding-top: 24px;
+		border-top: 4px double var(--night);
+		color: var(--soft);
+		font-size: 14px;
+	}
+	@media (max-width: 980px) {
+		.grid.three { grid-template-columns: 1fr; }
+		.flow { grid-template-columns: 1fr 1fr; }
+		.flow-step:nth-child(2)::after { display: none; }
+		.lab-body { grid-template-columns: 1fr; }
+		.timeline-wrap { border-right: 0; border-bottom: 1px solid #394156; }
+		.timeline { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); max-height: 245px; }
+	}
+	@media (max-width: 680px) {
+		.shell { padding: 0 14px 60px; }
+		header { padding-top: 45px; }
+		header::after { display: none; }
+		.section-title { grid-template-columns: 52px minmax(0, 1fr); }
+		.section-number { font-size: 43px; }
+		.grid, .panels, .compare, .flow, .timeline { grid-template-columns: 1fr; }
+		.flow-step::after { display: none; }
+		.lab-head .counter { width: 100%; margin: 0; }
+		table { font-size: 12px; }
+		th, td { padding: 8px; }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		html { scroll-behavior: auto; }
+		* { transition: none !important; }
+	}
+	@media print {
+		body { background: white; }
+		.shell { max-width: none; padding: 0; }
+		.lab-head, .timeline-wrap { display: none; }
+		.lab-body { display: block; min-height: 0; }
+		.lab, .card, .panel { break-inside: avoid; box-shadow: none; }
+		pre { max-height: none !important; }
+	}
+</style>
+</head>
+<body>
+<main class="shell">
+	<header>
+		<div class="kicker">mini-agent-v3 · 阶段 8 · 实施前教学</div>
+		<h1>System prompt<br>为什么要变成历史？</h1>
+		<p class="lead">阶段 7 已经把真实 provider 接通；阶段 8 不增加“更聪明的模型”，而是修正一处更基础的状态建模：prompt 与模型可见工具集不再是一份随时会变的当前值，而是一串可以重放、持久化、裁剪和审计的历史事件。</p>
+		<nav class="toc">
+			<a href="#answer">先看结论</a>
+			<a href="#pain">① 旧模型的问题</a>
+			<a href="#shape">② 新消息形状</a>
+			<a href="#lab">③ 重放模拟器</a>
+			<a href="#algorithm">④ 重放算法</a>
+			<a href="#architecture">⑤ Agent 怎么改</a>
+			<a href="#payoff">⑥ 买到什么</a>
+			<a href="#plan">⑦ 实施顺序</a>
+			<a href="#questions">⑧ 回测</a>
+		</nav>
+	</header>
+
+	<section id="answer">
+		<div class="section-title"><div class="section-number">0</div><h2>先看结论：参数描述现在，历史解释现在</h2></div>
+		<div class="compare">
+			<div class="card bad">
+				<span class="badge warn">阶段 1–7</span>
+				<h3>“当前值”模式</h3>
+				<pre>Agent {
+  system: "You are..."
+  state.messages: [...]
+  state.tools: [read, bash]
+}</pre>
+				<p>历史只记录对话；prompt 与工具放在旁边。恢复会话时必须额外记住“当时那份 system/tools 到底是什么”。</p>
+			</div>
+			<div class="card good">
+				<span class="badge good">阶段 8 之后</span>
+				<h3>“事件历史”模式</h3>
+				<pre>messages = [
+  SystemMessage(base + read + bash),
+  UserMessage(...),
+  AssistantMessage(...),
+  SystemMessage(extra - bash + edit)
+]</pre>
+				<p>当前 prompt 与工具不再单独存。只要按顺序重放 system entries，就能重新得到现在。</p>
+			</div>
+		</div>
+		<div class="callout"><span class="label">这个阶段唯一的新概念</span><p><strong>当前状态是历史的函数。</strong>阶段 8 不做 JSONL 持久化、不做上下文压缩、不做扩展系统；它只把三者将来依赖的地基先改对。</p></div>
+	</section>
+
+	<section id="pain">
+		<div class="section-title"><div class="section-number">1</div><h2>为什么现在必须回头改？</h2></div>
+		<div class="grid">
+			<div class="card">
+				<span class="badge">恢复会话</span>
+				<h3>历史缺了一块</h3>
+				<p>如果只持久化 user/assistant/toolResult，恢复时还得从别处找 system 与 tools。两份状态一旦不同步，恢复出来的就不是原会话。</p>
+			</div>
+			<div class="card">
+				<span class="badge">Prompt cache</span>
+				<h3>前缀必须稳定</h3>
+				<p>每轮重建、重排或重复插入 system 都会改变请求前缀。相同配置不新增 entry，provider 才能命中稳定前缀。</p>
+			</div>
+			<div class="card">
+				<span class="badge">上下文压缩</span>
+				<h3>不能把规则一起删掉</h3>
+				<p>阶段 10 会裁剪旧 conversation。若规则属于独立参数，裁剪器必须额外同步；若规则就在 transcript，保留 system entries 后自然仍能重放。</p>
+			</div>
+			<div class="card">
+				<span class="badge">动态工具</span>
+				<h3>“什么时候可用”也是事实</h3>
+				<p>阶段 11 会切换工具。直接覆盖当前数组会抹掉过去；追加 toolsAdded/toolsRemoved 才能解释某个历史时刻为什么模型看见这些工具。</p>
+			</div>
+		</div>
+		<h3 style="margin-top:28px">阶段 7 留下的最后一个直接读取点</h3>
+		<pre>// 当前 packages/ai/src/anthropic-messages.ts
+return {
+  system: context.system.content,
+  messages,
+  tools: context.tools.map(...),
+};</pre>
+		<p>这里本身没有错；错的是 <code>context.system</code> 与 <code>context.tools</code> 目前由“旁边的当前字段”提供。阶段 8 会保留 StreamContext 形状，但让这两个字段变成 transcript 的<strong>重放快照</strong>。</p>
+	</section>
+
+	<section id="shape">
+		<div class="section-title"><div class="section-number">2</div><h2>新的 SystemMessage 长什么样？</h2></div>
+		<div class="grid">
+			<div class="card dark">
+				<h3>消息 IR</h3>
+				<pre>interface SystemSection {
+  tag?: string;
+  text: string;
+}
+
+interface SystemMessage {
+  role: "system";
+  sections: SystemSection[];
+  toolsAdded?: Tool[];
+  toolsRemoved?: string[];
+}</pre>
+			</div>
+			<div class="card">
+				<h3>三个字段各表达一个事实</h3>
+				<table>
+					<tr><th>字段</th><th>语义</th></tr>
+					<tr><td><code>sections</code></td><td>从这个时间点起追加的新指令段落</td></tr>
+					<tr><td><code>toolsAdded</code></td><td>从这个时间点起模型可以看见的完整工具声明</td></tr>
+					<tr><td><code>toolsRemoved</code></td><td>从这个时间点起停止可用的工具名</td></tr>
+				</table>
+			</div>
+		</div>
+		<div class="flow">
+			<div class="flow-step">System #1<br>base + read + bash</div>
+			<div class="flow-step">Conversation<br>user / assistant / tools</div>
+			<div class="flow-step">System #2<br>repo-only - bash + edit</div>
+			<div class="flow-step">Replay snapshot<br>base + repo-only / read + edit</div>
+		</div>
+		<p><code>tag</code> 只是元数据，本阶段不会自动把它写进 prompt。真正发给模型的是非空 section text 按历史顺序用空行连接。工具变化在同一条消息中先 remove 再 add，因此同名工具升级可以表示为“移除旧声明，再加入新声明”。</p>
+	</section>
+
+	<section id="lab">
+		<div class="section-title"><div class="section-number">3</div><h2>交互模拟器：从历史一步步推导现在</h2></div>
+		<p>这是<strong>阶段 8 计划行为</strong>的离线模拟，不会读取 API key、调用模型或执行工具。每一步都保存独立 before/after 快照；你可以往返查看 raw transcript 与 replay snapshot 的区别。</p>
+		<div class="lab">
+			<div class="lab-head">
+				<label for="scenario">场景</label>
+				<select id="scenario"></select>
+				<button id="prev">← 上一步</button>
+				<button id="next" class="primary">单步 →</button>
+				<button id="play">▶ 自动播放</button>
+				<button id="reset">重置</button>
+				<button id="jump-end">跳到结尾</button>
+				<span id="count" class="counter"></span>
+			</div>
+			<div class="lab-body">
+				<aside class="timeline-wrap">
+					<h3>历史时间线</h3>
+					<p>点击任意步骤跳转。request 不写 transcript；system/message/trim 才改变历史。</p>
+					<nav id="timeline" class="timeline" aria-label="重放步骤"></nav>
+				</aside>
+				<div class="workspace">
+					<div class="step-banner" role="status" aria-live="polite">
+						<h3 id="step-title"></h3>
+						<p id="explanation"></p>
+						<p><strong>决策：</strong><span id="decision"></span></p>
+					</div>
+					<div class="panels">
+						<div class="panel full"><h4>RAW TRANSCRIPT · 权威历史</h4><pre id="transcript-output"></pre></div>
+						<div class="panel prompt"><h4>REPLAYED SYSTEM PROMPT</h4><pre id="prompt-output"></pre></div>
+						<div class="panel tools"><h4>REPLAYED ACTIVE TOOLS</h4><pre id="tools-output"></pre></div>
+						<div class="panel"><h4>PROVIDER REQUEST SNAPSHOT</h4><pre id="request-output"></pre></div>
+						<div class="panel cache"><h4>PROMPT CACHE OBSERVATION</h4><pre id="cache-output"></pre></div>
+						<div class="panel"><h4>COUNTS</h4><pre id="counts-output"></pre></div>
+						<div class="panel"><h4>BEFORE</h4><pre id="before-output"></pre></div>
+						<div class="panel"><h4>AFTER</h4><pre id="after-output"></pre></div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<section id="algorithm">
+		<div class="section-title"><div class="section-number">4</div><h2>重放算法其实很朴素</h2></div>
+		<div class="grid">
+			<div class="card dark">
+				<h3>Prompt fold</h3>
+				<pre>sections = []
+
+for message of transcript:
+  if message.role !== "system":
+    continue
+  sections.push(...message.sections)
+
+prompt = nonEmptyText(sections)
+  .join("\n\n")</pre>
+			</div>
+			<div class="card dark">
+				<h3>Tool fold</h3>
+				<pre>tools = Map&lt;name, declaration&gt;()
+
+for systemMessage of transcript:
+  for name of toolsRemoved:
+    tools.delete(name)
+  for tool of toolsAdded:
+    tools.set(tool.name, clone(tool))
+
+currentTools = [...tools.values()]</pre>
+			</div>
+		</div>
+		<div class="callout"><span class="label">顺序为什么重要？</span><p>同一条 delta 若包含 <code>toolsRemoved:["read"]</code> 与新版 <code>toolsAdded:[readV2]</code>，先删后加才能让新版留下。Map 还会给出稳定、可预测的工具顺序。</p></div>
+		<h3>为什么还要计算 tool state changes？</h3>
+		<p><code>Agent.setTools(next)</code> 不能每次都追加一份全量工具。它先比较当前 replay declarations 与 next declarations：</p>
+		<pre>相同声明、不同对象引用   → 不写 system delta
+只替换 execute 闭包       → 更新执行注册表，不写 model-visible delta
+新增工具                  → toolsAdded
+删除工具                  → toolsRemoved
+同名 schema/description 变 → toolsRemoved + toolsAdded</pre>
+	</section>
+
+	<section id="architecture">
+		<div class="section-title"><div class="section-number">5</div><h2>Agent、loop、provider 各自负责什么？</h2></div>
+		<div class="flow">
+			<div class="flow-step">CLI<br><code>system: string</code><br>新会话简写</div>
+			<div class="flow-step">Agent state<br>prepend initial<br>SystemMessage once</div>
+			<div class="flow-step">agentLoop<br>replay transcript<br>build snapshot</div>
+			<div class="flow-step">Anthropic adapter<br>render string/tools<br>skip system entries</div>
+		</div>
+		<table>
+			<tr><th>组件</th><th>阶段 8 后的职责</th><th>不负责什么</th></tr>
+			<tr><td>CLI / AgentOptions</td><td>给新会话提供初始 system string 与 ToolDef</td><td>不手写 SystemMessage，不维护 replay</td></tr>
+			<tr><td>AgentState.messages</td><td>保存完整 transcript，是 system/tool 状态的权威历史</td><td>不保存单独的 currentSystem 字段</td></tr>
+			<tr><td>AgentState.tools</td><td>保存带 execute 闭包的运行时注册表</td><td>不决定模型当前看见哪些工具</td></tr>
+			<tr><td>agentLoop</td><td>每轮重放 system/tools；只允许 active declaration 对应的 ToolDef 执行</td><td>不修改旧 system entries</td></tr>
+			<tr><td>provider adapter</td><td>把 replay snapshot 转成 Anthropic 顶层 system/tools</td><td>不各写一套历史重放规则</td></tr>
+		</table>
+		<div class="callout"><span class="label">一个容易漏掉的安全边界</span><p>工具已经从 transcript 移除后，即使旧 execute 闭包还留在注册表里，也不能执行。模型可见集合与可执行集合必须同时受 replay state 限制，否则“移除工具”只改了 UI，没有改能力。</p></div>
+	</section>
+
+	<section id="payoff">
+		<div class="section-title"><div class="section-number">6</div><h2>O(1) 读取变成 O(n)，具体买到了什么？</h2></div>
+		<div class="grid">
+			<div class="card">
+				<span class="badge good">1 · 持久化免费</span>
+				<h3>Resume 不再猜配置</h3>
+				<p>阶段 9 只要恢复 transcript，就同时恢复了当时的 prompt 与模型工具状态，不需要另一份 sidecar 配置。</p>
+			</div>
+			<div class="card">
+				<span class="badge good">2 · Cache 稳定</span>
+				<h3>没变化就不写新 entry</h3>
+				<p>连续请求重放出相同 system/tool 前缀。相同工具声明只更新运行时闭包，不污染模型输入。</p>
+			</div>
+			<div class="card">
+				<span class="badge good">3 · 压缩天然正确</span>
+				<h3>裁剪 conversation，保留 rules</h3>
+				<p>阶段 10 可以删除旧 conversation context，同时保留 system entries；重放结果不变。</p>
+			</div>
+			<div class="card">
+				<span class="badge good">4 · 变化可审计</span>
+				<h3>工具何时出现/消失有证据</h3>
+				<p>阶段 11 动态切换工具时，历史能解释某次请求为何允许 edit、为何后来不允许 bash。</p>
+			</div>
+		</div>
+		<p>代价是每轮请求前扫描 transcript。教学规模下，这段本地纯函数成本远小于网络延迟；更重要的是它用一点 CPU 换掉了多份状态同步的正确性风险。</p>
+	</section>
+
+	<section id="plan">
+		<div class="section-title"><div class="section-number">7</div><h2>真正实施时会按什么顺序？</h2></div>
+		<div class="grid three">
+			<div class="card"><span class="badge">Task 1</span><h3>IR + replay helpers</h3><p>改 SystemMessage，新增 prompt/tools 重放、初始消息、tool declaration diff。</p></div>
+			<div class="card"><span class="badge">Task 2</span><h3>Provider 消费 snapshot</h3><p>Anthropic wire 继续用 string/tools，但数据来自 replay；system entries 不进入 wire messages。</p></div>
+			<div class="card"><span class="badge">Task 3</span><h3>Agent / loop 改权威源</h3><p>Agent 只写一次初始 system；loop 每轮重放；removed tool 不可执行。</p></div>
+			<div class="card"><span class="badge">Task 4</span><h3>追加变化</h3><p>appendSystemSections / setTools 只追加 delta，active run 期间禁止切换。</p></div>
+			<div class="card"><span class="badge">Task 5</span><h3>CLI / HTTP 回归</h3><p>用户体验保持不变；连续请求验证 system/tool 前缀稳定。</p></div>
+			<div class="card"><span class="badge">Task 6</span><h3>阶段文档与全量验收</h3><p>写学习文档，跑 test/check，检查旧 string-system 读取点全部消失。</p></div>
+		</div>
+		<p>详细 TDD 步骤见 <a href="../plans/2026-10-14-stage-8-system-prompt-history.md">阶段 8 实施计划</a>；总体路线见 <a href="../specs/2026-10-09-mini-agent-v3-design.md">mini-agent-v3 设计文档</a>。</p>
+	</section>
+
+	<section id="questions">
+		<div class="section-title"><div class="section-number">8</div><h2>回测：如果能答清这些，就真的懂了</h2></div>
+		<details><summary>为什么不直接在 session 文件旁边再存一份 currentSystem？</summary><p>因为它会成为第二份权威状态。任何一次 append、branch、resume 或 crash 都要保证两份数据原子同步；把变化写进 transcript 后，当前值只是确定性重放结果。</p></details>
+		<details><summary>为什么 repeated prompt 不能重复追加同一条 SystemMessage？</summary><p>它既制造无意义历史，也改变 provider 请求前缀，使 prompt cache 看见不同输入。请求本身不是 system 状态变化，不应写 system entry。</p></details>
+		<details><summary>为什么 AgentState.tools 还要保留？</summary><p>SystemMessage 只保存可持久化的模型声明，没有 execute 函数。运行时仍要保存 ToolDef 闭包；但某个闭包是否 active，必须由 transcript replay 决定。</p></details>
+		<details><summary>同名 read 工具 schema 变化时，为什么不是直接覆盖？</summary><p>重放 Map 内部最终确实会得到新版，但历史 entry 必须明确表达旧声明停止、新声明开始。remove + add 让变化可审计，也避免把“同一个名字”等同于“同一个协议”。</p></details>
+		<details><summary>裁剪为什么必须保留全部 system entries？</summary><p>本阶段 sections 是只追加增量；删掉早期 system entry 就会丢失 base prompt 或旧工具变化。阶段 10 若要合并它们，必须生成等价 replay snapshot，而不是静默删除。</p></details>
+		<details><summary>为什么接受 O(n) replay？</summary><p>n 是本地 transcript 长度，网络请求才是主要延迟；换来的收益是 resume、cache、compaction、dynamic tools 共用一个确定性状态模型。若未来性能真的成为问题，可以缓存 replay 结果，但缓存仍只是派生值，不是新权威源。</p></details>
+	</section>
+
+	<footer>
+		本页是阶段 8 实施前的离线教学模拟器，不代表代码已经完成。模拟行为由自动化测试固定：增量重放、cache 稳定、裁剪保持、同名工具 remove + add，以及时间线交互。
+	</footer>
+</main>
+
+<script>
+const readV1 = {
+	name: "read",
+	description: "Read a UTF-8 text file.",
+	parameters: {
+		type: "object",
+		properties: { path: { type: "string" } },
+		required: ["path"],
+	},
+};
+const readV2 = {
+	name: "read",
+	description: "Read UTF-8 text with line ranges.",
+	parameters: {
+		type: "object",
+		properties: {
+			path: { type: "string" },
+			startLine: { type: "number" },
+		},
+		required: ["path"],
+	},
+};
+const bashTool = {
+	name: "bash",
+	description: "Run a shell command.",
+	parameters: {
+		type: "object",
+		properties: { command: { type: "string" } },
+		required: ["command"],
+	},
+};
+const editTool = {
+	name: "edit",
+	description: "Replace one unique text range.",
+	parameters: {
+		type: "object",
+		properties: {
+			path: { type: "string" },
+			oldText: { type: "string" },
+			newText: { type: "string" },
+		},
+		required: ["path", "oldText", "newText"],
+	},
+};
+
+function clone(value) {
+	return structuredClone(value);
+}
+
+function replayTranscript(transcript) {
+	const sections = [];
+	const tools = new Map();
+	for (const message of transcript) {
+		if (message.role !== "system") continue;
+		for (const section of message.sections ?? []) {
+			sections.push(clone(section));
+		}
+		for (const name of message.toolsRemoved ?? []) {
+			tools.delete(name);
+		}
+		for (const tool of message.toolsAdded ?? []) {
+			tools.set(tool.name, clone(tool));
+		}
+	}
+	return {
+		sections,
+		prompt: sections
+			.filter((section) => section.text.length > 0)
+			.map((section) => section.text)
+			.join("\n\n"),
+		tools: [...tools.values()],
+	};
+}
+
+const scenarios = {
+	evolution: {
+		name: "完整演进：追加规则并切换工具",
+		hint: "先建立 base + read/bash，再追加 repo-only 规则，移除 bash 并加入 edit。",
+		actions: [
+			{
+				kind: "system",
+				title: "写入初始 SystemMessage",
+				explanation: "新 Agent 把 composition root 的 system string 与 ToolDef declarations 规范化为一条 leading system entry。",
+				decision: "初始配置只写一次；从这一刻起 transcript 是权威。",
+				message: {
+					role: "system",
+					sections: [{ tag: "base", text: "You are a minimal coding agent." }],
+					toolsAdded: [readV1, bashTool],
+				},
+			},
+			{
+				kind: "message",
+				title: "记录 user message",
+				explanation: "普通 conversation message 进入同一 transcript，但 replay helper 会忽略它。",
+				decision: "对话影响模型上下文，不改变 system/tool 状态。",
+				message: { role: "user", content: "Please inspect package.json." },
+			},
+			{
+				kind: "message",
+				title: "记录 assistant message",
+				explanation: "阶段 7 的完整 assistant 继续按原规则入历史；SystemMessage 只是 Message 联合中的一种。",
+				decision: "不为 system history 建第二个数组。",
+				message: { role: "assistant", content: "I will inspect it.", stopReason: "stop" },
+			},
+			{
+				kind: "system",
+				title: "追加 workspace 规则并切换工具",
+				explanation: "不修改第一条 system；新事实以第二条 entry 追加。",
+				decision: "同一条 delta 先 remove bash，再 add edit。",
+				message: {
+					role: "system",
+					sections: [{ tag: "workspace", text: "Work only inside the current repository." }],
+					toolsRemoved: ["bash"],
+					toolsAdded: [editTool],
+				},
+			},
+			{
+				kind: "request",
+				title: "重放并构造 provider request",
+				explanation: "loop 扫描 transcript，产生 current system snapshot 与 active tool declarations。",
+				decision: "provider 消费派生快照，不自行维护另一套历史规则。",
+			},
+		],
+	},
+	cache: {
+		name: "Cache 稳定：连续两次相同请求",
+		hint: "request 不会写 SystemMessage；第二次 replay 得到完全相同的 system/tool 前缀。",
+		actions: [
+			{
+				kind: "system",
+				title: "写入唯一初始 SystemMessage",
+				explanation: "base prompt 与 read/bash 声明只记录一次。",
+				decision: "配置事实属于历史，请求动作不属于配置变化。",
+				message: {
+					role: "system",
+					sections: [{ tag: "base", text: "You are a minimal coding agent." }],
+					toolsAdded: [readV1, bashTool],
+				},
+			},
+			{
+				kind: "request",
+				title: "第一次请求：cache MISS",
+				explanation: "第一次遇到这个 system/tool prefix，没有前一份 fingerprint 可复用。",
+				decision: "只记录 request snapshot，不追加 system entry。",
+			},
+			{
+				kind: "request",
+				title: "第二次请求：cache HIT",
+				explanation: "历史没新增 system delta，重放结果与第一次完全相同。",
+				decision: "相同请求前缀来自不变历史，而不是手工复用 mutable string。",
+			},
+		],
+	},
+	trim: {
+		name: "裁剪对话：保留 system entries",
+		hint: "删除旧 conversation，只保留全部 system 与最近两条对话；replay 结果必须不变。",
+		actions: [
+			{
+				kind: "system",
+				title: "写入 base prompt 与初始工具",
+				explanation: "这条 entry 是后续所有 replay 的基础。",
+				decision: "system entries 与 conversation 同在 transcript，但裁剪策略不同。",
+				message: {
+					role: "system",
+					sections: [{ tag: "base", text: "You are a minimal coding agent." }],
+					toolsAdded: [readV1, bashTool],
+				},
+			},
+			{
+				kind: "message",
+				title: "旧 user message",
+				explanation: "这条旧对话稍后会被裁剪。",
+				decision: "可丢弃的上下文不等于可丢弃的 system state。",
+				message: { role: "user", content: "Old question" },
+			},
+			{
+				kind: "message",
+				title: "旧 assistant message",
+				explanation: "与上一条组成一个较早 conversation 片段。",
+				decision: "阶段 10 会在完整 turn 边界做更严谨的切点；本页只演示状态原则。",
+				message: { role: "assistant", content: "Old answer", stopReason: "stop" },
+			},
+			{
+				kind: "system",
+				title: "追加 focused-diff 规则与工具变化",
+				explanation: "后续规则也是历史事实，裁剪旧 conversation 时必须保留。",
+				decision: "保留全部 system entries，或未来生成等价 snapshot。",
+				message: {
+					role: "system",
+					sections: [{ tag: "style", text: "Prefer focused diffs." }],
+					toolsRemoved: ["bash"],
+					toolsAdded: [editTool],
+				},
+			},
+			{
+				kind: "message",
+				title: "最近 user message",
+				explanation: "最近 conversation 会保留。",
+				decision: "本实验保留最近两条非 system 消息。",
+				message: { role: "user", content: "Recent question" },
+			},
+			{
+				kind: "message",
+				title: "最近 assistant message",
+				explanation: "这是裁剪后的第二条 recent message。",
+				decision: "replay state 不依赖旧 conversation 内容。",
+				message: { role: "assistant", content: "Recent answer", stopReason: "stop" },
+			},
+			{
+				kind: "trim",
+				keepRecent: 2,
+				title: "裁剪旧 conversation，保留 system entries",
+				explanation: "旧 user/assistant 被删除；两条 system 与最近两条 conversation 留下。",
+				decision: "system entries 不是普通聊天噪声，不能跟着旧 conversation 一起删。",
+			},
+		],
+	},
+	replace: {
+		name: "同名工具升级：remove + add",
+		hint: "read 的名字不变，但 description/schema 变化；历史必须表达旧协议停止、新协议开始。",
+		actions: [
+			{
+				kind: "system",
+				title: "声明 read v1",
+				explanation: "初始 read 只有 path 参数。",
+				decision: "工具身份不只看 name，model-visible declaration 才是协议。",
+				message: {
+					role: "system",
+					sections: [{ tag: "base", text: "You are a minimal coding agent." }],
+					toolsAdded: [readV1],
+				},
+			},
+			{
+				kind: "system",
+				title: "移除 read v1，再加入 read v2",
+				explanation: "新版 read 增加 startLine，description 也改变。",
+				decision: "同名声明变化必须 remove + add，不能当作引用替换。",
+				message: {
+					role: "system",
+					sections: [],
+					toolsRemoved: ["read"],
+					toolsAdded: [readV2],
+				},
+			},
+			{
+				kind: "request",
+				title: "请求只看见 read v2",
+				explanation: "重放 Map 中最终只有新版声明；历史仍保留升级发生的时刻。",
+				decision: "当前快照可覆盖，历史 entry 不可改写。",
+			},
+		],
+	},
+};
+
+function emptyState() {
+	return {
+		transcript: [],
+		requestCount: 0,
+		cacheStatus: "尚未发请求",
+		lastFingerprint: null,
+		lastRequest: null,
+	};
+}
+
+function snapshot(state) {
+	const replay = replayTranscript(state.transcript);
+	return clone({
+		transcript: state.transcript,
+		replay,
+		systemCount: state.transcript.filter((message) => message.role === "system").length,
+		conversationCount: state.transcript.filter((message) => message.role !== "system").length,
+		requestCount: state.requestCount,
+		cacheStatus: state.cacheStatus,
+		lastRequest: state.lastRequest,
+	});
+}
+
+function applyAction(state, action) {
+	if (action.kind === "system" || action.kind === "message") {
+		state.transcript.push(clone(action.message));
+		return;
+	}
+	if (action.kind === "request") {
+		const replay = replayTranscript(state.transcript);
+		const request = { system: replay.prompt, tools: replay.tools };
+		const fingerprint = JSON.stringify(request);
+		state.requestCount++;
+		state.cacheStatus = state.lastFingerprint === fingerprint
+			? "HIT — system/tool prefix unchanged"
+			: "MISS — first request for this prefix";
+		state.lastFingerprint = fingerprint;
+		state.lastRequest = clone(request);
+		return;
+	}
+	if (action.kind === "trim") {
+		const conversation = state.transcript.filter((message) => message.role !== "system");
+		const kept = new Set(conversation.slice(-action.keepRecent));
+		state.transcript = state.transcript.filter(
+			(message) => message.role === "system" || kept.has(message),
+		);
+	}
+}
+
+function buildTrace(scenario) {
+	const state = emptyState();
+	const traces = [{
+		title: "起点：还没有 transcript",
+		before: null,
+		after: snapshot(state),
+		explanation: scenario.hint,
+		decision: "先观察空历史；后续每一步只追加事实或派生 request snapshot。",
+	}];
+	for (const action of scenario.actions) {
+		const before = snapshot(state);
+		applyAction(state, action);
+		traces.push({
+			title: action.title,
+			before,
+			after: snapshot(state),
+			explanation: action.explanation,
+			decision: action.decision,
+		});
+	}
+	return traces;
+}
+
+const byId = (id) => document.getElementById(id);
+const scenarioSelect = byId("scenario");
+const timeline = byId("timeline");
+let scenarioKey = "evolution";
+let trace = buildTrace(scenarios[scenarioKey]);
+let stepIndex = 0;
+let timer = null;
+
+function json(value) {
+	return JSON.stringify(value, null, 2);
+}
+
+function stopPlayback() {
+	if (timer !== null) clearInterval(timer);
+	timer = null;
+	byId("play").textContent = "▶ 自动播放";
+}
+
+function setStep(nextIndex) {
+	stopPlayback();
+	stepIndex = Math.max(0, Math.min(nextIndex, trace.length - 1));
+	render();
+}
+
+function renderTimeline() {
+	const buttons = trace.map((step, index) => {
+		const button = document.createElement("button");
+		button.textContent = `${String(index).padStart(2, "0")} · ${step.title}`;
+		button.className = index === stepIndex ? "active" : "";
+		button.addEventListener("click", () => setStep(index));
+		return button;
+	});
+	timeline.replaceChildren(...buttons);
+}
+
+function render() {
+	const step = trace[stepIndex];
+	const state = step.after;
+	byId("step-title").textContent = step.title;
+	byId("explanation").textContent = step.explanation;
+	byId("decision").textContent = step.decision;
+	byId("transcript-output").textContent = json(state.transcript);
+	byId("prompt-output").textContent = state.replay.prompt || "(empty system prompt)";
+	byId("tools-output").textContent = json(state.replay.tools);
+	byId("request-output").textContent = state.lastRequest
+		? json(state.lastRequest)
+		: "尚未构造 provider request；当前面板只显示 replay state。";
+	byId("cache-output").textContent = state.cacheStatus;
+	byId("counts-output").textContent = json({
+		systemMessages: state.systemCount,
+		conversationMessages: state.conversationCount,
+		requests: state.requestCount,
+	});
+	byId("before-output").textContent = step.before ? json(step.before) : "(none)";
+	byId("after-output").textContent = json(step.after);
+	byId("count").textContent = `${stepIndex + 1} / ${trace.length}`;
+	byId("prev").disabled = stepIndex === 0;
+	byId("next").disabled = stepIndex === trace.length - 1;
+	byId("play").disabled = stepIndex === trace.length - 1;
+	renderTimeline();
+}
+
+function loadScenario(key) {
+	stopPlayback();
+	scenarioKey = key;
+	trace = buildTrace(scenarios[key]);
+	stepIndex = 0;
+	render();
+}
+
+for (const [key, scenario] of Object.entries(scenarios)) {
+	const option = document.createElement("option");
+	option.value = key;
+	option.textContent = scenario.name;
+	scenarioSelect.append(option);
+}
+scenarioSelect.value = scenarioKey;
+scenarioSelect.addEventListener("change", () => loadScenario(scenarioSelect.value));
+byId("prev").addEventListener("click", () => setStep(stepIndex - 1));
+byId("next").addEventListener("click", () => setStep(stepIndex + 1));
+byId("reset").addEventListener("click", () => setStep(0));
+byId("jump-end").addEventListener("click", () => setStep(trace.length - 1));
+byId("play").addEventListener("click", () => {
+	if (timer !== null) {
+		stopPlayback();
+		return;
+	}
+	byId("play").textContent = "Ⅱ 暂停";
+	timer = setInterval(() => {
+		if (stepIndex >= trace.length - 1) {
+			stopPlayback();
+			render();
+			return;
+		}
+		stepIndex++;
+		render();
+		if (stepIndex >= trace.length - 1) stopPlayback();
+	}, 900);
+});
+document.addEventListener("keydown", (event) => {
+	if (event.key === "ArrowLeft") setStep(stepIndex - 1);
+	if (event.key === "ArrowRight") setStep(stepIndex + 1);
+	if (event.key === " ") {
+		event.preventDefault();
+		byId("play").click();
+	}
+});
+render();
+</script>
+</body>
+</html>
