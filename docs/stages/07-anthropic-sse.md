@@ -3,6 +3,7 @@
 > spec：`docs/specs/2026-10-09-mini-agent-v3-design.md` §5 阶段 7  
 > 计划：`docs/plans/2026-10-13-stage-7-anthropic-sse.md`  
 > 交互图解：[`07-anthropic-sse-explained.html`](07-anthropic-sse-explained.html)
+> 状态机专项模拟：[`07-anthropic-state-machine-explained.html`](07-anthropic-state-machine-explained.html)
 
 ## 这个阶段解决了什么问题
 
