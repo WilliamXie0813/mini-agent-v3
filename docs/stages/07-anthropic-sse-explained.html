@@ -55,7 +55,7 @@ SSE 帧     ── JSON + 协议状态机 ────── AssistantMessageEve
 统一事件   ── core 映射 ────────────── AgentEvent → CLI
 message_stop ── 参数解析 / stopReason ── done → 完整 assistant 入历史</pre>
 	<div class="callout"><span class="tag">先记住这句话</span><p><strong>网络 chunk 不是事件，block 结束不是回复结束，partial 不是可执行参数。</strong>这三个“不是”分别是 SSE 解析器、响应状态机与 core 工具保护存在的理由。</p></div>
-	<p>本页交互是离线教学模拟，不发送 API 请求、不读取 key、不执行真实工具。源码已实现，本地 HTTP 验收已覆盖；<strong>真实 Kimi 联调按你的选择暂缓</strong>，需要之后手动补验。</p>
+	<p>本页交互是离线教学模拟，不发送 API 请求、不读取 key、不执行真实工具。源码已实现，本地 HTTP 验收已覆盖；<strong>真实 Kimi 联调已于 2026-10-14 执行</strong>：流式文本 → read 工具回喂 → 最终总结完整走通，并确认了网关会主动返回 thinking block（适配器显式跳过）。</p>
 </section>
 
 <section id="s1">
@@ -243,13 +243,13 @@ cost:                        未提供 // 不是 0</pre>
 	<details><summary>⑤ 谁该处理 listener reject？</summary><p>这是 UI/持久化交付失败，不是模型网络故障。Agent abort 自己拥有的 run signal，停止无人消费的读取，再保留原异常；provider 不认识 listener，不能把交付失败包装成模型能纠正的错误，也不能向已失败的 listener 补发第二套终止生命周期。</p></details>
 	<details><summary>⑥ 为什么两个工具完成得乱序，发给模型仍有序？</summary><p>tool_execution_end 是实时反馈，toolResult 是模型协议历史。Promise.all 的输入 index 保序；转换器忠实使用历史顺序，不再按时间重新排列。</p></details>
 	<h3>运行与源码导航</h3>
-	<pre>export ANTHROPIC_API_KEY='&lt;your-key&gt;'
-export ANTHROPIC_BASE_URL='https://api.kimi.com/coding/'
-export ANTHROPIC_MODEL='kimi-for-coding'
+	<pre># 方式一：shell 环境变量（优先级更高）
+export ANTHROPIC_API_KEY='&lt;your-key&gt;'
+# 方式二：packages/cli/.env（已 gitignore，Node 内建 loadEnvFile，零依赖）
 pnpm dev
 
-# 未配置 key 会明确失败；不加载 .env，不支持 auth token fallback。</pre>
-	<p><code>pnpm dev</code> 的工作目录是 <code>packages/cli</code>，工具相对路径以它为准。真实补验建议使用自建无敏感目录；不要用验证步骤自动外发仓库代码。请求不发送 thinking 字段，若网关仍返回 thinking block，目前会明确报不支持。</p>
+# 未配置 key 会明确失败；shell 变量优先于 .env，不支持 auth token fallback。</pre>
+	<p><code>pnpm dev</code> 的工作目录是 <code>packages/cli</code>，工具相对路径以它为准。真实补验建议使用自建无敏感目录；不要用验证步骤自动外发仓库代码。请求不发送 thinking 字段；Kimi 实测仍会主动返回 thinking block，适配器<strong>显式跳过</strong>（校验其生命周期，但不进历史、不发事件），正式支持留待后续阶段。</p>
 	<div class="map">
 		<a class="chip" href="../../packages/ai/src/anthropic-messages.ts">消息转换</a>
 		<a class="chip" href="../../packages/ai/src/sse.ts">SSE 解析</a>
@@ -257,7 +257,7 @@ pnpm dev
 		<a class="chip" href="../../packages/ai/src/anthropic.ts">HTTP 泵</a>
 		<a class="chip" href="07-anthropic-sse.md">阶段文档</a>
 	</div>
-	<p class="foot">Pi 对照沿用总设计的 ai/src/types.ts:801；本地 Pi 源码未复核。五份 fixtures 是手写协议样本，不能当作 Kimi 真实录制。真实网关认证、thinking 默认行为与 usage 差异待手动确认。</p>
+	<p class="foot">Pi 对照沿用总设计的 ai/src/types.ts:801；本地 Pi 源码未复核。六份 fixtures 中五份是手写协议样本，thinking.sse 按真实联调响应脱敏（占位符替换），均非原样录制。真实 API 联调已于 2026-10-14 执行：认证、流式文本、read 工具回喂与总结均通过；流中 Ctrl+C 留作 TTY 手动抽查。</p>
 </section>
 <footer>mini-agent-v3 · 阶段 7 · 同一条时间线，四个真实边界。无需外部脚本、字体或网络。</footer>
 </div>
