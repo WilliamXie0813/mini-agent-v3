@@ -38,8 +38,8 @@ describe("real stream protocol through Agent", () => {
 			}
 		});
 		await agent.prompt("go");
-		expect(agent.state.messages.map((m) => m.role)).toEqual(["user", "assistant", "toolResult", "toolResult", "assistant"]);
-		expect(agent.state.messages.slice(2, 4)).toMatchObject([
+		expect(agent.state.messages.map((m) => m.role)).toEqual(["system", "user", "assistant", "toolResult", "toolResult", "assistant"]);
+		expect(agent.state.messages.slice(3, 5)).toMatchObject([
 			{ toolCallId: "c1", isError: name === "truncated" },
 			{ toolCallId: "c2", isError: name === "truncated" },
 		]);
@@ -87,7 +87,7 @@ describe("real stream protocol through Agent", () => {
 		await agent.prompt("go");
 		await agent.waitForIdle();
 		expect(execute).not.toHaveBeenCalled();
-		expect(agent.state.messages).toHaveLength(2);
+		expect(agent.state.messages).toHaveLength(3);
 		expect(agent.state.messages.at(-1)).toMatchObject({
 			stopReason: kind === "abort" ? "aborted" : "error", content: [],
 		});
@@ -102,7 +102,7 @@ describe("real stream protocol through Agent", () => {
 		const failure = new Error("delivery failed");
 		agent.subscribe((event) => { if (event.type === "message_update") throw failure; });
 		await expect(agent.prompt("go")).rejects.toBe(failure);
-		expect(agent.state.messages).toHaveLength(1);
+		expect(agent.state.messages).toHaveLength(2); // system + 已交付的 user
 		expect(agent.state.isStreaming).toBe(false);
 	});
 
@@ -174,7 +174,7 @@ describe("real stream protocol through Agent", () => {
 			await agent.waitForIdle();
 			await vi.waitFor(() => expect(body.locked).toBe(false), { timeout: 500 });
 			expect(events.some((event) => event.type === "agent_end")).toBe(false);
-			expect(agent.state.messages).toHaveLength(1);
+			expect(agent.state.messages).toHaveLength(2); // system + 已交付的 user
 			expect(agent.state.isStreaming).toBe(false);
 		} finally {
 			if (!signal?.aborted) controller.close();

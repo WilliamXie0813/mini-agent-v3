@@ -1,14 +1,16 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { agentLoop } from "../src/agent-loop.ts";
-import { setDefaultStreamFn, createFakeStreamFn, createAssistantMessageEventStream } from "@mini-agent/ai";
-import type { Message, StreamFn, ToolResultMessage } from "@mini-agent/ai";
+import { setDefaultStreamFn, createFakeStreamFn, createAssistantMessageEventStream, createInitialSystemMessage } from "@mini-agent/ai";
+import type { Message, StreamContext, StreamFn, Tool, ToolResultMessage } from "@mini-agent/ai";
 import type { AgentEvent } from "../src/agent-event.ts";
 import type { ToolDef } from "../src/tool.ts";
 
 // 工厂而非共享对象：agentLoop 就地追加 messages（验收要求同一引用），
-// 共享数组会让测试间互相污染。
-const base = () => ({ messages: [] as Message[], system: "you are a test" });
+// 共享数组会让测试间互相污染。阶段 8 起初始 transcript 自带一条 leading system message；
+// 用工具的用例必须把声明写进 transcript——重放结果是本轮可见/可执行工具集的唯一权威。
+const base = (tools: Tool[] = []) =>
+	({ messages: [createInitialSystemMessage("you are a test", tools)!] as Message[] });
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
 	let resolve = () => {};
@@ -23,20 +25,21 @@ describe("agentLoop (stage 1: single round trip)", () => {
 
 	it("appends user then assistant, and stops with stopReason 'stop'", async () => {
 		const messages = await agentLoop({ ...base(), prompt: "hi", streamFn: createFakeStreamFn(["hello from fake"]) });
-		expect(messages).toHaveLength(2);
-		expect(messages[0]).toMatchObject({ role: "user" });
-		expect(messages[1]).toMatchObject({ role: "assistant", stopReason: "stop" });
+		expect(messages).toHaveLength(3);
+		expect(messages[0]).toMatchObject({ role: "system" });
+		expect(messages[1]).toMatchObject({ role: "user" });
+		expect(messages[2]).toMatchObject({ role: "assistant", stopReason: "stop" });
 	});
 
 	it("wraps the prompt as a single text content block", async () => {
 		const messages = await agentLoop({ ...base(), prompt: "ping", streamFn: createFakeStreamFn(["x"]) });
-		expect(messages[0]).toEqual({ role: "user", content: [{ type: "text", text: "ping" }] });
+		expect(messages[1]).toEqual({ role: "user", content: [{ type: "text", text: "ping" }] });
 	});
 
 	it("falls back to the installed default stream fn", async () => {
 		setDefaultStreamFn(createFakeStreamFn(["from slot"]));
 		const messages = await agentLoop({ ...base(), prompt: "hi" });
-		expect(messages[1].content).toEqual([{ type: "text", text: "from slot" }]);
+		expect(messages[2]).toMatchObject({ role: "assistant", content: [{ type: "text", text: "from slot" }] });
 	});
 
 	it("throws a named error when no stream fn is available at all", async () => {
@@ -55,20 +58,25 @@ describe("agentLoop (stage 1: single round trip)", () => {
 	});
 
 	it("returns without touching history when the signal is already aborted", async () => {
-		const messages = await agentLoop({ ...base(), prompt: "hi", signal: AbortSignal.abort(),
+		const initial = base().messages;
+		const messages = await agentLoop({ messages: initial, prompt: "hi", signal: AbortSignal.abort(),
 			streamFn: createFakeStreamFn(["never"]) });
-		expect(messages).toHaveLength(0);
+		// 不是空数组：初始 system transcript 原样保留。
+		expect(messages).toEqual(initial);
+		expect(messages).toHaveLength(1);
 	});
 
 	it("returns without touching history for a whitespace-only prompt", async () => {
-		const messages = await agentLoop({ ...base(), prompt: "   ", streamFn: createFakeStreamFn(["never"]) });
-		expect(messages).toHaveLength(0);
+		const initial = base().messages;
+		const messages = await agentLoop({ messages: initial, prompt: "   ", streamFn: createFakeStreamFn(["never"]) });
+		expect(messages).toEqual(initial);
+		expect(messages).toHaveLength(1);
 	});
 
 	it("still records an assistant message when the model returns empty text", async () => {
 		const messages = await agentLoop({ ...base(), prompt: "hi", streamFn: createFakeStreamFn([""]) });
-		expect(messages).toHaveLength(2);
-		expect(messages[1]).toMatchObject({ role: "assistant", stopReason: "stop" });
+		expect(messages).toHaveLength(3);
+		expect(messages[2]).toMatchObject({ role: "assistant", stopReason: "stop" });
 	});
 });
 
@@ -78,41 +86,47 @@ const echoTool: ToolDef<{ text: string }> = {
 	parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
 	execute: async (p) => ({ content: [{ type: "text", text: p.text }] }),
 };
+// echo 的 model-visible 声明：写进 transcript 的 toolsAdded 用。
+const echoDecl: Tool = {
+	name: echoTool.name,
+	description: echoTool.description,
+	parameters: echoTool.parameters,
+};
 
 describe("agentLoop (stage 2: tool loop)", () => {
 	it("runs a full tool round and ends when the model stops asking for tools", async () => {
 		const messages = await agentLoop({
-			...base(), prompt: "read it", tools: [echoTool],
+			...base([echoDecl]), prompt: "read it", tools: [echoTool],
 			streamFn: createFakeStreamFn([
 				[{ type: "text", text: "looking" }, { type: "toolCall", id: "c1", name: "echo", arguments: { text: "hi" } }],
 				"I saw hi",
 			]),
 		});
-		expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "toolResult", "assistant"]);
+		expect(messages.map((m) => m.role)).toEqual(["system", "user", "assistant", "toolResult", "assistant"]);
 	});
 
 	it("keeps the assistant toolCall message and its result adjacent, in call order", async () => {
 		const messages = await agentLoop({
-			...base(), prompt: "go", tools: [echoTool],
+			...base([echoDecl]), prompt: "go", tools: [echoTool],
 			streamFn: createFakeStreamFn([
 				[{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "first" } },
 					{ type: "toolCall", id: "c2", name: "echo", arguments: { text: "second" } }],
 				"done",
 			]),
 		});
-		expect(messages[2]).toMatchObject({ role: "toolResult", toolCallId: "c1" });
-		expect(messages[3]).toMatchObject({ role: "toolResult", toolCallId: "c2" });
-		expect(messages[4]).toMatchObject({ role: "assistant", stopReason: "stop" });
+		expect(messages[3]).toMatchObject({ role: "toolResult", toolCallId: "c1" });
+		expect(messages[4]).toMatchObject({ role: "toolResult", toolCallId: "c2" });
+		expect(messages[5]).toMatchObject({ role: "assistant", stopReason: "stop" });
 	});
 
 	it("records the intermediate assistant message with stopReason 'toolUse'", async () => {
 		const messages = await agentLoop({
-			...base(), prompt: "go", tools: [echoTool],
+			...base([echoDecl]), prompt: "go", tools: [echoTool],
 			streamFn: createFakeStreamFn([
 				[{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "x" } }], "done",
 			]),
 		});
-		expect(messages[1]).toMatchObject({ role: "assistant", stopReason: "toolUse" });
+		expect(messages[2]).toMatchObject({ role: "assistant", stopReason: "toolUse" });
 	});
 
 	it("does not execute anything when stopReason is 'length' and feeds back one error per call", async () => {
@@ -122,7 +136,7 @@ describe("agentLoop (stage 2: tool loop)", () => {
 			execute: async (p: { text: string }) => { log.push("called"); return echoTool.execute(p); },
 		};
 		const messages = await agentLoop({
-			...base(), prompt: "go", tools: [spy],
+			...base([echoDecl]), prompt: "go", tools: [spy],
 			streamFn: createFakeStreamFn([
 				// length 场景：内容块仍是 toolCall（半截 JSON 被尽力解析出来），但 stopReason 是 length
 				{ content: [{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "a" } },
@@ -132,47 +146,51 @@ describe("agentLoop (stage 2: tool loop)", () => {
 			]),
 		});
 		expect(log).toEqual([]);                                   // 整批不执行
-		expect(messages.slice(2, 4).map((m) => (m as ToolResultMessage).isError)).toEqual([true, true]);
+		expect(messages.slice(3, 5).map((m) => (m as ToolResultMessage).isError)).toEqual([true, true]);
 		expect(messages.at(-1)).toMatchObject({ role: "assistant", stopReason: "stop" }); // 循环继续并收敛
 	});
 
 	it("feeds back an error and lets the model recover from an unknown tool", async () => {
 		const messages = await agentLoop({
-			...base(), prompt: "go", tools: [echoTool],
+			...base([echoDecl]), prompt: "go", tools: [echoTool],
 			streamFn: createFakeStreamFn([
 				[{ type: "toolCall", id: "c1", name: "nope", arguments: {} }], "sorry, retrying",
 			]),
 		});
-		expect(messages[2]).toMatchObject({ role: "toolResult", toolName: "nope", isError: true });
-		expect(messages).toHaveLength(4);
+		expect(messages[3]).toMatchObject({ role: "toolResult", toolName: "nope", isError: true });
+		expect(messages).toHaveLength(5);
 	});
 
 	it("throws a named error when the model keeps calling tools past maxTurns", async () => {
 		await expect(agentLoop({
-			...base(), prompt: "go", tools: [echoTool], maxTurns: 3,
+			...base([echoDecl]), prompt: "go", tools: [echoTool], maxTurns: 3,
 			streamFn: createFakeStreamFn([[{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "x" } }]]),
 		})).rejects.toThrow(/maxTurns/i);
 		await expect(agentLoop({
-			...base(), prompt: "go", tools: [echoTool], maxTurns: 3,
+			...base([echoDecl]), prompt: "go", tools: [echoTool], maxTurns: 3,
 			streamFn: createFakeStreamFn([[{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "x" } }]]),
 		})).rejects.toThrow(/echo/); // 错误信息必须带上模型反复调用的工具名，否则无从排查
 	});
 
 	it("returns immediately for a whitespace-only prompt without touching history", async () => {
-		const messages = await agentLoop({ ...base(), prompt: "  ", tools: [echoTool],
+		const initial = base().messages;
+		const messages = await agentLoop({ messages: initial, prompt: "  ", tools: [echoTool],
 			streamFn: createFakeStreamFn(["never"]) });
-		expect(messages).toHaveLength(0);
+		expect(messages).toEqual(initial);
+		expect(messages).toHaveLength(1);
 	});
 
 	it("returns without touching history when the signal is already aborted", async () => {
-		const messages = await agentLoop({ ...base(), prompt: "go", tools: [echoTool], signal: AbortSignal.abort(),
+		const initial = base().messages;
+		const messages = await agentLoop({ messages: initial, prompt: "go", tools: [echoTool], signal: AbortSignal.abort(),
 			streamFn: createFakeStreamFn(["never"]) });
-		expect(messages).toHaveLength(0);
+		expect(messages).toEqual(initial);
+		expect(messages).toHaveLength(1);
 	});
 
 	it("settles an aborted provider without re-asking the model", async () => {
 		const controller = new AbortController();
-		const messages: Message[] = [];
+		const messages: Message[] = [createInitialSystemMessage("you are a test", [echoDecl])!];
 		const inner = createFakeStreamFn([
 			[{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "x" } }],
 			// 第二轮带 stopReason "length"：走 continue 路径回到循环顶部——abort 检查点就在那里。
@@ -208,9 +226,9 @@ describe("agentLoop (stage 3: streaming)", () => {
 		const messages = await agentLoop({
 			...base(), prompt: "hi", streamFn: createFakeStreamFn(["forty characters long string, give or take"]),
 		});
-		expect(messages).toHaveLength(2);
-		expect(messages[1]).toMatchObject({ role: "assistant" });
-		expect(messages[1].content).toEqual([{ type: "text", text: "forty characters long string, give or take" }]);
+		expect(messages).toHaveLength(3);
+		expect(messages[2]).toMatchObject({ role: "assistant",
+			content: [{ type: "text", text: "forty characters long string, give or take" }] });
 	});
 
 	it("emits every delta in order, and the joined deltas equal the stored text", async () => {
@@ -232,7 +250,7 @@ describe("agentLoop (stage 3: streaming)", () => {
 		expect(deltas).toEqual(["h", "e", "l", "l", "o"]);
 		expect(events.filter((event) => event.type === "message_update"))
 			.toHaveLength(5);
-		const assistant = messages[1];
+		const assistant = messages[2];
 		if (assistant.role !== "assistant")
 			throw new Error("expected assistant message");
 		expect(assistant.content[0]).toEqual({
@@ -367,7 +385,7 @@ describe("agentLoop (stage 4: lifecycle events)", () => {
 	it("emits tool execution before its result message and starts the next turn", async () => {
 		const events: AgentEvent[] = [];
 		await agentLoop({
-			...base(),
+			...base([echoDecl]),
 			prompt: "go",
 			tools: [echoTool],
 			streamFn: createFakeStreamFn([
@@ -433,7 +451,7 @@ describe("agentLoop (stage 4: lifecycle events)", () => {
 			const events: AgentEvent[] = [];
 
 			const messages = await agentLoop({
-				...base(),
+				...base([echoDecl]),
 				prompt: "go",
 				tools: [echoTool],
 				streamFn: (context, signal) => {
@@ -484,7 +502,7 @@ describe("agentLoop (stage 4: lifecycle events)", () => {
 			const endOrder: string[] = [];
 
 			await agentLoop({
-				...base(),
+				...base(tools.map(({ name, description, parameters }) => ({ name, description, parameters }))),
 				prompt: "go",
 				tools,
 				toolExecution: "sequential",
@@ -497,5 +515,88 @@ describe("agentLoop (stage 4: lifecycle events)", () => {
 
 			expect(endOrder).toEqual(["c1", "c2"]);
 		});
+	});
+});
+
+describe("agentLoop (stage 8: transcript replay)", () => {
+	it("derives the provider context from a fresh replay on every round", async () => {
+		const readDecl: Tool = {
+			name: "read", description: "read a file", parameters: { type: "object" },
+		};
+		const echoDecl: Tool = {
+			name: "echo", description: "echo back",
+			parameters: structuredClone(echoTool.parameters),
+		};
+		const messages: Message[] = [
+			createInitialSystemMessage("base prompt", [readDecl])!,
+			{ role: "user", content: [{ type: "text", text: "old" }] },
+			{ role: "assistant", content: [{ type: "text", text: "old reply" }], stopReason: "stop" },
+			{ role: "system", sections: [{ text: "extra" }], toolsRemoved: ["read"], toolsAdded: [echoDecl] },
+		];
+		const contexts: StreamContext[] = [];
+		const inner = createFakeStreamFn([
+			[{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "x" } }],
+			"done",
+		]);
+		const streamFn: StreamFn = (context, signal) => {
+			contexts.push(structuredClone(context));
+			return inner(context, signal);
+		};
+
+		await agentLoop({ messages, prompt: "go", tools: [echoTool], streamFn });
+
+		expect(contexts).toHaveLength(2);
+		// 1. context.system 是累计 snapshot：两条 system entry 的 sections 按序合并，
+		//    toolsAdded 只剩重放后的当前声明。
+		expect(contexts[0]!.system).toEqual({
+			role: "system",
+			sections: [{ text: "base prompt" }, { text: "extra" }],
+			toolsAdded: [echoDecl],
+		});
+		// 2. context.tools 是 toolsAdded/toolsRemoved 之后的当前声明（read 已移除）。
+		expect(contexts[0]!.tools).toEqual([echoDecl]);
+		// 3. context.messages 保留原始多条 system history，供阶段 9 持久化。
+		expect(contexts[0]!.messages.filter((m) => m.role === "system")).toEqual([
+			messages[0], messages[3],
+		]);
+		// 4. 第二轮从当时的 transcript 重新派生：snapshot 相同，messages 多了第一轮的产出。
+		expect(contexts[1]!.system).toEqual(contexts[0]!.system);
+		expect(contexts[1]!.tools).toEqual(contexts[0]!.tools);
+		expect(contexts[1]!.messages).toHaveLength(contexts[0]!.messages.length + 2);
+	});
+
+	it("neither shows nor executes a tool the transcript removed, even with the closure registered", async () => {
+		const execute = vi.fn(echoTool.execute);
+		const registry: ToolDef<any>[] = [{ ...echoTool, execute }];
+		const echoDecl: Tool = {
+			name: "echo", description: "echo back",
+			parameters: structuredClone(echoTool.parameters),
+		};
+		const messages: Message[] = [
+			createInitialSystemMessage("base", [echoDecl])!,
+			{ role: "system", sections: [], toolsRemoved: ["echo"] },
+		];
+		const contexts: StreamContext[] = [];
+		const inner = createFakeStreamFn([
+			[{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "x" } }],
+			"recovered",
+		]);
+		const streamFn: StreamFn = (context, signal) => {
+			contexts.push(structuredClone(context));
+			return inner(context, signal);
+		};
+
+		const result = await agentLoop({ messages, prompt: "go", tools: registry, streamFn });
+
+		// provider 看不见已移除的声明，注册表里的闭包也不被执行。
+		expect(contexts[0]!.tools).toEqual([]);
+		expect(execute).not.toHaveBeenCalled();
+		// 走既有 unknown-tool 的 model-fixable 错误路径，而不是偷偷执行旧闭包。
+		const toolResult = result.find((m) => m.role === "toolResult");
+		expect(toolResult).toMatchObject({ role: "toolResult", isError: true });
+		if (toolResult?.role !== "toolResult") throw new Error("missing tool result");
+		expect(toolResult.content).toEqual([{
+			type: "text", text: expect.stringContaining('Tool "echo" not found'),
+		}]);
 	});
 });

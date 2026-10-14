@@ -19,7 +19,6 @@ class AgentListenerFailure extends Error {
 }
 
 export class Agent {
-	private readonly system: string;
 	private readonly streamFn: StreamFn;
 	private readonly maxTurns?: number;
 	private readonly listeners = new Set<AgentEventListener>();
@@ -33,7 +32,6 @@ export class Agent {
 	private eventTail = Promise.resolve();
 
 	constructor(options: AgentOptions) {
-		this.system = options.system;
 		this.streamFn = options.streamFn ?? getDefaultStreamFn();
 		this.maxTurns = options.maxTurns;
 		this.beforeToolCall = options.beforeToolCall;
@@ -41,6 +39,7 @@ export class Agent {
 		this._state = createAgentState(
 			options.messages ?? [],
 			options.tools ?? [],
+			options.system,
 		);
 	}
 
@@ -70,7 +69,6 @@ export class Agent {
 			await agentLoop({
 				prompt,
 				messages: this._state.messages.slice(),
-				system: this.system,
 				streamFn: this.streamFn,
 				signal,
 				tools: this._state.tools.slice(),

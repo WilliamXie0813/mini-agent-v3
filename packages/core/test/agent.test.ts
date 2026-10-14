@@ -70,11 +70,12 @@ describe("Agent", () => {
 
 		expect(initialMessages).toEqual([]);
 		expect(agent.state.messages.map((message) => message.role)).toEqual([
+			"system",
 			"user",
 			"assistant",
 		]);
 		expect(agent.state.tools).toEqual([echoTool]);
-		expect(listenerStates).toEqual([1, 2]);
+		expect(listenerStates).toEqual([2, 3]);
 	});
 
 	it("emits the complete lifecycle with run-local agent_end messages", async () => {
@@ -125,7 +126,7 @@ describe("Agent", () => {
 		await agent.prompt("two");
 
 		expect(events).toHaveLength(count);
-		expect(agent.state.messages).toHaveLength(4);
+		expect(agent.state.messages).toHaveLength(5);
 	});
 
 	it("does nothing for a whitespace-only prompt", async () => {
@@ -142,7 +143,10 @@ describe("Agent", () => {
 		await agent.prompt("   ");
 
 		expect(events).toEqual([]);
-		expect(agent.state.messages).toEqual([]);
+		// 空白 prompt 不追加任何消息，但初始 system transcript 本来就在。
+		expect(agent.state.messages).toEqual([
+			{ role: "system", sections: [{ text: "test" }] },
+		]);
 	});
 
 	it.each([
@@ -170,7 +174,7 @@ describe("Agent", () => {
 		await agent.waitForIdle();
 		expect(execute).not.toHaveBeenCalled();
 		expect(provider).toHaveBeenCalledTimes(1);
-		expect(agent.state.messages).toHaveLength(2);
+		expect(agent.state.messages).toHaveLength(3);
 		expect(agent.state.messages.at(-1)).toMatchObject({ stopReason: reason });
 		expect(events.filter((event) => event.type === "agent_end")).toHaveLength(1);
 		expect(events.filter((event) => event.type === "turn_end")).toMatchObject([{ toolResults: [] }]);
@@ -196,7 +200,7 @@ describe("Agent", () => {
 
 		await agent.prompt("go");
 
-		expect(agent.state.messages[2]).toMatchObject({
+		expect(agent.state.messages[3]).toMatchObject({
 			role: "toolResult",
 			toolCallId: "c1",
 			isError: false,
@@ -249,12 +253,13 @@ describe("Agent", () => {
 			expect(execute).not.toHaveBeenCalled();
 			expect(modelCalls).toBe(2);
 			expect(agent.state.messages.map((message) => message.role)).toEqual([
+				"system",
 				"user",
 				"assistant",
 				"toolResult",
 				"assistant",
 			]);
-			expect(agent.state.messages[2]).toMatchObject({
+			expect(agent.state.messages[3]).toMatchObject({
 				role: "toolResult",
 				isError: true,
 				content: [{ type: "text", text: "Denied by policy" }],
@@ -263,6 +268,7 @@ describe("Agent", () => {
 				toolCall: { id: "c1", name: "bash" },
 				args: { command: "rm -rf /tmp/nope" },
 				messages: [
+					{ role: "system" },
 					{ role: "user" },
 					{ role: "assistant" },
 				],
@@ -488,7 +494,7 @@ describe("Agent", () => {
 
 			expect(hook).not.toHaveBeenCalled();
 			expect(execute).not.toHaveBeenCalled();
-			const result = agent.state.messages[2];
+			const result = agent.state.messages[3];
 			if (result.role !== "toolResult")
 				throw new Error("expected tool result");
 			expect(textOf(result.content)).toContain(
@@ -645,7 +651,7 @@ describe("Agent", () => {
 
 			await expect(agent.prompt("go")).resolves.toBeUndefined();
 
-			expect(agent.state.messages[2]).toMatchObject({
+			expect(agent.state.messages[3]).toMatchObject({
 				role: "toolResult",
 				isError: true,
 				content: [{
@@ -855,6 +861,7 @@ describe("Agent", () => {
 		await expect(agent.prompt("hi")).resolves.toBeUndefined();
 
 		expect(agent.state.messages.map((message) => message.role)).toEqual([
+			"system",
 			"user",
 			"assistant",
 		]);
@@ -904,16 +911,17 @@ describe("Agent", () => {
 		await agent.prompt("go");
 
 		expect(agent.state.messages.map((message) => message.role)).toEqual([
+			"system",
 			"user",
 			"assistant",
 			"toolResult",
 			"assistant",
 		]);
-		expect(agent.state.messages[2]).toMatchObject({
+		expect(agent.state.messages[3]).toMatchObject({
 			role: "toolResult",
 			isError: true,
 		});
-		expect(agent.state.messages[3]).toMatchObject({
+		expect(agent.state.messages[4]).toMatchObject({
 			role: "assistant",
 			stopReason: "aborted",
 		});
@@ -933,5 +941,56 @@ describe("Agent", () => {
 		expect(firstTurnEnd).toBeGreaterThan(-1);
 		expect(terminalTurnStart).toBeGreaterThan(firstTurnEnd);
 		expect(abortedEnd).toBeGreaterThan(terminalTurnStart);
+	});
+
+	describe("Agent (stage 8: transcript-backed system state)", () => {
+		it("stores one leading system message and never duplicates it across prompts", async () => {
+			const agent = new Agent({
+				system: "base",
+				tools: [echoTool],
+				streamFn: createFakeStreamFn(["one", "two"]),
+			});
+			await agent.prompt("first");
+			await agent.prompt("second");
+			expect(agent.state.messages.filter((message) => message.role === "system"))
+				.toEqual([{
+					role: "system",
+					sections: [{ text: "base" }],
+					toolsAdded: [expect.objectContaining({ name: "echo" })],
+				}]);
+		});
+
+		it("treats an existing system history as authoritative instead of prepending", async () => {
+			const history: Message[] = [
+				{ role: "system", sections: [{ text: "one" }] },
+				{ role: "user", content: [{ type: "text", text: "hi" }] },
+				{ role: "system", sections: [{ text: "two" }], toolsRemoved: ["ghost"] },
+			];
+			const before = structuredClone(history);
+			const contexts: { system: unknown }[] = [];
+			const inner = createFakeStreamFn(["ok"]);
+			const streamFn: StreamFn = (context, signal) => {
+				contexts.push({ system: structuredClone(context.system) });
+				return inner(context, signal);
+			};
+			const agent = new Agent({
+				system: "must not be prepended",
+				messages: history,
+				streamFn,
+			});
+
+			expect(agent.state.messages.filter((m) => m.role === "system")).toHaveLength(2);
+			expect(agent.state.messages[0]).toMatchObject({ sections: [{ text: "one" }] });
+			expect(history).toEqual(before); // 不修改调用方数组
+
+			await agent.prompt("go");
+
+			expect(agent.state.messages.filter((m) => m.role === "system")).toHaveLength(2);
+			// provider 看到的 prompt 来自 transcript 重放，而不是 options.system
+			expect(contexts[0]!.system).toEqual({
+				role: "system",
+				sections: [{ text: "one" }, { text: "two" }],
+			});
+		});
 	});
 });

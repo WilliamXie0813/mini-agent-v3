@@ -1,4 +1,4 @@
-import { getDefaultStreamFn } from "@mini-agent/ai";
+import { getDefaultStreamFn, getCurrentSystemMessage, getCurrentTools, toolDeclarationsEqual } from "@mini-agent/ai";
 import type {
 	Message,
 	StreamContext,
@@ -11,7 +11,6 @@ import {
 	failTruncatedToolCalls,
 } from "./execute-tool-calls.ts";
 import { streamAssistantMessage } from "./stream-assistant.ts";
-import { toToolDeclarations } from "./tool.ts";
 import type {
 	BeforeToolCall,
 	ToolDef,
@@ -20,12 +19,11 @@ import type {
 
 export interface AgentLoopOptions {
 	prompt: string;
-	messages: Message[]; // 已有历史，函数会就地追加
-	system: string; // 本阶段是纯字符串；阶段 8 改为 SystemMessage
+	messages: Message[]; // 完整 transcript（含 system entries），函数会就地追加
 	streamFn?: StreamFn; // 缺省 fallback 到 getDefaultStreamFn()
 	signal?: AbortSignal;
 	emit?: AgentEventSink;
-	tools?: ToolDef<any>[]; // 缺省 []：无工具的调用走一轮就收敛，与阶段 1 行为一致
+	tools?: ToolDef<any>[]; // 执行注册表；缺省 []：无工具的调用走一轮就收敛，与阶段 1 行为一致
 	maxTurns?: number; // 缺省 10：模型反复要工具时的熔断，防止无限烧 token
 	beforeToolCall?: BeforeToolCall;
 	toolExecution?: ToolExecutionMode;
@@ -60,10 +58,19 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 	for (let turn = 0; turn < maxTurns; turn++) {
 		if (turn > 0) await emit({ type: "turn_start" });
 		if (options.signal?.aborted) throw new Error("agent loop aborted");
+		// 每轮都从 transcript 重新重放：system 与工具声明的唯一权威是历史本身。
+		// replay 结果只活在本次请求 context 里，不写回 transcript。
+		const currentSystem = getCurrentSystemMessage(options.messages);
+		const currentTools = getCurrentTools(options.messages);
+		// 注册表只是执行闭包仓库：本轮允许执行的是 transcript 仍声明着的子集——
+		// 已从历史移除的工具即使闭包还在，provider 看不见、也不能执行。
+		const activeTools = tools.filter((tool) =>
+			currentTools.some((declaration) => toolDeclarationsEqual(tool, declaration)),
+		);
 		const context: StreamContext = {
-			system: { role: "system", content: options.system },
+			system: currentSystem,
 			messages: [...options.messages], // 快照：provider 拿到的是本次请求那一刻的历史
-			tools: toToolDeclarations(tools),
+			tools: currentTools,
 		};
 
 		// 只有 done 携带的完整消息才进历史：delta 是传输层的碎块，
@@ -100,7 +107,7 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 				{
 					assistantMessage: message,
 					messages: options.messages,
-					tools,
+					tools: activeTools,
 					signal: options.signal,
 					emit,
 					beforeToolCall: options.beforeToolCall,
