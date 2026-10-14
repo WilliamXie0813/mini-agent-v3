@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { toAnthropicRequest } from "../src/anthropic-messages.ts";
-import type { StreamContext } from "../src/types.ts";
+import {
+	getCurrentSystemMessage,
+	getCurrentTools,
+} from "../src/transcript.ts";
+import type { Message, StreamContext } from "../src/types.ts";
 
 const settings = { model: "test-model", maxTokens: 42 };
 const text = (value: string) => ({ type: "text" as const, text: value });
@@ -12,9 +16,57 @@ function freeze(value: unknown): void {
 }
 
 describe("Anthropic request conversion", () => {
+	it("renders the replayed system snapshot instead of any single history entry", () => {
+		const read = { name: "read", description: "read a file", parameters: { type: "object" } };
+		const edit = { name: "edit", description: "edit a file", parameters: { type: "object" } };
+		const transcript: Message[] = [
+			{ role: "system", sections: [{ text: "base" }], toolsAdded: [read] },
+			{ role: "user", content: [text("go")] },
+			{
+				role: "system",
+				sections: [{ text: "extra" }],
+				toolsRemoved: ["read"],
+				toolsAdded: [edit],
+			},
+		];
+		const context: StreamContext = {
+			system: getCurrentSystemMessage(transcript),
+			messages: transcript,
+			tools: getCurrentTools(transcript),
+		};
+
+		expect(toAnthropicRequest(context, settings)).toMatchObject({
+			system: "base\n\nextra",
+			tools: [{
+				name: "edit",
+				description: "edit a file",
+				input_schema: { type: "object" },
+			}],
+			messages: [{ role: "user", content: [text("go")] }],
+		});
+	});
+
+	it("keeps internal transcript fields out of the wire body", () => {
+		const transcript: Message[] = [
+			{ role: "system", sections: [{ tag: "base", text: "base" }], toolsAdded: [] },
+			{ role: "user", content: [text("go")] },
+			{ role: "system", sections: [{ text: "extra" }], toolsRemoved: ["read"] },
+		];
+		const context: StreamContext = {
+			system: getCurrentSystemMessage(transcript),
+			messages: transcript,
+			tools: getCurrentTools(transcript),
+		};
+		const request = toAnthropicRequest(context, settings);
+		// wire 上只有顶层 system 字符串；sections/toolsAdded/toolsRemoved 是内部 IR，不出站。
+		expect(JSON.stringify(request)).not.toMatch(/sections|toolsAdded|toolsRemoved/);
+		// 多条 system entries 都不进入 wire messages。
+		expect(request.messages).toEqual([{ role: "user", content: [text("go")] }]);
+	});
+
 	it("converts mixed history and groups source-ordered results", () => {
 		const context: StreamContext = {
-			system: { role: "system", content: "current system" },
+			system: { role: "system", sections: [{ text: "current system" }] },
 			messages: [
 				{ role: "user", content: [text("go")] },
 				{ role: "assistant", stopReason: "toolUse", content: [
@@ -52,12 +104,12 @@ describe("Anthropic request conversion", () => {
 
 	it("skips system history and terminal diagnostics on the next prompt", () => {
 		const context: StreamContext = {
-			system: { role: "system", content: "current" }, tools: [],
+			system: { role: "system", sections: [{ text: "current" }] }, tools: [],
 			messages: [
-				{ role: "system", content: "old" },
+				{ role: "system", sections: [{ text: "old" }] },
 				{ role: "user", content: [text("one")] },
 				{ role: "assistant", content: [], stopReason: "error", errorMessage: "HTTP 500" },
-				{ role: "system", content: "also old" },
+				{ role: "system", sections: [{ text: "also old" }], toolsAdded: [] },
 				{ role: "assistant", content: [text("half")], stopReason: "aborted" },
 				{ role: "user", content: [text("two")] },
 			],
@@ -71,7 +123,7 @@ describe("Anthropic request conversion", () => {
 
 	it("rejects non-text tool results instead of inventing a tool_use", () => {
 		expect(() => toAnthropicRequest({
-			system: { role: "system", content: "" }, tools: [],
+			system: { role: "system", sections: [] }, tools: [],
 			messages: [{
 				role: "toolResult", toolCallId: "c1", toolName: "read", isError: false,
 				content: [{ type: "toolCall", id: "c2", name: "bad", arguments: {} }],
@@ -81,7 +133,7 @@ describe("Anthropic request conversion", () => {
 
 	it.each([undefined, "c1", "c2"])("pairs interrupted calls while preserving the recorded result %s", (completed) => {
 		const context: StreamContext = {
-			system: { role: "system", content: "" }, tools: [],
+			system: { role: "system", sections: [] }, tools: [],
 			messages: [
 				{ role: "user", content: [text("go")] },
 				{ role: "assistant", stopReason: "toolUse", content: [

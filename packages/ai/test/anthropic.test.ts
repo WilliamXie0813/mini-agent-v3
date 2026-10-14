@@ -5,7 +5,7 @@ import { AssistantMessageEventStream } from "../src/event-stream.ts";
 import type { StreamContext } from "../src/types.ts";
 
 const context: StreamContext = {
-	system: { role: "system", content: "test system" },
+	system: { role: "system", sections: [{ text: "test system" }] },
 	messages: [{ role: "user", content: [{ type: "text", text: "go" }] }], tools: [],
 };
 const key = "TEST_SECRET_KEY";

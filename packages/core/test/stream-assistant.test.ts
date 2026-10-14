@@ -10,7 +10,7 @@ import type { AgentEvent } from "../src/agent-event.ts";
 
 function streamFor(text: string): AssistantMessageEventStream {
 	return createFakeStreamFn([text], { delayMs: 2 })({
-		system: { role: "system", content: "test" },
+		system: { role: "system", sections: [{ text: "test" }] },
 		messages: [],
 		tools: [],
 	});

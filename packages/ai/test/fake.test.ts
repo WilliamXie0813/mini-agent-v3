@@ -13,7 +13,7 @@ async function run(fn: StreamFn, round = 1): Promise<AssistantMessageEvent[]> {
 	void round;
 	const events: AssistantMessageEvent[] = [];
 	for await (const event of fn({
-		system: { role: "system", content: "s" },
+		system: { role: "system", sections: [{ text: "s" }] },
 		messages: [],
 		tools: [],
 	})) {
@@ -156,7 +156,7 @@ describe("createFakeStreamFn (stage 3: delta sequence)", () => {
 
 	it("hands a partial that is still live, not a frozen snapshot", async () => {
 		const stream = createFakeStreamFn(["abc"], { delayMs: 5 })({
-			system: { role: "system", content: "s" },
+			system: { role: "system", sections: [{ text: "s" }] },
 			messages: [],
 			tools: [],
 		});
@@ -177,7 +177,7 @@ describe("createFakeStreamFn (stage 3: delta sequence)", () => {
 		const controller = new AbortController();
 		const stream = createFakeStreamFn(["abcdef"], { delayMs: 30 })(
 			{
-				system: { role: "system", content: "s" },
+				system: { role: "system", sections: [{ text: "s" }] },
 				messages: [],
 				tools: [],
 			},
@@ -208,7 +208,7 @@ describe("createFakeStreamFn (stage 3: delta sequence)", () => {
 
 	it("emits a terminal even when the signal was already aborted", async () => {
 		const stream = createFakeStreamFn(["never"])({
-			system: { role: "system", content: "" }, messages: [], tools: [],
+			system: { role: "system", sections: [] }, messages: [], tools: [],
 		}, AbortSignal.abort());
 		const types = [];
 		for await (const event of stream) types.push(event.type);
@@ -218,7 +218,7 @@ describe("createFakeStreamFn (stage 3: delta sequence)", () => {
 
 	it("mutates a partial stored before done as later deltas arrive", async () => {
 		const stream = createFakeStreamFn(["ab"], { delayMs: 5 })({
-			system: { role: "system", content: "s" },
+			system: { role: "system", sections: [{ text: "s" }] },
 			messages: [],
 			tools: [],
 		});

@@ -58,7 +58,13 @@ export function toAnthropicRequest(
 	}
 	return {
 		model: options.model, max_tokens: options.maxTokens, stream: true,
-		system: context.system.content, messages,
+		// system 已是调用方重放好的快照：非空 section text 以 "\n\n" 连接，
+		// 与 transcript.ts 的 getCurrentSystemPrompt 规则一致；tag 不渲染。
+		system: context.system.sections
+			.map((section) => section.text)
+			.filter((text) => text !== "")
+			.join("\n\n"),
+		messages,
 		tools: context.tools.map((tool) => ({
 			name: tool.name, description: tool.description,
 			input_schema: structuredClone(tool.parameters),
