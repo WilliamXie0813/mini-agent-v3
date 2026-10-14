@@ -3,6 +3,14 @@ import { Agent, createDefaultTools } from "@mini-agent/core";
 import { createAnthropicStreamFn, setDefaultStreamFn } from "@mini-agent/ai";
 import type { ContentBlock } from "@mini-agent/ai";
 
+// 本地开发的默认配置来自 cwd 的 .env（pnpm dev 时即 packages/cli/.env）。
+// loadEnvFile 不覆盖已有变量——shell 显式设置的 env 优先；没有 .env 不算错误。
+try {
+	process.loadEnvFile();
+} catch (error) {
+	if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+}
+
 // 组装根：cli 是唯一知道用哪个 provider 的地方（spec §3.2a）。
 setDefaultStreamFn(
 	createAnthropicStreamFn({
