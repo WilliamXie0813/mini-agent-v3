@@ -65,11 +65,27 @@ describe("CLI composition root", () => {
 			{ body: await fixture("toolcall") }, { body: await fixture("text") },
 		]);
 		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("mini-agent (stage 7)");
+		expect(result.stdout).toContain("mini-agent (stage 8)");
 		expect(result.stdout).toContain('→ read {"path":"package.json"}');
 		expect(result.stdout).toContain("你好，文件已读。");
 		expect(result.stdout).not.toContain("deterministic fake");
 		expect(result.requests).toHaveLength(2);
+		// 阶段 8：leading system text 与 stage 7 完全一致，但来源是 transcript 重放。
+		expect(result.requests[0]).toMatchObject({
+			system: "You are a minimal teaching agent.",
+		});
+		const wire = result.requests[0] as {
+			messages: { role: string }[];
+			tools: Record<string, unknown>[];
+		};
+		// wire messages 第一条是 user；system entries 不进入 wire messages。
+		expect(wire.messages[0]!.role).toBe("user");
+		expect(wire.messages.every((message) => message.role !== "system")).toBe(true);
+		// 内部 IR 字段不出站；tools 只有 model-visible declaration（无 execute 等运行时键）。
+		expect(JSON.stringify(result.requests[0])).not.toMatch(/sections|toolsAdded|toolsRemoved/);
+		for (const tool of wire.tools) {
+			expect(Object.keys(tool).sort()).toEqual(["description", "input_schema", "name"]);
+		}
 		expect(result.requests[1]).toMatchObject({
 			messages: [{ role: "user" }, { role: "assistant" }, {
 				role: "user", content: [{ type: "tool_result", tool_use_id: "c1",

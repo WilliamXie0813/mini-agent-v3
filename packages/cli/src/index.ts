@@ -94,7 +94,7 @@ rl.on("SIGINT", () => {
 	if (running) agent.abort();
 	else rl.close();
 });
-console.log("mini-agent (stage 7) — type /exit to quit");
+console.log("mini-agent (stage 8) — type /exit to quit");
 
 try {
 	process.stdout.write("> ");

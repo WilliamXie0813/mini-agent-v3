@@ -96,6 +96,30 @@ describe("real stream protocol through Agent", () => {
 		if (body) expect(body.locked).toBe(false);
 	});
 
+	it("keeps the wire system and tool declarations stable across consecutive prompts", async () => {
+		const requests: { system?: string; tools?: unknown; messages?: { role: string }[] }[] = [];
+		vi.stubGlobal("fetch", vi.fn<typeof fetch>(async (_url, init) => {
+			requests.push(JSON.parse(String(init?.body)));
+			return sse(await fixture("text"));
+		}));
+		const agent = new Agent({
+			system: "test",
+			streamFn: createAnthropicStreamFn({ apiKey: "test-key" }),
+		});
+		await agent.prompt("one");
+		await agent.prompt("two");
+
+		expect(requests).toHaveLength(2);
+		// cache 前缀稳定：system 文本与 tool 声明顺序逐字节一致
+		expect(requests[0]!.system).toBe(requests[1]!.system);
+		expect(requests[0]!.tools).toEqual(requests[1]!.tools);
+		// 连续两次 prompt 不新增 system entry
+		expect(agent.state.messages.filter((m) => m.role === "system")).toHaveLength(1);
+		// 第二次请求带更多 conversation history，但仍无 system role 进入 wire messages
+		expect(requests[1]!.messages!.length).toBeGreaterThan(requests[0]!.messages!.length);
+		expect(requests[1]!.messages!.every((m) => m.role !== "system")).toBe(true);
+	});
+
 	it("propagates an update listener rejection without a synthetic provider error", async () => {
 		vi.stubGlobal("fetch", vi.fn(async () => sse(await fixture("text"))));
 		const agent = new Agent({ system: "test", streamFn: createAnthropicStreamFn({ apiKey: "test-key" }) });
