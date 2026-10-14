@@ -55,6 +55,25 @@ SSE 帧     ── JSON + 协议状态机 ────── AssistantMessageEve
 统一事件   ── core 映射 ────────────── AgentEvent → CLI
 message_stop ── 参数解析 / stopReason ── done → 完整 assistant 入历史</pre>
 	<div class="callout"><span class="tag">先记住这句话</span><p><strong>网络 chunk 不是事件，block 结束不是回复结束，partial 不是可执行参数。</strong>这三个“不是”分别是 SSE 解析器、响应状态机与 core 工具保护存在的理由。</p></div>
+	<h3>一帧 SSE 的真实长相</h3>
+	<p>后面所有章节都在处理这样的文本。它只是「键: 值」的行，<strong>空行才是一帧的边界</strong>——这就是“网络 chunk 不是事件”的具体所指：</p>
+	<pre>event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"你好，"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"文件已读。"}}
+
+event: message_stop
+data: {"type":"message_stop"}</pre>
+	<p class="foot">取自 fixtures/text.sse。模型的一句“你好，文件已读。”在 wire 上是三帧：两个文本碎片 + 一个结束信号。</p>
+	<details><summary>名词表（第一次看到再展开）</summary>
+		<p><strong>SSE</strong>（Server-Sent Events）：HTTP 响应体上的一种纯文本流格式，服务器按帧持续推送，本页上图就是它的全部语法。</p>
+		<p><strong>IR</strong>（中间表示）：我们自己定义的消息结构（user / assistant / toolResult），与任何 provider 的协议无关；anthropic-messages.ts 负责 IR ↔ wire 的双向翻译。</p>
+		<p><strong>partial</strong>：还在生长中的半截 assistant 消息，每个 delta 都在原地改它；只供 UI 即时显示，<strong>不进历史、不可执行</strong>。</p>
+		<p><strong>done</strong>：整次回复被证明完整（收到 message_stop）后才发出的终止事件，携带权威完整消息——只有它能进历史。</p>
+		<p><strong>terminal</strong>：done 或 error 的统称；一次请求必须恰好以一个 terminal 收尾。</p>
+		<p><strong>stopReason</strong>：模型为什么停下——stop（说完）/ toolUse（要调工具）/ length（被 max_tokens 截断）/ error / aborted。</p>
+	</details>
 	<p>本页交互是离线教学模拟，不发送 API 请求、不读取 key、不执行真实工具。源码已实现，本地 HTTP 验收已覆盖；<strong>真实 Kimi 联调已于 2026-10-14 执行</strong>：流式文本 → read 工具回喂 → 最终总结完整走通，并确认了网关会主动返回 thinking block（适配器显式跳过）。</p>
 </section>
 
@@ -383,7 +402,7 @@ pnpm dev
 		success: ["done(toolUse)", "2 次；prepare 后并行 execute", "user → assistant(c1,c2) → toolResult(c1) → toolResult(c2)", "按源顺序回喂结果，再问模型。"],
 		length: ["done(length) + 截断诊断", "0 次；整批保护", "user → assistant(length,c1,c2) → isError toolResult(c1) → isError toolResult(c2)", "完整 c1 也不执行；模型看到错误后可重发完整调用。"],
 		eof: ["error(error)；缺少 message_stop", "0 次；不能猜成功", "user → assistant(error, content:[])", "结束 run，不自动重试；下次请求跳过诊断 assistant。"],
-		abort: ["error(aborted)；用户主动停止", "0 次；不执行半截工具", "user → assistant(aborted, content:[])", "关闭生命周期，返回 prompt；half partial 不进历史。"]
+		abort: ["error(aborted)；用户主动停止", "0 次；不执行半截工具", "user → assistant(aborted, content:[])", "关闭生命周期，返回 prompt；半截 partial 不进历史。"]
 	};
 	function renderCase(name) {
 		const value = cases[name];
