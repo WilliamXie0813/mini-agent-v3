@@ -141,9 +141,9 @@ pnpm dev
 
 教学 HTML 的交互测试运行实际脚本，覆盖播放器与两个实验；尚未做真实浏览器视觉验收。CLI 子进程测试确认本地请求与文本/工具往返，不单凭 stdout 分块断言文本一定在响应完成之前到达。
 
-**真实 API 联调未执行。** 用户选择暂不发送真实请求，之后手动补充 API key。不能据此宣称 Kimi 网关兼容性已验证；thinking 字段不发送，但若网关主动返回 thinking block，当前会明确报不支持。不要伪造客户端身份或静默丢弃 thinking 来绕过问题。
+**真实 API 联调已执行（2026-10-14）。** 在只含自建无敏感 `package.json` 的临时目录运行 CLI。已验证：`x-api-key` 认证通过（HTTP 200）；URL 拼接保留 `/coding/` 前缀；usage 携带 cache 子计数字段（该次请求均为 0），`message_delta` 另带 `output_tokens_details.thinking_tokens`（解析器按未知字段忽略）。
 
-**真实补验清单：** 自建无敏感目录中运行 CLI，确认流式文本 → read → 最终总结；流中按 Ctrl+C 确认回到 prompt；记录认证、stop_reason 与 cache usage 差异。发现差异后先补脱敏回归测试再调整实现。
+**确认的网关偏差：Kimi 在未请求 `thinking` 时仍主动返回 thinking 语义块**（index 0 的 `thinking` block + `thinking_delta` + `signature_delta`，正文 text 在 index 1）。适配器按本阶段契约显式报 `unsupported content block 0`，不静默丢弃；已固化脱敏回归样本 `fixtures/thinking.sse`（thinking 内容与签名是占位符，非真实录制值）与对应测试。是否在未来的阶段显式支持跳过 thinking block 留作决策点——本阶段保持严格报错。
 
 ## 实施中明确的取舍
 

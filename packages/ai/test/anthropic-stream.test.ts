@@ -63,6 +63,17 @@ describe("Anthropic response state", () => {
 		}
 	});
 
+	// 真实联调记录：Kimi 网关在未请求 thinking 时仍主动返回 thinking block
+	//（thinking_delta + signature_delta，文本在 index 1）。显式报错，不静默丢弃。
+	it("rejects a proactively returned thinking block with an explicit error", async () => {
+		const { events, message } = await eventsFor(await frames("thinking"));
+		expect(events.filter((e) => e.type === "done")).toHaveLength(0);
+		expect(message).toMatchObject({
+			stopReason: "error", content: [],
+			errorMessage: expect.stringMatching(/unsupported content block 0/),
+		});
+	});
+
 	it("does not finalize or parse arguments until message_stop", async () => {
 		const stream = createAssistantMessageEventStream();
 		const state = createAnthropicStreamState(stream);
