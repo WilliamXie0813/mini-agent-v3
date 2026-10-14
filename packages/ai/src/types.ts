@@ -9,8 +9,19 @@ export type ContentBlock =
 export type StopReason = "pending" | "stop" | "length" | "toolUse" | "error" | "aborted";
 export type Role = "system" | "user" | "assistant" | "toolResult";
 
-// content 现在是 string；阶段 8 改写为增量段落数组（spec §3.2b，路线里唯一一次回头改）。
-export interface SystemMessage { role: "system"; content: string }
+// 阶段 8：system prompt 是 append-only 的增量段落历史（spec §3.2b）。
+// section 只按 transcript 顺序追加，不覆盖旧 section；tag 是元数据，不进 prompt 文本。
+// 工具集变化同样记为历史：toolsAdded/toolsRemoved 是 delta，不是当前全集。
+export interface SystemSection {
+	tag?: string;
+	text: string;
+}
+export interface SystemMessage {
+	role: "system";
+	sections: SystemSection[];
+	toolsAdded?: Tool[];
+	toolsRemoved?: string[];
+}
 export interface UserMessage { role: "user"; content: ContentBlock[] }
 export interface AssistantMessage {
 	role: "assistant";

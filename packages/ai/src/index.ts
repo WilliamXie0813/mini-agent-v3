@@ -8,3 +8,12 @@ export { createFakeStreamFn } from "./fake.ts";
 export { createAnthropicStreamFn } from "./anthropic.ts";
 export type { AnthropicStreamOptions } from "./anthropic.ts";
 export { EventStream, AssistantMessageEventStream, createAssistantMessageEventStream } from "./event-stream.ts";
+export {
+	createInitialSystemMessage,
+	getCurrentSystemMessage,
+	getCurrentSystemPrompt,
+	getCurrentTools,
+	getToolStateChanges,
+	toolDeclarationsEqual,
+} from "./transcript.ts";
+export type { ToolStateChanges } from "./transcript.ts";
