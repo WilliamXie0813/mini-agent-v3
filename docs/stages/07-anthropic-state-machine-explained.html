@@ -76,7 +76,7 @@
 				<div class="card"><h3>③ 执行前</h3><small>上一时刻的独立快照。</small><pre id="before"></pre></div>
 				<div class="card"><h3>④ 执行后</h3><small>partial、blocks 与三个控制状态的真实观察值。</small><pre id="after"></pre></div>
 				<div class="card changed full"><h3>⑤ 这一帧具体改了什么？</h3><small>字段路径：旧值 → 新值。没有变化也会明确显示。</small><pre id="changes"></pre></div>
-				<div class="card"><h3>工具 JSON 缓冲：blocks[index]</h3><small>每个块自己的 open / json / input；文本块不需要参数缓冲。</small><pre id="raw-json"></pre></div>
+				<div class="card"><h3>工具 JSON 缓冲：blocks[index]</h3><small>每个块自己的 open / json / input；文本块不需要参数缓冲；被跳过的 thinking 只有开闭状态。</small><pre id="raw-json"></pre></div>
 				<div class="card"><h3>工具参数：partial.content[index]</h3><small>raw JSON 完整，不代表 arguments 已经可以执行。</small><pre id="parsed-args"></pre></div>
 				<div class="card"><h3>⑥ 本步新发出的事件</h3><small>初始 start 不来自网络 message_start。不是每一帧都会发统一事件。</small><pre id="new-events"></pre></div>
 				<div class="card"><h3>累计事件日志</h3><small>按发出顺序记录；终止最多一次。</small><pre id="all-events"></pre></div>
@@ -111,8 +111,8 @@
 	<h2>把几个容易混淆的边界说清楚</h2>
 	<details><summary>工具 JSON 已完整，为什么 block_stop 时仍不能执行？</summary><p>还不知道整次 stopReason。后面可能出现 max_tokens；本阶段 core 的规则是 length 整批不执行，即使某一个工具参数完整。参数在 message_stop 才解析，工具执行更在状态机之后。</p></details>
 	<details><summary>state.completed 和 stream.end() 是一件事吗？</summary><p>不是。completed 是状态机防止重复终止、继续解析的控制状态；HTTP 泵看到它会停止读帧。stream.end() 是事件流的资源/迭代收尾。本页只模拟前者，没有网络连接或 EventStream 的时钟结算。</p></details>
-	<details><summary>thinking 为什么会报错，而不是跳过？</summary><p>当前 IR 只支持 text / toolCall。thinking 是内容语义，不是 ping。accept 的检查会抛出协议错误；本页模拟 HTTP 泵捕获后调用 fail(error)，产生一个 error terminal。请求省略 thinking 字段，并不保证网关不会返回它。</p></details>
-	<details><summary>两个工具会不会把参数拼到一起？</summary><p>选“文本 + 两个工具”场景，看 index 1、2 各自的 json。contentIndex 同时索引 partial.content 与 blocks，两个数组保持对齐。每个 input_json_delta 只追加到对应 index。</p></details>
+	<details><summary>thinking 为什么显式跳过，而不是报错？</summary><p>2026-10-14 真实联调发现：Kimi 在未请求 thinking 时仍主动返回 thinking 语义块，报错会让正常响应全部失败。当前 IR 没有 thinking 块类型，所以状态机显式跳过：校验它的开闭与 delta 类型（thinking 块里出现 text_delta 仍抛协议错误），但它不进 <code>partial.content</code>、不发事件、对 UI 不可见。这不是静默丢弃——选 thinking 场景可以逐帧看到这个块的生命周期。正式支持留待后续阶段。</p></details>
+	<details><summary>两个工具会不会把参数拼到一起？</summary><p>选“文本 + 两个工具”场景，看 index 1、2 各自的 json。<code>blocks</code> 与 provider 的块序号对齐，每个 input_json_delta 只追加到对应 index。注意 <code>contentIndex</code> 是 wire 上的块序号：有 thinking 被跳过时，<code>partial.content</code> 只收 text / toolCall，两者的下标不再一致——选 thinking 场景看 index 1 的 text 块。</p></details>
 	<details><summary>message_delta 的 usage 为什么不是逐帧累加？</summary><p>输入总量是 uncached + cache read + cache creation。样本中是 10 + 20 + 5 = 35。output_tokens 是累计值，后续帧覆盖，不把旧累计值再相加。本页不计算成本。</p></details>
 	<details><summary>正常完成遇到坏工具 JSON，能不能用 {} 修补？</summary><p>不能。只有 length 场景允许用 {} 保留调用身份，同时记录截断诊断，随后 core 整批判失败。正常 toolUse 下的坏 JSON 必须 error；偷偷用 {} 会把协议失败伪装成可执行调用。</p></details>
 	<details><summary>查看本页实际运行的状态机副本</summary><p>函数来自当前 <code>anthropic-stream.ts</code>，只增加 snapshot getter 以观察闭包变量。上层 buildTrace 冻结每步状态，并模拟 HTTP 泵的错误归一化。若未来源码变化，本页也需要同步更新。</p><pre id="full-core"></pre></details>
@@ -121,7 +121,7 @@
 </main>
 
 <script data-lesson-core>
-// Compiled from packages/ai/src/anthropic-stream.ts; source SHA256: 35ea4c5ffce2930b0c2e45ff88f27d4fca5c3c7c073f262e55c363fa1cfaa33d
+// Compiled from packages/ai/src/anthropic-stream.ts; source SHA256: 058dca214283df0e4681dba278a9d203f0e702028cea34bdb76e7cf083fa8d82
 function check(value, detail) {
     if (!value)
         throw new Error(`Anthropic protocol: ${detail}`);
@@ -140,6 +140,8 @@ function count(value) {
 }
 function createAnthropicStreamState(stream, formatError = (message) => message) {
     const partial = { role: "assistant", content: [], stopReason: "pending" };
+    // blocks 按 provider index 对齐每个 content block；block 为 undefined 表示
+    // 被显式跳过的块（thinking）——参与开闭校验，但不进 partial.content、不发事件。
     const blocks = [];
     let started = false, completed = false;
     let stopReason = "pending";
@@ -154,7 +156,12 @@ function createAnthropicStreamState(stream, formatError = (message) => message) 
             } });
     };
     return {
-        get snapshot() { return structuredClone({ partial, blocks, started, completed, stopReason }); },
+        // 教学快照：剥掉 block 引用避免与 partial.content 重复显示，用 type 标出被跳过的块。
+        get snapshot() {
+            return structuredClone({ partial, started, completed, stopReason,
+                blocks: blocks.map((state) => ({ open: state.open, json: state.json, input: state.input,
+                    type: state.block === undefined ? "thinking（跳过）" : state.block.type })) });
+        },
         get completed() { return completed; },
         fail,
         accept(frame) {
@@ -208,9 +215,9 @@ function createAnthropicStreamState(stream, formatError = (message) => message) 
                 const tools = partial.content.filter((block) => block.type === "toolCall");
                 check(stopReason !== "toolUse" || tools.length > 0, "tool_use without tool blocks");
                 check(stopReason !== "stop" || tools.length === 0, "tool blocks without tool_use");
-                for (let index = 0; index < partial.content.length; index++) {
-                    const block = partial.content[index], state = blocks[index];
-                    if (block.type !== "toolCall")
+                for (let index = 0; index < blocks.length; index++) {
+                    const state = blocks[index], block = state.block;
+                    if (block?.type !== "toolCall")
                         continue;
                     try {
                         block.arguments = state.json === "" ? state.input : object(JSON.parse(state.json));
@@ -229,26 +236,40 @@ function createAnthropicStreamState(stream, formatError = (message) => message) 
             if (type === "content_block_start") {
                 check(index === blocks.length, `duplicate or out-of-order block ${index}`);
                 const block = object(event.content_block);
+                // 网关可能未请求也返回 thinking（Kimi 实测如此）。显式跳过：
+                // 校验其 delta 与闭合，但不映射为内容——IR 本阶段没有 thinking 块类型。
+                if (block.type === "thinking") {
+                    blocks.push({ open: true, json: "", input: {} });
+                    return;
+                }
                 let input = {};
+                let content;
                 if (block.type === "text") {
-                    partial.content.push({ type: "text", text: string(block.text) });
+                    content = { type: "text", text: string(block.text) };
                 }
                 else {
                     check(block.type === "tool_use", `unsupported content block ${index}`);
                     const id = string(block.id, true), name = string(block.name, true);
                     check(!partial.content.some((c) => c.type === "toolCall" && c.id === id), "duplicate tool id");
                     input = object(block.input);
-                    partial.content.push({ type: "toolCall", id, name, arguments: {} });
+                    content = { type: "toolCall", id, name, arguments: {} };
                 }
-                blocks.push({ open: true, json: "", input });
-                stream.push({ type: block.type === "text" ? "text_start" : "toolcall_start", contentIndex: index, partial });
+                partial.content.push(content);
+                blocks.push({ open: true, json: "", input, block: content });
+                stream.push({ type: content.type === "text" ? "text_start" : "toolcall_start", contentIndex: index, partial });
                 return;
             }
-            const block = partial.content[index], state = blocks[index];
+            const state = blocks[index];
             check(state?.open, `missing or closed block ${index}`);
+            const block = state.block;
             if (type === "content_block_stop") {
                 state.open = false;
-                stream.push({ type: block.type === "text" ? "text_end" : "toolcall_end", contentIndex: index, partial });
+                if (block)
+                    stream.push({ type: block.type === "text" ? "text_end" : "toolcall_end", contentIndex: index, partial });
+            }
+            else if (!block) {
+                const delta = object(event.delta);
+                check(delta.type === "thinking_delta" || delta.type === "signature_delta", `invalid delta at block ${index}`);
             }
             else {
                 const delta = object(event.delta);
@@ -634,14 +655,14 @@ const scenarios = {
     ]
   },
   "thinking": {
-    "name": "thinking：不支持的语义块",
-    "hint": "不是静默忽略：content_block_start 的校验抛错，HTTP 泵归一为一个 error terminal。",
+    "name": "thinking：显式跳过的语义块",
+    "hint": "Kimi 未请求也返回 thinking。状态机校验它的 delta 与闭合，但不进 partial.content、不发事件——正文 text 在 index 1，最终照常 done。",
     "actions": [
       {
         "kind": "frame",
         "frame": {
           "event": "message_start",
-          "data": "{\"type\":\"message_start\",\"message\":{\"id\":\"msg_tool\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"test\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0,\"cache_read_input_tokens\":20,\"cache_creation_input_tokens\":5}}}"
+          "data": "{\"type\":\"message_start\",\"message\":{\"id\":\"msg_thinking\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"test\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0,\"cache_read_input_tokens\":20,\"cache_creation_input_tokens\":5}}}"
         }
       },
       {
@@ -649,6 +670,62 @@ const scenarios = {
         "frame": {
           "event": "content_block_start",
           "data": "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_delta",
+          "data": "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"先理清思路……\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_delta",
+          "data": "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig_占位符\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_stop",
+          "data": "{\"type\":\"content_block_stop\",\"index\":0}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_start",
+          "data": "{\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_delta",
+          "data": "{\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"你好。\"}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "content_block_stop",
+          "data": "{\"type\":\"content_block_stop\",\"index\":1}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_delta",
+          "data": "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}"
+        }
+      },
+      {
+        "kind": "frame",
+        "frame": {
+          "event": "message_stop",
+          "data": "{\"type\":\"message_stop\"}"
         }
       }
     ]
@@ -736,12 +813,12 @@ const branches = {
 		'const partial = { role: "assistant", content: [], stopReason: "pending" };\nconst blocks = [];\nlet started = false, completed = false;\nlet stopReason = "pending";\nstream.push({ type: "start", partial });'],
 	message_start: ["初始化 usage / started", "没有第二个 start 事件。输入 token 包括两种缓存计数，输出从累计起点开始。",
 		"partial.usage = {\n  inputTokens: count(usage.input_tokens) + read + write,\n  outputTokens: count(usage.output_tokens),\n  cacheReadTokens: read, cacheWriteTokens: write,\n};\nstarted = true;"],
-	content_block_start: ["创建内容块，并让两个数组 index 对齐", "text 块保存文本；tool_use 块只先保存 id/name，arguments 暂时为 {}。thinking 等不支持的块会报错。",
-		'check(index === blocks.length, "duplicate or out-of-order block");\n// text → { type: "text", text }\n// tool_use → { type: "toolCall", id, name, arguments: {} }\nblocks.push({ open: true, json: "", input });\n// push text_start 或 toolcall_start'],
-	content_block_delta: ["只更新这个 index 的文本或 JSON buffer", "input_json_delta 只是字符串片段。不要在每次 delta 都 JSON.parse，也不要跨工具混用 buffer。",
-		'check(state?.open, "missing or closed block");\nif (block.type === "text") block.text += value;\nelse state.json += value;\n// push text_delta 或 toolcall_delta'],
-	content_block_stop: ["关闭一个内容块，不结束整次响应", "open 从 true 变 false。即使 json 已经完整，toolcall_end 时仍没有解析 arguments，也没有执行工具。",
-		'state.open = false;\nstream.push({\n  type: block.type === "text" ? "text_end" : "toolcall_end",\n  contentIndex: index, partial,\n});'],
+	content_block_start: ["创建内容块，blocks 与 provider index 对齐", "text 块保存文本；tool_use 块只先保存 id/name，arguments 暂时为 {}。thinking 块显式跳过：占位参与开闭校验，但不进 content、不发事件；其余未知块仍报协议错误。",
+		'check(index === blocks.length, "duplicate or out-of-order block");\nif (block.type === "thinking") {\n  blocks.push({ open: true, json: "", input: {} }); // 跳过\n  return;\n}\n// text → { type: "text", text }\n// tool_use → { type: "toolCall", id, name, arguments: {} }\nblocks.push({ open: true, json: "", input, block: content });\n// push text_start 或 toolcall_start'],
+	content_block_delta: ["只更新这个 index 的文本或 JSON buffer", "input_json_delta 只是字符串片段。不要在每次 delta 都 JSON.parse，也不要跨工具混用 buffer。被跳过的 thinking 只校验 delta 类型，不累积、不发事件。",
+		'check(state?.open, "missing or closed block");\nif (!state.block) {\n  // thinking：只接受 thinking_delta / signature_delta\n} else if (block.type === "text") block.text += value;\nelse state.json += value;\n// push text_delta 或 toolcall_delta'],
+	content_block_stop: ["关闭一个内容块，不结束整次响应", "open 从 true 变 false。即使 json 已经完整，toolcall_end 时仍没有解析 arguments，也没有执行工具。被跳过的块静默闭合，不发 end 事件。",
+		'state.open = false;\nif (block) stream.push({\n  type: block.type === "text" ? "text_end" : "toolcall_end",\n  contentIndex: index, partial,\n});'],
 	message_delta: ["记录停止原因与累计输出用量", "局部 stopReason 更新，partial.stopReason 仍是 pending。completed 仍 false：必须继续等 message_stop。",
 		'stopReason = reason === "tool_use" ? "toolUse"\n  : reason === "max_tokens" ? "length" : "stop";\npartial.usage.outputTokens = count(event.usage.output_tokens);'],
 	message_stop: ["整次响应完成：检查、解析参数、done", "此时才解析工具 JSON。正常完成的坏 JSON 报错；length 可保留调用身份并标记截断，core 整批不执行。",
@@ -806,7 +883,7 @@ function render() {
 		? "创建 partial、blocks、started、completed、stopReason；立即发出一个 start。"
 		: differences(trace.before, snapshot).join("\n\n") || "本帧没有改变状态。";
 	$("raw-json").textContent = snapshot.blocks.length ? pretty(snapshot.blocks.map((block, index) => ({
-		index, type: snapshot.partial.content[index].type, open: block.open,
+		index, type: block.type, open: block.open,
 		json: block.json, input: block.input,
 	}))) : "尚未创建内容块。";
 	const tools = snapshot.partial.content.flatMap((block, index) => block.type === "toolCall"

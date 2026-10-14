@@ -9,7 +9,7 @@ import type { SseFrame } from "../src/sse.ts";
 type Action = { kind: "frame"; frame: SseFrame } | { kind: "eof" | "abort" };
 type Snapshot = {
 	partial: AssistantMessage;
-	blocks: { open: boolean; json: string; input: Record<string, unknown> }[];
+	blocks: { open: boolean; json: string; input: Record<string, unknown>; type: string }[];
 	started: boolean; completed: boolean; stopReason: StopReason;
 };
 type Trace = {
@@ -69,7 +69,7 @@ describe("state-machine teaching simulation", () => {
 		["length", "done", "length"],
 		["eof", "error", "error"],
 		["abort", "error", "aborted"],
-		["thinking", "error", "error"],
+		["thinking", "done", "stop"],
 		["badJson", "error", "error"],
 	] as const)("shows the actual %s terminal and matches production at every step", async (key, terminalType, reason) => {
 		const { lesson } = await page();
@@ -103,7 +103,7 @@ describe("state-machine teaching simulation", () => {
 		if (terminalType === "error") expect(message.content).toEqual([]);
 		if (key === "text") expect(message.content[0]).toMatchObject({ type: "text" });
 		if (key === "length") expect(message.errorMessage).toMatch(/truncated/i);
-		if (key === "thinking") expect(message.errorMessage).toMatch(/unsupported content block/i);
+		if (key === "thinking") expect(message.content).toEqual([{ type: "text", text: "你好。" }]);
 		if (key === "badJson") expect(message.errorMessage).toMatch(/invalid tool JSON/i);
 	});
 
