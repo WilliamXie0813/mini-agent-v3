@@ -2,6 +2,7 @@ import { getDefaultStreamFn } from "@mini-agent/ai";
 import type { AssistantMessage, Message, StreamFn, SystemSection } from "@mini-agent/ai";
 import { agentLoop } from "./agent-loop.ts";
 import type { AgentOptions } from "./agent-options.ts";
+import type { PrepareRequest } from "./agent-options.ts";
 import type { AgentEvent, AgentEventListener } from "./agent-event.ts";
 import { appendSystemSections, createAgentState, reduceAgentState, replaceAgentTools } from "./agent-state.ts";
 import type { AgentState } from "./agent-state.ts";
@@ -30,6 +31,8 @@ export class Agent {
 	private readonly listeners = new Set<AgentEventListener>();
 	private readonly _state: AgentState;
 	public beforeToolCall?: BeforeToolCall;
+	// 与 beforeToolCall 同为可替换 seam（阶段 10 的阈值压缩由 AgentSession 挂在这里）。
+	public prepareRequest?: PrepareRequest;
 	public toolExecution: ToolExecutionMode;
 	private activeRun?: ActiveRun;
 	private runMessages: Message[] = [];
@@ -51,6 +54,7 @@ export class Agent {
 			}
 			: undefined;
 		this.beforeToolCall = options.beforeToolCall;
+		this.prepareRequest = options.prepareRequest;
 		this.toolExecution = options.toolExecution ?? "parallel";
 		this._state = createAgentState(
 			options.messages ?? [],
@@ -98,6 +102,8 @@ export class Agent {
 		if (prompt.trim() === "") return;
 
 		await this.runWithLifecycle(async (signal) => {
+			// hook failure 与 listener failure 同为基础设施失败：原样冒泡，不合成 error 消息。
+			const prepareRequest = this.prepareRequest;
 			await agentLoop({
 				prompt,
 				messages: this._state.messages.slice(),
@@ -108,6 +114,15 @@ export class Agent {
 				beforeToolCall: this.beforeToolCall,
 				toolExecution: this.toolExecution,
 				commitToolIntent: this.commitToolIntent,
+				prepareRequest: prepareRequest
+					? async (input) => {
+						try {
+							return await prepareRequest(input);
+						} catch (error) {
+							throw new AgentInfrastructureFailure(error);
+						}
+					}
+					: undefined,
 				emit: (event) => this.processEvents(event),
 			});
 		});

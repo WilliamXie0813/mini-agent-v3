@@ -600,3 +600,71 @@ describe("agentLoop (stage 8: transcript replay)", () => {
 		}]);
 	});
 });
+
+describe("agentLoop (stage 10: prepareRequest)", () => {
+	it("prepares the final context immediately before streaming", async () => {
+		const calls: string[] = [];
+		const contexts: StreamContext[] = [];
+		const inner = createFakeStreamFn([
+			[{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "hi" } }],
+			"final answer",
+		]);
+		const streamFn: StreamFn = (context, signal) => {
+			calls.push("streamFn");
+			contexts.push(structuredClone(context));
+			return inner(context, signal);
+		};
+		const messages = await agentLoop({
+			...base([echoDecl]), prompt: "go", tools: [echoTool], streamFn,
+			prepareRequest: ({ context }) => {
+				calls.push("prepareRequest");
+				return {
+					...context,
+					messages: [
+						...context.messages,
+						{ role: "user", content: [{ type: "text", text: "prepared" }] },
+					],
+				};
+			},
+		});
+
+		// 每个 provider turn 调一次：prepareRequest 先于 streamFn，streamFn 只见替换后 context。
+		expect(calls).toEqual([
+			"prepareRequest", "streamFn", "prepareRequest", "streamFn",
+		]);
+		expect(contexts).toHaveLength(2);
+		for (const context of contexts) {
+			const last = context.messages.at(-1)!;
+			expect(last.role === "user" && last.content
+				.some((block) => block.type === "text" && block.text === "prepared"))
+				.toBe(true);
+		}
+		// 注入只活在请求 context：transcript 不被 prepared 污染。
+		expect(messages.filter((message) =>
+			message.role === "user" && message.content
+				.some((block) => block.type === "text" && block.text === "prepared")
+		)).toHaveLength(0);
+		// prepared context 仍声明 echo → 工具正常执行。
+		expect(messages.some((message) =>
+			message.role === "toolResult" && !message.isError
+		)).toBe(true);
+	});
+
+	it("only executes tools still declared by the prepared context", async () => {
+		const execute = vi.fn(echoTool.execute);
+		const messages = await agentLoop({
+			...base([echoDecl]), prompt: "go",
+			tools: [{ ...echoTool, execute }],
+			streamFn: createFakeStreamFn([
+				[{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "hi" } }],
+				"stopped",
+			]),
+			// prepared context 移除了 echo 声明：注册表里闭包还在，也不许执行。
+			prepareRequest: ({ context }) => ({ ...context, tools: [] }),
+		});
+		expect(execute).not.toHaveBeenCalled();
+		expect(messages.some((message) =>
+			message.role === "toolResult" && message.isError
+		)).toBe(true);
+	});
+});

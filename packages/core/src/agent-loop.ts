@@ -6,6 +6,7 @@ import type {
 	ToolResultMessage,
 } from "@mini-agent/ai";
 import type { AgentEventSink } from "./agent-event.ts";
+import type { PrepareRequest } from "./agent-options.ts";
 import {
 	executeToolCalls,
 	failTruncatedToolCalls,
@@ -29,6 +30,7 @@ export interface AgentLoopOptions {
 	beforeToolCall?: BeforeToolCall;
 	toolExecution?: ToolExecutionMode;
 	commitToolIntent?: CommitToolIntent;
+	prepareRequest?: PrepareRequest;
 }
 
 // 提前返回都在构造 user 消息之前（阶段 1 的约定，不要动）：已中止的 signal 不产生半条消息；
@@ -42,6 +44,8 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 	const tools = options.tools ?? [];
 	const maxTurns = options.maxTurns ?? 10;
 	const emit = options.emit ?? (() => {});
+	// PrepareRequestContext.signal 是必需字段；调用方没给 signal 时用永不可中止的占位。
+	const runSignal = new AbortController().signal;
 	const newMessages: Message[] = [];
 
 	const userMessage: Message = {
@@ -64,21 +68,25 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 		// replay 结果只活在本次请求 context 里，不写回 transcript。
 		const currentSystem = getCurrentSystemMessage(options.messages);
 		const currentTools = getCurrentTools(options.messages);
-		// 注册表只是执行闭包仓库：本轮允许执行的是 transcript 仍声明着的子集——
-		// 已从历史移除的工具即使闭包还在，provider 看不见、也不能执行。
-		const activeTools = tools.filter((tool) =>
-			currentTools.some((declaration) => toolDeclarationsEqual(tool, declaration)),
-		);
 		const context: StreamContext = {
 			system: currentSystem,
 			messages: [...options.messages], // 快照：provider 拿到的是本次请求那一刻的历史
 			tools: currentTools,
 		};
 
+		// 调用模型前的最后替换缝（阶段 10）：hook 之后本轮可执行工具
+		// 以 prepared context 的声明为准——被 hook 移除的工具即使有闭包也不执行。
+		const prepared = options.prepareRequest
+			? await options.prepareRequest({ context, signal: options.signal ?? runSignal })
+			: context;
+		const activeTools = tools.filter((tool) =>
+			prepared.tools.some((declaration) => toolDeclarationsEqual(tool, declaration)),
+		);
+
 		// 只有 done 携带的完整消息才进历史：delta 是传输层的碎块，
 		// 一次响应的 40 个 delta 共同描述的是 1 条 assistant 消息（spec §5 阶段 3）。
 		const message = await streamAssistantMessage(
-			streamFn(context, options.signal),
+			streamFn(prepared, options.signal),
 			emit,
 		);
 		options.messages.push(message);

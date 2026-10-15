@@ -6,27 +6,32 @@ import {
 } from "@mini-agent/ai";
 import type {
 	Message,
+	StreamContext,
 	StreamFn,
 	SystemMessage,
 	SystemSection,
 } from "@mini-agent/ai";
 import { Agent } from "./agent.ts";
-import type { AgentOptions } from "./agent-options.ts";
+import type { AgentOptions, PrepareRequestContext } from "./agent-options.ts";
 import type {
 	AgentEvent,
 	AgentEventListener,
 } from "./agent-event.ts";
 import type { AgentState } from "./agent-state.ts";
 import {
-	DEFAULT_COMPACTION_SETTINGS,
+	estimateContextTokens,
 	generateCompactionSummary,
+	normalizeCompactionOptions,
 	prepareCompaction,
+	shouldCompact,
 } from "./compaction.ts";
+import type { CompactionSettings } from "./compaction.ts";
 import { SessionJournal } from "./session-journal.ts";
 import { recoverInterruptedTools } from "./session-recovery.ts";
 import {
 	messagesFromSessionPath,
 	projectSessionContext,
+	streamContextFromSessionPath,
 } from "./session-context.ts";
 import type {
 	CompactionReason,
@@ -42,9 +47,13 @@ import type {
 
 export type AgentSessionOptions = Omit<
 	AgentOptions,
-	"messages" | "commitToolIntent"
+	// prepareRequest / recoverContextOverflow 是内部所有权 hook：
+	// 绕过它们就绕过了 journal 编排，调用方不得注入。
+	"messages" | "commitToolIntent" | "prepareRequest" | "recoverContextOverflow"
 > & {
 	directory?: string;
+	contextWindow?: number;
+	compaction?: Partial<CompactionSettings>;
 };
 
 export type OpenAgentSessionOptions = AgentSessionOptions & {
@@ -56,6 +65,8 @@ export class AgentSession {
 	private readonly options: AgentSessionOptions;
 	// 普通 Agent 请求与 summarization 共用同一份引用——摘要路径不悄悄换 provider。
 	private readonly streamFn: StreamFn;
+	private readonly contextWindow: number;
+	private readonly compactionSettings: CompactionSettings;
 	private agent: Agent;
 	private readonly listeners = new Set<AgentEventListener>();
 	private readonly submissions = new Map<
@@ -73,6 +84,9 @@ export class AgentSession {
 	private activeSubmission?: SessionEntryOf<"submission">;
 	private currentAssistantEntryId?: string;
 	private operation?: Promise<void>;
+	// threshold/overflow 压缩发生在 active run 内，不能当场替换 this.agent；
+	// 标记后由 runSubmission 在旧 Agent 完全 settle 后重建。
+	private compactionPendingRebuild = false;
 
 	private constructor(
 		journal: SessionJournal,
@@ -81,6 +95,12 @@ export class AgentSession {
 	) {
 		this.journal = journal;
 		this.streamFn = options.streamFn ?? getDefaultStreamFn();
+		const compaction = normalizeCompactionOptions(
+			options.contextWindow,
+			options.compaction,
+		);
+		this.contextWindow = compaction.contextWindow;
+		this.compactionSettings = compaction.settings;
 		this.options = {
 			...options,
 			streamFn: this.streamFn,
@@ -232,6 +252,7 @@ export class AgentSession {
 		return this.runExclusive("compact", async () => {
 			const entry = await this.compactInternal("manual");
 			if (entry) {
+				this.compactionPendingRebuild = false;
 				this.agent = this.createAgent(
 					messagesFromSessionPath(this.journal.pathTo()),
 				);
@@ -250,7 +271,7 @@ export class AgentSession {
 		const projection = projectSessionContext(this.journal.pathTo());
 		const preparation = prepareCompaction(
 			projection,
-			DEFAULT_COMPACTION_SETTINGS.keepRecentTurns,
+			this.compactionSettings.keepRecentTurns,
 		);
 		if (!preparation) return undefined;
 		await this.deliverEvent({
@@ -271,6 +292,7 @@ export class AgentSession {
 				firstKeptEntryId: preparation.firstKeptEntryId,
 				tokensBefore: preparation.tokensBefore,
 			});
+			this.compactionPendingRebuild = true;
 			await this.deliverEvent({
 				type: "compaction_end",
 				reason,
@@ -300,9 +322,28 @@ export class AgentSession {
 			...this.options,
 			messages,
 			commitToolIntent: (context) => this.commitToolIntent(context),
+			prepareRequest: (input) => this.prepareRequest(input),
 		});
 		agent.subscribe((event) => this.deliverEvent(event));
 		return agent;
+	}
+
+	// 阈值路径：忽略传入的 raw conversation，从 journal 重新投影——
+	// run 内 threshold 压缩后，后续 turn 立刻看到压缩结果与最新历史。
+	// enabled:false 只关这条自动路径；手动 compact() 与 overflow 恢复不受影响。
+	private async prepareRequest(
+		input: PrepareRequestContext,
+	): Promise<StreamContext> {
+		const path = this.journal.pathTo();
+		const tokens = estimateContextTokens(projectSessionContext(path));
+		if (
+			shouldCompact(tokens, this.contextWindow, this.compactionSettings)
+		) {
+			await this.compactInternal("threshold", input.signal);
+			// 无 eligible prefix 时 compaction 是 no-op，返回未压缩 context，不循环。
+			return streamContextFromSessionPath(this.journal.pathTo());
+		}
+		return streamContextFromSessionPath(path);
 	}
 
 	private async runSubmission(input: {
@@ -323,6 +364,14 @@ export class AgentSession {
 				await this.agent.prompt(input.prompt);
 				return submission;
 			} finally {
+				// run 内压缩只 append entry；旧 Agent 的 state 仍是压缩前 transcript，
+				// settle 后从 durable projection 重建，下一次操作看到压缩后的上下文。
+				if (this.compactionPendingRebuild) {
+					this.compactionPendingRebuild = false;
+					this.agent = this.createAgent(
+						messagesFromSessionPath(this.journal.pathTo()),
+					);
+				}
 				this.activeSubmission = undefined;
 				this.currentAssistantEntryId = undefined;
 				this.intents.clear();

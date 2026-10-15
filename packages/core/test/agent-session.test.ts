@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createAssistantMessageEventStream, createFakeStreamFn } from "@mini-agent/ai";
-import type { Message, StreamContext, StreamFn } from "@mini-agent/ai";
+import type { Message, StreamContext, StreamFn, Usage } from "@mini-agent/ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../src/agent-session.ts";
 import type { AgentEvent } from "../src/agent-event.ts";
@@ -1012,3 +1012,178 @@ describe("AgentSession compaction", () => {
 const sessionStreamFnStub: StreamFn = () => {
 	throw new Error("unexpected provider call");
 };
+
+describe("AgentSession threshold compaction", () => {
+	function isSummarization(context: StreamContext): boolean {
+		return context.system.sections
+			.some((s) => s.text.startsWith("Summarize the earlier"));
+	}
+
+	function doneStream(textValue: string, usage?: Usage) {
+		const stream = createAssistantMessageEventStream();
+		stream.push({
+			type: "done",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: textValue }],
+				stopReason: "stop",
+				...(usage ? { usage } : {}),
+			},
+		});
+		stream.end();
+		return stream;
+	}
+
+	it("automatically compacts before an over-threshold request", async () => {
+		const contexts: StreamContext[] = [];
+		const events: AgentEvent[] = [];
+		const inner = createFakeStreamFn([
+			"answer-1 " + "y".repeat(91),
+			"answer-2 " + "y".repeat(91),
+			"answer-3 " + "y".repeat(91),
+		]);
+		const streamFn: StreamFn = (context, signal) => {
+			if (isSummarization(context)) return doneStream("condensed earlier work");
+			contexts.push(structuredClone(context));
+			return inner(context, signal);
+		};
+		const session = await AgentSession.create({
+			directory: await temporaryDirectory(), system: "base", streamFn,
+			contextWindow: 100, compaction: { reserveTokens: 20, keepRecentTurns: 2 },
+		});
+		session.subscribe((event) => {
+			events.push(event);
+		});
+
+		// 每轮 25+25 tokens：r1 估 26，r2 估 76（≤ 80 不压），r3 估 126 > 80 → 压。
+		await session.submit({ requestId: "r1", prompt: "prompt-1 " + "x".repeat(91) });
+		await session.submit({ requestId: "r2", prompt: "prompt-2 " + "x".repeat(91) });
+		expect(session.entries.some((entry) => entry.type === "compaction")).toBe(false);
+		const bytesBefore = await readFile(session.filePath, "utf8");
+
+		await session.submit({ requestId: "r3", prompt: "prompt-3 " + "x".repeat(91) });
+
+		// 正式请求前已 append compaction（reason=threshold）。
+		const compaction = session.entries.find((entry) => entry.type === "compaction");
+		expect(compaction).toBeDefined();
+		expect(compaction!.type === "compaction" && compaction!.reason)
+			.toBe("threshold");
+		// 正式 context = 正确 system + summary + retained tail + 当前 submission；
+		// 被摘要的 raw prefix（prompt-1）不在其中。
+		expect(contexts).toHaveLength(3);
+		const third = contexts[2]!;
+		expect(third.system.sections).toEqual([{ text: "base" }]);
+		const roles = third.messages.map((message) => message.role);
+		expect(roles).toEqual([
+			"system", "user", "assistant", "user", "assistant", "user",
+		]);
+		const texts = third.messages.map((message) => text(message));
+		expect(texts[1]).toContain("condensed earlier work");
+		expect(texts[1]).toContain("<summary>");
+		expect(texts.join(" ")).not.toContain("prompt-1");
+		expect(texts.join(" ")).toContain("prompt-2");
+		expect(texts.at(-1)).toContain("prompt-3");
+
+		// 事件顺序：agent_start/turn_start → user message → compaction → assistant。
+		const lastRun = events.map((event) => event.type)
+			.slice(events.map((event) => event.type).lastIndexOf("agent_start"));
+		expect(lastRun.slice(0, 7)).toEqual([
+			"agent_start", "turn_start", "message_start", "message_end",
+			"compaction_start", "compaction_end", "message_start",
+		]);
+		const start = events.find((event) => event.type === "compaction_start");
+		expect(start).toMatchObject({ reason: "threshold" });
+
+		// 旧 journal bytes 未改；run settle 后 state 从 durable projection 重建。
+		expect((await readFile(session.filePath, "utf8")).startsWith(bytesBefore))
+			.toBe(true);
+		expect(session.state.messages.some((message) =>
+			"content" in message && text(message).includes("<summary>")
+		)).toBe(true);
+		expect(session.state.messages.some((message) =>
+			"content" in message && text(message).includes("prompt-1")
+		)).toBe(false);
+	});
+
+	it("does not auto-compact when disabled", async () => {
+		const contexts: StreamContext[] = [];
+		const inner = createFakeStreamFn(["a".repeat(100), "b".repeat(100), "c".repeat(100)]);
+		const streamFn: StreamFn = (context, signal) => {
+			if (isSummarization(context)) return doneStream("should not happen");
+			contexts.push(structuredClone(context));
+			return inner(context, signal);
+		};
+		const session = await AgentSession.create({
+			directory: await temporaryDirectory(), system: "base", streamFn,
+			contextWindow: 100,
+			compaction: { enabled: false, reserveTokens: 20, keepRecentTurns: 2 },
+		});
+		await session.submit({ requestId: "r1", prompt: "prompt-1 " + "x".repeat(91) });
+		await session.submit({ requestId: "r2", prompt: "prompt-2 " + "x".repeat(91) });
+		await session.submit({ requestId: "r3", prompt: "prompt-3 " + "x".repeat(91) });
+		expect(session.entries.some((entry) => entry.type === "compaction")).toBe(false);
+		expect(contexts[2]!.messages.map((message) => text(message)).join(" "))
+			.toContain("prompt-1");
+	});
+
+	it("compacts only when the estimate crosses the reserved boundary", async () => {
+		const inner = createFakeStreamFn(["b".repeat(316), "d".repeat(40)]);
+		const streamFn: StreamFn = (context, signal) => {
+			if (isSummarization(context)) return doneStream("cp");
+			return inner(context, signal);
+		};
+		const session = await AgentSession.create({
+			directory: await temporaryDirectory(), system: "base", streamFn,
+			contextWindow: 100, compaction: { reserveTokens: 20, keepRecentTurns: 1 },
+		});
+		// sys(1) + u1(79) = 80：刚好顶到边界不压缩。
+		await session.submit({ requestId: "r1", prompt: "a".repeat(316) });
+		expect(session.entries.some((entry) => entry.type === "compaction")).toBe(false);
+		// 80 + a1(79) + u2(1) = 160 > 80：超过才压缩。
+		await session.submit({ requestId: "r2", prompt: "cccc" });
+		expect(session.entries.filter((entry) => entry.type === "compaction"))
+			.toHaveLength(1);
+	});
+
+	it("does not recompact from usage recorded before the latest compaction", async () => {
+		const answers: { text: string; usage?: Usage }[] = [
+			{ text: "a".repeat(40) },
+			{ text: "b".repeat(40) },
+			// 压缩前的高 usage：若被误用为校准点，下一次请求会立刻再压一次。
+			{ text: "c".repeat(40), usage: { inputTokens: 500, outputTokens: 0 } },
+			{ text: "d".repeat(40), usage: { inputTokens: 70, outputTokens: 5 } },
+			{ text: "e".repeat(40) },
+		];
+		let formalCalls = 0;
+		let summaryCalls = 0;
+		const streamFn: StreamFn = (context) => {
+			if (isSummarization(context)) {
+				summaryCalls++;
+				return doneStream("cp");
+			}
+			const spec = answers[formalCalls++] ?? { text: "f".repeat(40) };
+			return doneStream(spec.text, spec.usage);
+		};
+		const session = await AgentSession.create({
+			directory: await temporaryDirectory(), system: "base", streamFn,
+			contextWindow: 100, compaction: { reserveTokens: 20, keepRecentTurns: 1 },
+		});
+		for (let i = 1; i <= 3; i++)
+			await session.submit({ requestId: `r${i}`, prompt: "p".repeat(60) });
+		expect(summaryCalls).toBe(0);
+		expect(await session.compact()).toBeDefined();
+		expect(summaryCalls).toBe(1);
+
+		// r4 粗估 ≈ 1 + 32 + 10 + 15 = 58 < 80：不重复压缩；a3 的 500 usage 已失效。
+		await session.submit({ requestId: "r4", prompt: "p".repeat(60) });
+		expect(session.entries.filter((entry) => entry.type === "compaction"))
+			.toHaveLength(1);
+		expect(summaryCalls).toBe(1);
+
+		// 压缩后的新 usage 恢复校准：a4 报 70+5，r5 估 75+15=90 > 80 → 再次压缩。
+		await session.submit({ requestId: "r5", prompt: "p".repeat(60) });
+		expect(session.entries.filter((entry) => entry.type === "compaction"))
+			.toHaveLength(2);
+		expect(summaryCalls).toBe(2);
+	});
+});
