@@ -1,5 +1,5 @@
 export { Agent } from "./agent.ts";
-export type { AgentOptions } from "./agent-options.ts";
+export type { AgentOptions, PrepareRequest, PrepareRequestContext } from "./agent-options.ts";
 export type { AgentState } from "./agent-state.ts";
 export { agentLoop } from "./agent-loop.ts";
 export type { AgentLoopOptions } from "./agent-loop.ts";
@@ -25,15 +25,38 @@ export type {
 } from "./tool.ts";
 export { validateJsonSchema } from "./json-schema.ts";
 export type { ValidationIssue } from "./json-schema.ts";
+export {
+	DEFAULT_COMPACTION_SETTINGS,
+	DEFAULT_CONTEXT_WINDOW,
+	estimateContextTokens,
+	estimateTokens,
+	findCutPoint,
+	prepareCompaction,
+	shouldCompact,
+} from "./compaction.ts";
+export type {
+	CompactionPreparation,
+	CompactionSettings,
+	CutPoint,
+	ProjectedSessionEntry,
+	SessionContextProjection,
+} from "./compaction.ts";
 export { createReadTool, createEditTool, createBashTool, createDefaultTools } from "./tools.ts";
 export { SessionJournal } from "./session-journal.ts";
 export { recoverInterruptedTools } from "./session-recovery.ts";
+export {
+	messagesFromSessionPath,
+	projectSessionContext,
+	streamContextFromSessionPath,
+} from "./session-context.ts";
+export { createCompactionSummaryMessage } from "./compaction.ts";
 export { AgentSession } from "./agent-session.ts";
 export type {
 	AgentSessionOptions,
 	OpenAgentSessionOptions,
 } from "./agent-session.ts";
 export type {
+	CompactionReason,
 	SessionEntry,
 	SessionEntryBase,
 	SessionEntryData,

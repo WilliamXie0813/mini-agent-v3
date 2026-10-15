@@ -9,8 +9,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { createFakeStreamFn } from "@mini-agent/ai";
-import type { Message, StreamContext, StreamFn } from "@mini-agent/ai";
+import { createAssistantMessageEventStream, createFakeStreamFn } from "@mini-agent/ai";
+import type { Message, StreamContext, StreamFn, Usage } from "@mini-agent/ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../src/agent-session.ts";
 import type { AgentEvent } from "../src/agent-event.ts";
@@ -815,5 +815,657 @@ describe("AgentSession", () => {
 		stop();
 		await session.submit({ requestId: "newer", prompt: "newer" });
 		expect(starts).toBe(1);
+	});
+});
+
+describe("AgentSession compaction", () => {
+	// 摘要请求走同一个 streamFn，用 summarization system prompt 识别并返回脚本化摘要。
+	async function createSessionWithTurns(
+		turns: number,
+		options: { summaries?: string[]; summaryError?: string } = {},
+	) {
+		const events: AgentEvent[] = [];
+		const order: string[] = [];
+		const summaryContexts: StreamContext[] = [];
+		const inner = createFakeStreamFn(
+			Array.from({ length: turns + 4 }, (_, i) => `answer ${i + 1}`),
+		);
+		const streamFn: StreamFn = (context, signal) => {
+			if (context.system.sections.some((s) => s.text.startsWith("Summarize the earlier"))) {
+				summaryContexts.push(structuredClone(context));
+				order.push("summary");
+				const stream = createAssistantMessageEventStream();
+				if (options.summaryError) {
+					stream.push({
+						type: "error", reason: "error",
+						error: {
+							role: "assistant", content: [], stopReason: "error",
+							errorMessage: options.summaryError,
+						},
+					});
+				} else {
+					const text = options.summaries?.[summaryContexts.length - 1] ??
+						"checkpoint summary";
+					stream.push({
+						type: "done",
+						message: {
+							role: "assistant", content: [{ type: "text", text }], stopReason: "stop",
+						},
+					});
+				}
+				stream.end();
+				return stream;
+			}
+			return inner(context, signal);
+		};
+		const session = await AgentSession.create({
+			directory: await temporaryDirectory(), system: "base", streamFn,
+		});
+		session.subscribe((event) => {
+			events.push(event);
+			if (event.type === "compaction_start") order.push("start");
+			if (event.type === "compaction_end") order.push(`end:${event.status}`);
+		});
+		for (let i = 1; i <= turns; i++)
+			await session.submit({ requestId: `r${i}`, prompt: `question ${i}` });
+		return { session, events, order, summaryContexts };
+	}
+
+	function compactionEventsOf(events: AgentEvent[]): AgentEvent[] {
+		return events.filter((event) => event.type.startsWith("compaction"));
+	}
+
+	it("manually compacts append-only and emits committed events", async () => {
+		const { session, events, order, summaryContexts } =
+			await createSessionWithTurns(5);
+		const before = await readFile(session.filePath, "utf8");
+		const entriesBefore = session.entries.length;
+
+		const entry = await session.compact();
+
+		// start 在摘要 provider 调用前，completed 在 journal append/fsync 后。
+		expect(order).toEqual(["start", "summary", "end:completed"]);
+		expect(entry).toBeDefined();
+		expect(compactionEventsOf(events)).toEqual([
+			{
+				type: "compaction_start", reason: "manual",
+				contextTokens: expect.any(Number),
+			},
+			{
+				type: "compaction_end", reason: "manual", status: "completed",
+				entryId: entry!.id, firstKeptEntryId: entry!.firstKeptEntryId,
+				tokensBefore: expect.any(Number),
+			},
+		]);
+		// 返回 entry 即 journal 最后一条；旧 bytes/entries 逐字节不变。
+		expect(entry).toEqual(session.entries.at(-1));
+		expect((await readFile(session.filePath, "utf8")).startsWith(before)).toBe(true);
+		expect(session.entries.length).toBe(entriesBefore + 1);
+
+		// state 重建为 summary + retained tail（keepRecentTurns=4：a2..a5 + u3..u5）。
+		expect(session.state.messages.map((message) => message.role)).toEqual([
+			"system", "user", "assistant", "user", "assistant",
+			"user", "assistant", "user", "assistant",
+		]);
+		const summaryMessage = session.state.messages[1]!;
+		expect(summaryMessage.role).toBe("user");
+		expect(summaryMessage.role === "user" && text(summaryMessage))
+			.toContain("checkpoint summary");
+		expect(summaryMessage.role === "user" && text(summaryMessage))
+			.toContain("<summary>");
+
+		// reopen 得到相同 state。
+		const reopened = await AgentSession.open({
+			path: session.filePath, system: "base",
+			streamFn: sessionStreamFnStub,
+		});
+		expect(reopened.state.messages).toEqual(session.state.messages);
+
+		// 第二次压缩：摘要输入含第一份摘要与 a2，不含已丢弃的 raw prefix。
+		await session.submit({ requestId: "r6", prompt: "question 6" });
+		const second = await session.compact();
+		expect(second).toBeDefined();
+		expect(summaryContexts).toHaveLength(2);
+		const secondRequest = summaryContexts[1]!.messages[0]!;
+		const serialized = secondRequest.role === "user" ? text(secondRequest) : "";
+		expect(serialized).toContain("checkpoint summary");
+		expect(serialized).toContain("answer 2");
+		expect(serialized).not.toContain("question 1");
+		expect(serialized).not.toContain("answer 1");
+	});
+
+	it("does nothing when no eligible prefix exists", async () => {
+		const { session, events, summaryContexts } = await createSessionWithTurns(2);
+		const before = await readFile(session.filePath, "utf8");
+
+		const result = await session.compact();
+
+		expect(result).toBeUndefined();
+		expect(compactionEventsOf(events)).toEqual([]);
+		expect(summaryContexts).toEqual([]);
+		expect(await readFile(session.filePath, "utf8")).toBe(before);
+	});
+
+	it("emits a paired error end and rethrows when the summary provider fails", async () => {
+		const { session, events } = await createSessionWithTurns(5, {
+			summaryError: "provider exploded",
+		});
+		const before = await readFile(session.filePath, "utf8");
+		const messagesBefore = session.state.messages.slice();
+
+		await expect(session.compact()).rejects.toThrow(/summary/i);
+
+		expect(compactionEventsOf(events)).toEqual([
+			{
+				type: "compaction_start", reason: "manual",
+				contextTokens: expect.any(Number),
+			},
+			{
+				type: "compaction_end", reason: "manual", status: "error",
+				errorMessage: expect.stringMatching(/provider exploded/),
+			},
+		]);
+		expect(session.entries.every((entry) => entry.type !== "compaction")).toBe(true);
+		expect(await readFile(session.filePath, "utf8")).toBe(before);
+		expect(session.state.messages).toEqual(messagesBefore);
+	});
+
+	it("emits a paired error end and keeps raw state when the append fails", async () => {
+		const { session, events } = await createSessionWithTurns(5);
+		const append = SessionJournal.prototype.append;
+		const failure = new Error("disk full");
+		const spy = vi.spyOn(SessionJournal.prototype, "append").mockImplementation(
+			function <TData extends SessionEntryData>(
+				this: SessionJournal, data: TData,
+			): Promise<SessionEntryBase & TData> {
+				if (data.type === "compaction") return Promise.reject(failure);
+				return (append<TData>).call(this, data);
+			},
+		);
+
+		await expect(session.compact()).rejects.toBe(failure);
+		spy.mockRestore();
+
+		expect(compactionEventsOf(events)).toEqual([
+			{
+				type: "compaction_start", reason: "manual",
+				contextTokens: expect.any(Number),
+			},
+			{
+				type: "compaction_end", reason: "manual", status: "error",
+				errorMessage: "disk full",
+			},
+		]);
+		expect(session.entries.every((entry) => entry.type !== "compaction")).toBe(true);
+		// state 不切换为摘要；旧历史仍可 reopen。
+		expect(session.state.messages.some((message) =>
+			message.role === "user" && text(message).includes("<summary>")
+		)).toBe(false);
+		const reopened = await AgentSession.open({
+			path: session.filePath, system: "base", streamFn: sessionStreamFnStub,
+		});
+		expect(reopened.state.messages).toEqual(session.state.messages);
+	});
+});
+
+// reopen 只需要合法 streamFn；这些测试不会在 reopen 后真正请求 provider。
+const sessionStreamFnStub: StreamFn = () => {
+	throw new Error("unexpected provider call");
+};
+
+describe("AgentSession threshold compaction", () => {
+	function isSummarization(context: StreamContext): boolean {
+		return context.system.sections
+			.some((s) => s.text.startsWith("Summarize the earlier"));
+	}
+
+	function doneStream(textValue: string, usage?: Usage) {
+		const stream = createAssistantMessageEventStream();
+		stream.push({
+			type: "done",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: textValue }],
+				stopReason: "stop",
+				...(usage ? { usage } : {}),
+			},
+		});
+		stream.end();
+		return stream;
+	}
+
+	it("automatically compacts before an over-threshold request", async () => {
+		const contexts: StreamContext[] = [];
+		const events: AgentEvent[] = [];
+		const inner = createFakeStreamFn([
+			"answer-1 " + "y".repeat(91),
+			"answer-2 " + "y".repeat(91),
+			"answer-3 " + "y".repeat(91),
+		]);
+		const streamFn: StreamFn = (context, signal) => {
+			if (isSummarization(context)) return doneStream("condensed earlier work");
+			contexts.push(structuredClone(context));
+			return inner(context, signal);
+		};
+		const session = await AgentSession.create({
+			directory: await temporaryDirectory(), system: "base", streamFn,
+			contextWindow: 100, compaction: { reserveTokens: 20, keepRecentTurns: 2 },
+		});
+		session.subscribe((event) => {
+			events.push(event);
+		});
+
+		// 每轮 25+25 tokens：r1 估 26，r2 估 76（≤ 80 不压），r3 估 126 > 80 → 压。
+		await session.submit({ requestId: "r1", prompt: "prompt-1 " + "x".repeat(91) });
+		await session.submit({ requestId: "r2", prompt: "prompt-2 " + "x".repeat(91) });
+		expect(session.entries.some((entry) => entry.type === "compaction")).toBe(false);
+		const bytesBefore = await readFile(session.filePath, "utf8");
+
+		await session.submit({ requestId: "r3", prompt: "prompt-3 " + "x".repeat(91) });
+
+		// 正式请求前已 append compaction（reason=threshold）。
+		const compaction = session.entries.find((entry) => entry.type === "compaction");
+		expect(compaction).toBeDefined();
+		expect(compaction!.type === "compaction" && compaction!.reason)
+			.toBe("threshold");
+		// 正式 context = 正确 system + summary + retained tail + 当前 submission；
+		// 被摘要的 raw prefix（prompt-1）不在其中。
+		expect(contexts).toHaveLength(3);
+		const third = contexts[2]!;
+		expect(third.system.sections).toEqual([{ text: "base" }]);
+		const roles = third.messages.map((message) => message.role);
+		expect(roles).toEqual([
+			"system", "user", "assistant", "user", "assistant", "user",
+		]);
+		const texts = third.messages.map((message) => text(message));
+		expect(texts[1]).toContain("condensed earlier work");
+		expect(texts[1]).toContain("<summary>");
+		expect(texts.join(" ")).not.toContain("prompt-1");
+		expect(texts.join(" ")).toContain("prompt-2");
+		expect(texts.at(-1)).toContain("prompt-3");
+
+		// 事件顺序：agent_start/turn_start → user message → compaction → assistant。
+		const lastRun = events.map((event) => event.type)
+			.slice(events.map((event) => event.type).lastIndexOf("agent_start"));
+		expect(lastRun.slice(0, 7)).toEqual([
+			"agent_start", "turn_start", "message_start", "message_end",
+			"compaction_start", "compaction_end", "message_start",
+		]);
+		const start = events.find((event) => event.type === "compaction_start");
+		expect(start).toMatchObject({ reason: "threshold" });
+
+		// 旧 journal bytes 未改；run settle 后 state 从 durable projection 重建。
+		expect((await readFile(session.filePath, "utf8")).startsWith(bytesBefore))
+			.toBe(true);
+		expect(session.state.messages.some((message) =>
+			"content" in message && text(message).includes("<summary>")
+		)).toBe(true);
+		expect(session.state.messages.some((message) =>
+			"content" in message && text(message).includes("prompt-1")
+		)).toBe(false);
+	});
+
+	it("does not auto-compact when disabled", async () => {
+		const contexts: StreamContext[] = [];
+		const inner = createFakeStreamFn(["a".repeat(100), "b".repeat(100), "c".repeat(100)]);
+		const streamFn: StreamFn = (context, signal) => {
+			if (isSummarization(context)) return doneStream("should not happen");
+			contexts.push(structuredClone(context));
+			return inner(context, signal);
+		};
+		const session = await AgentSession.create({
+			directory: await temporaryDirectory(), system: "base", streamFn,
+			contextWindow: 100,
+			compaction: { enabled: false, reserveTokens: 20, keepRecentTurns: 2 },
+		});
+		await session.submit({ requestId: "r1", prompt: "prompt-1 " + "x".repeat(91) });
+		await session.submit({ requestId: "r2", prompt: "prompt-2 " + "x".repeat(91) });
+		await session.submit({ requestId: "r3", prompt: "prompt-3 " + "x".repeat(91) });
+		expect(session.entries.some((entry) => entry.type === "compaction")).toBe(false);
+		expect(contexts[2]!.messages.map((message) => text(message)).join(" "))
+			.toContain("prompt-1");
+	});
+
+	it("compacts only when the estimate crosses the reserved boundary", async () => {
+		const inner = createFakeStreamFn(["b".repeat(316), "d".repeat(40)]);
+		const streamFn: StreamFn = (context, signal) => {
+			if (isSummarization(context)) return doneStream("cp");
+			return inner(context, signal);
+		};
+		const session = await AgentSession.create({
+			directory: await temporaryDirectory(), system: "base", streamFn,
+			contextWindow: 100, compaction: { reserveTokens: 20, keepRecentTurns: 1 },
+		});
+		// sys(1) + u1(79) = 80：刚好顶到边界不压缩。
+		await session.submit({ requestId: "r1", prompt: "a".repeat(316) });
+		expect(session.entries.some((entry) => entry.type === "compaction")).toBe(false);
+		// 80 + a1(79) + u2(1) = 160 > 80：超过才压缩。
+		await session.submit({ requestId: "r2", prompt: "cccc" });
+		expect(session.entries.filter((entry) => entry.type === "compaction"))
+			.toHaveLength(1);
+	});
+
+	it("does not recompact from usage recorded before the latest compaction", async () => {
+		const answers: { text: string; usage?: Usage }[] = [
+			{ text: "a".repeat(40) },
+			{ text: "b".repeat(40) },
+			// 压缩前的高 usage：若被误用为校准点，下一次请求会立刻再压一次。
+			{ text: "c".repeat(40), usage: { inputTokens: 500, outputTokens: 0 } },
+			{ text: "d".repeat(40), usage: { inputTokens: 70, outputTokens: 5 } },
+			{ text: "e".repeat(40) },
+		];
+		let formalCalls = 0;
+		let summaryCalls = 0;
+		const streamFn: StreamFn = (context) => {
+			if (isSummarization(context)) {
+				summaryCalls++;
+				return doneStream("cp");
+			}
+			const spec = answers[formalCalls++] ?? { text: "f".repeat(40) };
+			return doneStream(spec.text, spec.usage);
+		};
+		const session = await AgentSession.create({
+			directory: await temporaryDirectory(), system: "base", streamFn,
+			contextWindow: 100, compaction: { reserveTokens: 20, keepRecentTurns: 1 },
+		});
+		for (let i = 1; i <= 3; i++)
+			await session.submit({ requestId: `r${i}`, prompt: "p".repeat(60) });
+		expect(summaryCalls).toBe(0);
+		expect(await session.compact()).toBeDefined();
+		expect(summaryCalls).toBe(1);
+
+		// r4 粗估 ≈ 1 + 32 + 10 + 15 = 58 < 80：不重复压缩；a3 的 500 usage 已失效。
+		await session.submit({ requestId: "r4", prompt: "p".repeat(60) });
+		expect(session.entries.filter((entry) => entry.type === "compaction"))
+			.toHaveLength(1);
+		expect(summaryCalls).toBe(1);
+
+		// 压缩后的新 usage 恢复校准：a4 报 70+5，r5 估 75+15=90 > 80 → 再次压缩。
+		await session.submit({ requestId: "r5", prompt: "p".repeat(60) });
+		expect(session.entries.filter((entry) => entry.type === "compaction"))
+			.toHaveLength(2);
+		expect(summaryCalls).toBe(2);
+	});
+});
+
+describe("AgentSession overflow recovery", () => {
+	function isSummarization(context: StreamContext): boolean {
+		return context.system.sections
+			.some((s) => s.text.startsWith("Summarize the earlier"));
+	}
+
+	function doneStream(textValue: string) {
+		const stream = createAssistantMessageEventStream();
+		stream.push({
+			type: "start",
+			partial: { role: "assistant", content: [], stopReason: "pending" },
+		});
+		stream.push({
+			type: "done",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: textValue }],
+				stopReason: "stop",
+			},
+		});
+		stream.end();
+		return stream;
+	}
+
+	function overflowStream() {
+		const stream = createAssistantMessageEventStream();
+		stream.push({
+			type: "start",
+			partial: { role: "assistant", content: [], stopReason: "pending" },
+		});
+		stream.push({
+			type: "error", reason: "error",
+			error: {
+				role: "assistant", content: [], stopReason: "error",
+				errorKind: "context_overflow",
+				errorMessage: "prompt is too long for the model context window",
+			},
+		});
+		stream.end();
+		return stream;
+	}
+
+	// overflowOn：第 N 次正式请求（1-based）返回超窗；summaryError 让摘要失败。
+	function overflowSession(options: {
+		overflowOn: number[];
+		summaryError?: boolean;
+		summaryText?: string;
+	}) {
+		const events: AgentEvent[] = [];
+		const contexts: StreamContext[] = [];
+		const state = { formal: 0, summary: 0 };
+		const streamFn: StreamFn = (context) => {
+			if (isSummarization(context)) {
+				state.summary++;
+				if (options.summaryError) {
+					const stream = createAssistantMessageEventStream();
+					stream.push({
+						type: "error", reason: "error",
+						error: {
+							role: "assistant", content: [], stopReason: "error",
+							errorMessage: "summary provider exploded",
+						},
+					});
+					stream.end();
+					return stream;
+				}
+				return doneStream(options.summaryText ?? "checkpoint");
+			}
+			state.formal++;
+			contexts.push(structuredClone(context));
+			if (options.overflowOn.includes(state.formal)) return overflowStream();
+			return doneStream(`answer ${state.formal}`);
+		};
+		return { events, contexts, state, streamFn };
+	}
+
+	async function createOverflowSession(
+		options: { overflowOn: number[]; summaryError?: boolean },
+		turns: number,
+	) {
+		const rig = overflowSession(options);
+		const session = await AgentSession.create({
+			directory: await temporaryDirectory(), system: "base",
+			streamFn: rig.streamFn,
+		});
+		session.subscribe((event) => {
+			rig.events.push(event);
+		});
+		for (let i = 1; i <= turns; i++)
+			await session.submit({ requestId: `r${i}`, prompt: `question ${i}` });
+		return { session, ...rig };
+	}
+
+	it("compacts and retries one context overflow", async () => {
+		const { session, events, contexts, state } =
+			await createOverflowSession({ overflowOn: [6] }, 5);
+		await session.submit({ requestId: "r6", prompt: "too big" });
+
+		// 5 正常 + overflow + retry；summary 恰好 1 次。
+		expect(state.formal).toBe(7);
+		expect(state.summary).toBe(1);
+		// 第一次 overflow 诊断已 journaled（供审计），run_end 为 completed。
+		const overflowEntries = session.entries.filter((entry) =>
+			entry.type === "message" && entry.message.role === "assistant" &&
+			entry.message.errorKind === "context_overflow"
+		);
+		expect(overflowEntries).toHaveLength(1);
+		const runEnd = session.entries.filter((entry) => entry.type === "run_end").at(-1);
+		expect(runEnd).toMatchObject({ type: "run_end", status: "completed" });
+
+		// overflow turn 先 turn_end，然后 compaction events，再发新的 turn_start。
+		const types = events.map((event) => event.type);
+		const lastRun = types.slice(types.lastIndexOf("agent_start"));
+		expect(lastRun).toEqual([
+			"agent_start", "turn_start",
+			"message_start", "message_end", "message_start", "message_end",
+			"turn_end", "compaction_start", "compaction_end",
+			"turn_start", "message_start", "message_end", "turn_end", "agent_end",
+		]);
+		const compaction = events.find((event) => event.type === "compaction_start");
+		expect(compaction).toMatchObject({ reason: "overflow" });
+
+		// retry context：checkpoint 摘要 + retained tail，不含 overflow 诊断。
+		const retry = contexts.at(-1)!;
+		expect(retry.messages.some((message) =>
+			message.role === "assistant" && message.errorKind === "context_overflow"
+		)).toBe(false);
+		const retryTexts = retry.messages.map((message) => text(message)).join(" ");
+		expect(retryTexts).toContain("checkpoint");
+		expect(retryTexts).toContain("too big");
+		expect(session.state.messages.at(-1)).toMatchObject({
+			role: "assistant", stopReason: "stop",
+		});
+	});
+
+	it("does not retry a second overflow or a plain provider error", async () => {
+		// 第二次 overflow：不再摘要、不再重试，run_end 为 error。
+		const second = await createOverflowSession({ overflowOn: [6, 7] }, 5);
+		await second.session.submit({ requestId: "r6", prompt: "too big" });
+		expect(second.state.formal).toBe(7);
+		expect(second.state.summary).toBe(1);
+		expect(second.session.entries.filter((entry) => entry.type === "compaction"))
+			.toHaveLength(1);
+		const runEnd = second.session.entries
+			.filter((entry) => entry.type === "run_end").at(-1);
+		expect(runEnd).toMatchObject({ status: "error" });
+
+		// 普通 provider error：零摘要、零重试。
+		const providerError: StreamFn = () => {
+			const stream = createAssistantMessageEventStream();
+			stream.push({
+				type: "error", reason: "error",
+				error: {
+					role: "assistant", content: [], stopReason: "error",
+					errorKind: "provider", errorMessage: "overloaded",
+				},
+			});
+			stream.end();
+			return stream;
+		};
+		let providerCalls = 0;
+		const session = await AgentSession.create({
+			directory: await temporaryDirectory(), system: "base",
+			streamFn: (context) => {
+				providerCalls++;
+				return providerError(context);
+			},
+		});
+		await session.submit({ requestId: "r1", prompt: "go" });
+		expect(providerCalls).toBe(1);
+		expect(session.entries.some((entry) => entry.type === "compaction")).toBe(false);
+	});
+
+	it("does not retry when no eligible prefix exists or the summary fails", async () => {
+		// 无可摘要前缀（第一次请求就 overflow）：hook 返回 false，零事件零写入。
+		const fresh = await createOverflowSession({ overflowOn: [1] }, 0);
+		await fresh.session.submit({ requestId: "r1", prompt: "go" });
+		expect(fresh.state.formal).toBe(1);
+		expect(fresh.state.summary).toBe(0);
+		expect(
+			fresh.events.filter((event) => event.type.startsWith("compaction")),
+		).toEqual([]);
+		expect(fresh.session.entries.some((entry) => entry.type === "compaction"))
+			.toBe(false);
+
+		// 摘要失败：start/end(error) 成对，原错误传播，无 retry。
+		const failing = await createOverflowSession(
+			{ overflowOn: [6], summaryError: true },
+			5,
+		);
+		await expect(
+			failing.session.submit({ requestId: "r6", prompt: "too big" }),
+		).rejects.toThrow(/summary/i);
+		expect(failing.state.formal).toBe(6);
+		expect(failing.state.summary).toBe(1);
+		const compactionEvents = failing.events
+			.filter((event) => event.type.startsWith("compaction"));
+		expect(compactionEvents).toEqual([
+			{
+				type: "compaction_start", reason: "overflow",
+				contextTokens: expect.any(Number),
+			},
+			{
+				type: "compaction_end", reason: "overflow", status: "error",
+				errorMessage: expect.stringMatching(/summary provider exploded/),
+			},
+		]);
+		expect(failing.session.entries.some((entry) => entry.type === "compaction"))
+			.toBe(false);
+	});
+});
+
+// 终审修复：overflow 恢复摘要必须可 abort——signal 从 run 一路穿到 streamFn。
+describe("AgentSession overflow recovery signal", () => {
+	it("threads the run signal into the overflow recovery summary", async () => {
+		const summarySignals: (AbortSignal | undefined)[] = [];
+		let formal = 0;
+		const streamFn: StreamFn = (context, signal) => {
+			if (context.system.sections
+				.some((s) => s.text.startsWith("Summarize the earlier"))) {
+				summarySignals.push(signal);
+				const stream = createAssistantMessageEventStream();
+				stream.push({
+					type: "start",
+					partial: { role: "assistant", content: [], stopReason: "pending" },
+				});
+				// 只有 abort 能结束这个摘要请求。
+				signal?.addEventListener("abort", () => {
+					stream.push({
+						type: "error", reason: "aborted",
+						error: { role: "assistant", content: [], stopReason: "aborted" },
+					});
+					stream.end();
+				}, { once: true });
+				return stream;
+			}
+			formal++;
+			if (formal === 6) {
+				const stream = createAssistantMessageEventStream();
+				stream.push({
+					type: "start",
+					partial: { role: "assistant", content: [], stopReason: "pending" },
+				});
+				stream.push({
+					type: "error", reason: "error",
+					error: {
+						role: "assistant", content: [], stopReason: "error",
+						errorKind: "context_overflow",
+						errorMessage: "prompt is too long",
+					},
+				});
+				stream.end();
+				return stream;
+			}
+			const stream = createAssistantMessageEventStream();
+			stream.push({
+				type: "done",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: `answer ${formal}` }],
+					stopReason: "stop",
+				},
+			});
+			stream.end();
+			return stream;
+		};
+		const session = await AgentSession.create({
+			directory: await temporaryDirectory(), system: "base", streamFn,
+		});
+		for (let i = 1; i <= 5; i++)
+			await session.submit({ requestId: `r${i}`, prompt: `q${i}` });
+
+		const pending = session.submit({ requestId: "r6", prompt: "too big" });
+		pending.catch(() => {});
+		await vi.waitFor(() => expect(summarySignals).toHaveLength(1));
+		session.abort();
+		await expect(pending).rejects.toThrow();
+		// 摘要请求收到的是本次 run 的 signal，abort 已传达。
+		expect(summarySignals[0]?.aborted).toBe(true);
 	});
 });

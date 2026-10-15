@@ -2,7 +2,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { agentLoop } from "../src/agent-loop.ts";
 import { setDefaultStreamFn, createFakeStreamFn, createAssistantMessageEventStream, createInitialSystemMessage } from "@mini-agent/ai";
-import type { Message, StreamContext, StreamFn, Tool, ToolResultMessage } from "@mini-agent/ai";
+import type { AssistantMessage, Message, StreamContext, StreamFn, Tool, ToolResultMessage } from "@mini-agent/ai";
 import type { AgentEvent } from "../src/agent-event.ts";
 import type { ToolDef } from "../src/tool.ts";
 
@@ -598,5 +598,250 @@ describe("agentLoop (stage 8: transcript replay)", () => {
 		expect(toolResult.content).toEqual([{
 			type: "text", text: expect.stringContaining('Tool "echo" not found'),
 		}]);
+	});
+});
+
+describe("agentLoop (stage 10: prepareRequest)", () => {
+	it("prepares the final context immediately before streaming", async () => {
+		const calls: string[] = [];
+		const contexts: StreamContext[] = [];
+		const inner = createFakeStreamFn([
+			[{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "hi" } }],
+			"final answer",
+		]);
+		const streamFn: StreamFn = (context, signal) => {
+			calls.push("streamFn");
+			contexts.push(structuredClone(context));
+			return inner(context, signal);
+		};
+		const messages = await agentLoop({
+			...base([echoDecl]), prompt: "go", tools: [echoTool], streamFn,
+			prepareRequest: ({ context }) => {
+				calls.push("prepareRequest");
+				return {
+					...context,
+					messages: [
+						...context.messages,
+						{ role: "user", content: [{ type: "text", text: "prepared" }] },
+					],
+				};
+			},
+		});
+
+		// 每个 provider turn 调一次：prepareRequest 先于 streamFn，streamFn 只见替换后 context。
+		expect(calls).toEqual([
+			"prepareRequest", "streamFn", "prepareRequest", "streamFn",
+		]);
+		expect(contexts).toHaveLength(2);
+		for (const context of contexts) {
+			const last = context.messages.at(-1)!;
+			expect(last.role === "user" && last.content
+				.some((block) => block.type === "text" && block.text === "prepared"))
+				.toBe(true);
+		}
+		// 注入只活在请求 context：transcript 不被 prepared 污染。
+		expect(messages.filter((message) =>
+			message.role === "user" && message.content
+				.some((block) => block.type === "text" && block.text === "prepared")
+		)).toHaveLength(0);
+		// prepared context 仍声明 echo → 工具正常执行。
+		expect(messages.some((message) =>
+			message.role === "toolResult" && !message.isError
+		)).toBe(true);
+	});
+
+	it("only executes tools still declared by the prepared context", async () => {
+		const execute = vi.fn(echoTool.execute);
+		const messages = await agentLoop({
+			...base([echoDecl]), prompt: "go",
+			tools: [{ ...echoTool, execute }],
+			streamFn: createFakeStreamFn([
+				[{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "hi" } }],
+				"stopped",
+			]),
+			// prepared context 移除了 echo 声明：注册表里闭包还在，也不许执行。
+			prepareRequest: ({ context }) => ({ ...context, tools: [] }),
+		});
+		expect(execute).not.toHaveBeenCalled();
+		expect(messages.some((message) =>
+			message.role === "toolResult" && message.isError
+		)).toBe(true);
+	});
+});
+
+describe("agentLoop (stage 10: context overflow recovery)", () => {
+	const overflowMessage: AssistantMessage = {
+		role: "assistant", content: [], stopReason: "error",
+		errorKind: "context_overflow", errorMessage: "prompt is too long",
+	};
+
+	function terminalStream(message: AssistantMessage) {
+		const stream = createAssistantMessageEventStream();
+		stream.push({
+			type: "start",
+			partial: { role: "assistant", content: [], stopReason: "pending" },
+		});
+		if (message.stopReason === "error" || message.stopReason === "aborted")
+			stream.push({ type: "error", reason: message.stopReason, error: message });
+		else stream.push({ type: "done", message });
+		stream.end();
+		return stream;
+	}
+
+	it("recovers a context overflow exactly once per run", async () => {
+		const events: string[] = [];
+		let calls = 0;
+		const streamFn: StreamFn = () => {
+			calls++;
+			return calls === 1
+				? terminalStream(overflowMessage)
+				: terminalStream({
+						role: "assistant",
+						content: [{ type: "text", text: "recovered" }],
+						stopReason: "stop",
+					});
+		};
+		const recoverContextOverflow = vi.fn(() => true);
+		const messages = await agentLoop({
+			...base(), prompt: "go", streamFn, recoverContextOverflow,
+			emit: (event) => {
+				events.push(event.type);
+			},
+		});
+
+		expect(calls).toBe(2);
+		expect(recoverContextOverflow).toHaveBeenCalledTimes(1);
+		// overflow turn 先 turn_end，hook 成功后新 turn_start 再重新请求。
+		//（每段 message_start/message_end 对的第一对是 user prompt。）
+		expect(events).toEqual([
+			"agent_start", "turn_start",
+			"message_start", "message_end", "message_start", "message_end",
+			"turn_end",
+			"turn_start", "message_start", "message_end", "turn_end", "agent_end",
+		]);
+		expect(messages.at(-1)).toMatchObject({ stopReason: "stop" });
+		// overflow 诊断保留在本地 transcript（journal 供审计是 session 层的断言）。
+		expect(messages.some((message) =>
+			message.role === "assistant" && message.errorKind === "context_overflow"
+		)).toBe(true);
+	});
+
+	it("does not retry a second overflow in the same run", async () => {
+		let calls = 0;
+		const streamFn: StreamFn = () => {
+			calls++;
+			return terminalStream(overflowMessage);
+		};
+		const recoverContextOverflow = vi.fn(() => true);
+		const messages = await agentLoop({
+			...base(), prompt: "go", streamFn, recoverContextOverflow,
+		});
+		expect(calls).toBe(2);
+		expect(recoverContextOverflow).toHaveBeenCalledTimes(1);
+		expect(messages.at(-1)).toMatchObject({
+			stopReason: "error", errorKind: "context_overflow",
+		});
+	});
+
+	it("does not recover a plain provider error or output length", async () => {
+		const recoverContextOverflow = vi.fn(() => true);
+		// 无 errorKind 的普通 error
+		await agentLoop({
+			...base(), prompt: "go", recoverContextOverflow,
+			streamFn: () => terminalStream({
+				role: "assistant", content: [], stopReason: "error",
+				errorMessage: "boom",
+			}),
+		});
+		// provider kind
+		await agentLoop({
+			...base(), prompt: "go", recoverContextOverflow,
+			streamFn: () => terminalStream({
+				role: "assistant", content: [], stopReason: "error",
+				errorKind: "provider", errorMessage: "overloaded",
+			}),
+		});
+		// length：保持阶段 2 的截断整批保护，不触发 overflow 恢复。
+		let calls = 0;
+		const messages = await agentLoop({
+			...base([echoDecl]), prompt: "go", tools: [echoTool], recoverContextOverflow,
+			streamFn: () => {
+				calls++;
+				return calls === 1
+					? terminalStream({
+							role: "assistant",
+							content: [{ type: "toolCall", id: "c1", name: "echo", arguments: {} }],
+							stopReason: "length",
+						})
+					: terminalStream({
+							role: "assistant",
+							content: [{ type: "text", text: "ok" }],
+							stopReason: "stop",
+						});
+			},
+		});
+		expect(recoverContextOverflow).not.toHaveBeenCalled();
+		expect(messages.some((message) =>
+			message.role === "toolResult" && message.isError
+		)).toBe(true);
+		expect(messages.at(-1)).toMatchObject({ stopReason: "stop" });
+	});
+
+	it("ends the run when the hook declines or is absent", async () => {
+		const events: string[] = [];
+		const messages = await agentLoop({
+			...base(), prompt: "go",
+			streamFn: () => terminalStream(overflowMessage),
+			recoverContextOverflow: () => false,
+			emit: (event) => {
+				events.push(event.type);
+			},
+		});
+		expect(messages.at(-1)).toMatchObject({ stopReason: "error" });
+		expect(events).toEqual([
+			"agent_start", "turn_start",
+			"message_start", "message_end", "message_start", "message_end",
+			"turn_end", "agent_end",
+		]);
+		// 无 hook：overflow 按普通 error 结束。
+		const plain = await agentLoop({
+			...base(), prompt: "go",
+			streamFn: () => terminalStream(overflowMessage),
+		});
+		expect(plain.at(-1)).toMatchObject({ stopReason: "error" });
+	});
+});
+
+// 终审修复：recovery hook 必须拿到本次 run 的 signal——否则 abort 穿不进恢复摘要。
+describe("agentLoop (stage 10: recovery signal)", () => {
+	it("passes the run signal to the recovery hook", async () => {
+		const controller = new AbortController();
+		let seen: AbortSignal | undefined;
+		const stream = createAssistantMessageEventStream();
+		const streamFn: StreamFn = () => {
+			const s = createAssistantMessageEventStream();
+			s.push({
+				type: "start",
+				partial: { role: "assistant", content: [], stopReason: "pending" },
+			});
+			s.push({
+				type: "error", reason: "error",
+				error: {
+					role: "assistant", content: [], stopReason: "error",
+					errorKind: "context_overflow", errorMessage: "prompt is too long",
+				},
+			});
+			s.end();
+			return s;
+		};
+		void stream;
+		await agentLoop({
+			...base(), prompt: "go", signal: controller.signal, streamFn,
+			recoverContextOverflow: (input) => {
+				seen = input.signal;
+				return false;
+			},
+		});
+		expect(seen).toBe(controller.signal);
 	});
 });

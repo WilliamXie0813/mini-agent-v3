@@ -150,9 +150,11 @@ function createAnthropicStreamState(stream, formatError = (message) => message) 
         if (completed)
             return;
         completed = true;
+        // 阶段 10：error 终端带结构化 errorKind（缺省 provider）；abort 不带。
         stream.push({ type: "error", reason, error: {
                 role: "assistant", content: [], stopReason: reason,
                 errorMessage: formatError(message), usage: partial.usage,
+                ...(reason === "error" ? { errorKind: "provider" } : {}),
             } });
     };
     return {

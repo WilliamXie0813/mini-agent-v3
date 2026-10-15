@@ -48,7 +48,44 @@ const ENTRY_TYPES = new Set([
 	"tool_update",
 	"tool_outcome",
 	"run_end",
+	"compaction",
 ]);
+
+const COMPACTION_REASONS = new Set(["manual", "threshold", "overflow"]);
+
+// compaction 字段校验：append 与 open 共用。summary 为空等于悄悄丢历史，必须拒绝。
+function parseCompaction(source: Record<string, unknown>): void {
+	if (!COMPACTION_REASONS.has(source.reason as string))
+		throw new Error(`Invalid compaction reason: ${String(source.reason)}`);
+	string(source.summary, "compaction summary");
+	string(source.firstKeptEntryId, "compaction firstKeptEntryId");
+	const tokens = source.tokensBefore;
+	if (typeof tokens !== "number" || !Number.isSafeInteger(tokens) || tokens < 0)
+		throw new Error("Invalid compaction tokensBefore");
+}
+
+// firstKept 必须是 parent 祖先链上的 submission 或非 toolResult 的 message entry——
+// 切点落在 toolResult 或恢复元数据中间会拆散 toolCall/toolResult 对（计划 Review Focus 1）。
+function assertCompactionBoundary(
+	byId: Map<string, SessionEntry>,
+	parentId: string | null,
+	firstKeptEntryId: string,
+): void {
+	const target = byId.get(firstKeptEntryId);
+	if (!target)
+		throw new Error(`Invalid compaction boundary: ${firstKeptEntryId}`);
+	const conversation = target.type === "submission" ||
+		(target.type === "message" && target.message.role !== "toolResult");
+	if (!conversation)
+		throw new Error(
+			`Compaction boundary is not a conversation entry: ${firstKeptEntryId}`,
+		);
+	for (let current = parentId; current !== null;) {
+		if (current === firstKeptEntryId) return;
+		current = byId.get(current)?.parentId ?? null;
+	}
+	throw new Error(`Compaction boundary is not an ancestor: ${firstKeptEntryId}`);
+}
 
 function parseEntry(value: unknown): SessionEntry {
 	const source = record(value);
@@ -59,6 +96,7 @@ function parseEntry(value: unknown): SessionEntry {
 	const parentId = source.parentId === null
 		? null
 		: string(source.parentId, "entry parentId");
+	if (type === "compaction") parseCompaction(source);
 	return { ...source, type, id, parentId, createdAt } as SessionEntry;
 }
 
@@ -124,6 +162,7 @@ export class SessionJournal {
 		const header = parseHeader(headerValue);
 		const entries: SessionEntry[] = [];
 		const seen = new Set<string>();
+		const byId = new Map<string, SessionEntry>();
 		let tornTail = false;
 		for (let index = 1; index < lines.length; index++) {
 			let value: unknown;
@@ -141,7 +180,10 @@ export class SessionJournal {
 				throw new Error(`Duplicate session entry id: ${entry.id}`);
 			if (entry.parentId !== null && !seen.has(entry.parentId))
 				throw new Error(`Invalid session parent: ${entry.parentId}`);
+			if (entry.type === "compaction")
+				assertCompactionBoundary(byId, entry.parentId, entry.firstKeptEntryId);
 			seen.add(entry.id);
+			byId.set(entry.id, entry);
 			entries.push(entry);
 		}
 		if (tornTail) {
@@ -184,6 +226,15 @@ export class SessionJournal {
 		data: TData,
 	): Promise<SessionEntryBase & TData> {
 		const pending = this.appendTail.then(async () => {
+			// compaction 先验证再落盘：坏边界不能写进文件，也不能动内存与 leaf。
+			if (data.type === "compaction") {
+				parseCompaction(data);
+				assertCompactionBoundary(
+					new Map(this.entries.map((entry) => [entry.id, entry])),
+					this.currentLeafId,
+					data.firstKeptEntryId,
+				);
+			}
 			const entry = {
 				...structuredClone(data),
 				id: randomUUID(),

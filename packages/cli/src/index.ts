@@ -36,9 +36,21 @@ function textOf(content: ContentBlock[]): string {
 }
 
 const system = "You are a minimal teaching agent.";
+// 阶段 10：context window 可用 ANTHROPIC_CONTEXT_WINDOW 覆盖，缺省走 core 的 128_000。
+// 非法值在创建 session 前明确失败，不能让一次手滑把所有请求打到错误窗口。
+function parseContextWindow(value: string | undefined): number | undefined {
+	if (value === undefined) return undefined;
+	const parsed = Number(value);
+	if (!Number.isSafeInteger(parsed) || parsed < 1)
+		throw new Error(
+			`ANTHROPIC_CONTEXT_WINDOW must be a positive integer, got ${JSON.stringify(value)}`,
+		);
+	return parsed;
+}
 const sessionOptions = {
 	system,
 	tools: createDefaultTools(),
+	contextWindow: parseContextWindow(process.env.ANTHROPIC_CONTEXT_WINDOW),
 };
 const session = continueSession
 	? await AgentSession.openLatest(sessionOptions)
@@ -104,13 +116,30 @@ rl.on("SIGINT", () => {
 	if (running) session.abort();
 	else rl.close();
 });
-console.log("mini-agent (stage 9) — type /exit to quit");
+console.log("mini-agent (stage 10) — type /exit to quit, /compact to compact");
 console.log(`session: ${session.filePath} (${continueSession ? "resumed" : "created"})`);
 
 try {
 	process.stdout.write("> ");
 	for await (const line of rl) {
 		if (line.trim() === "/exit") break;
+		// /compact 是命令不是 submission：不生成 requestId、不请求 provider。
+		// 摘要正文可能含敏感上下文，只打印结果，不把摘要重复写到终端。
+		// 摘要失败（provider 抖动等）打印诊断并回到提示符，不能让 REPL 崩掉。
+		if (line.trim() === "/compact") {
+			try {
+				const entry = await session.compact();
+				console.log(entry
+					? `compacted ${entry.tokensBefore} tokens (reason: manual)`
+					: "nothing to compact");
+			} catch (error) {
+				console.log(
+					`✗ compaction failed: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
+			process.stdout.write("> ");
+			continue;
+		}
 		if (line.trim() === "") {
 			process.stdout.write("> ");
 			continue;

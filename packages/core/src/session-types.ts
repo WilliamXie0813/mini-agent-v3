@@ -3,6 +3,10 @@ import type { ToolResult } from "./tool.ts";
 
 export const SESSION_VERSION = 1;
 
+// 阶段 10：压缩只追加 entry，不删不改历史。firstKeptEntryId 是上下文投影边界，
+// 指向 parent 的既有祖先；parent tree 本身不变。
+export type CompactionReason = "manual" | "threshold" | "overflow";
+
 export interface SessionHeader {
 	type: "session";
 	version: 1;
@@ -41,6 +45,13 @@ export type SessionEntryData =
 			type: "run_end";
 			submissionId: string;
 			status: "completed" | "error" | "aborted" | "interrupted";
+	  }
+	| {
+			type: "compaction";
+			reason: CompactionReason;
+			summary: string;
+			firstKeptEntryId: string;
+			tokensBefore: number;
 	  };
 
 export type SessionEntry = SessionEntryBase & SessionEntryData;
