@@ -5,8 +5,9 @@ import type {
 	StreamFn,
 	ToolResultMessage,
 } from "@mini-agent/ai";
+import { AgentInfrastructureFailure } from "./agent.ts";
 import type { AgentEventSink } from "./agent-event.ts";
-import type { AfterToolCall, PrepareRequest, RecoverContextOverflow } from "./agent-options.ts";
+import type { AfterToolCall, PrepareRequest, RecoverContextOverflow, TransformContext } from "./agent-options.ts";
 import {
 	executeToolCalls,
 	failTruncatedToolCalls,
@@ -32,6 +33,7 @@ export interface AgentLoopOptions {
 	toolExecution?: ToolExecutionMode;
 	commitToolIntent?: CommitToolIntent;
 	prepareRequest?: PrepareRequest;
+	transformContext?: TransformContext;
 	recoverContextOverflow?: RecoverContextOverflow;
 }
 
@@ -88,10 +90,38 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 			prepared.tools.some((declaration) => toolDeclarationsEqual(tool, declaration)),
 		);
 
+		// 阶段 11：transformContext 是发给 provider 前的最后一个决策 hook，只重写 messages
+		// （过滤/重排），不改工具声明——改声明是 prepareNextTurnWithContext 的职责。
+		// 契约：返回数组非空，且每个元素必须与 prepared.messages 中某一元素引用相同；
+		// 伪造新对象是调用方 bug，按基础设施失败中止本次 run（agent.ts 解包后原样冒泡）。
+		let request: StreamContext = prepared;
+		if (options.transformContext) {
+			const messages = await options.transformContext(
+				prepared.messages,
+				options.signal ?? runSignal,
+			);
+			if (messages.length === 0) {
+				throw new AgentInfrastructureFailure(
+					new TypeError("transformContext must return a non-empty message array"),
+				);
+			}
+			const known = new Set(prepared.messages);
+			for (const message of messages) {
+				if (!known.has(message)) {
+					throw new AgentInfrastructureFailure(
+						new TypeError(
+							"transformContext must only filter or reorder the messages it received",
+						),
+					);
+				}
+			}
+			request = { ...prepared, messages };
+		}
+
 		// 只有 done 携带的完整消息才进历史：delta 是传输层的碎块，
 		// 一次响应的 40 个 delta 共同描述的是 1 条 assistant 消息（spec §5 阶段 3）。
 		const message = await streamAssistantMessage(
-			streamFn(prepared, options.signal),
+			streamFn(request, options.signal),
 			emit,
 		);
 		options.messages.push(message);

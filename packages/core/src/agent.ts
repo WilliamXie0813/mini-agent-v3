@@ -2,7 +2,7 @@ import { getDefaultStreamFn } from "@mini-agent/ai";
 import type { AssistantMessage, Message, StreamFn, SystemSection } from "@mini-agent/ai";
 import { agentLoop } from "./agent-loop.ts";
 import type { AgentOptions } from "./agent-options.ts";
-import type { AfterToolCall, PrepareRequest, RecoverContextOverflow } from "./agent-options.ts";
+import type { AfterToolCall, PrepareRequest, RecoverContextOverflow, TransformContext } from "./agent-options.ts";
 import type { AgentEvent, AgentEventListener } from "./agent-event.ts";
 import { appendSystemSections, createAgentState, reduceAgentState, replaceAgentTools } from "./agent-state.ts";
 import type { AgentState } from "./agent-state.ts";
@@ -17,7 +17,7 @@ type ActiveRun = {
 	promise: Promise<void>; resolve: () => void; abortController: AbortController;
 };
 
-class AgentInfrastructureFailure extends Error {
+export class AgentInfrastructureFailure extends Error {
 	readonly original: unknown;
 	constructor(original: unknown) {
 		super("agent infrastructure failed"); this.original = original;
@@ -36,6 +36,7 @@ export class Agent {
 	public afterToolCall?: AfterToolCall;
 	// 与 beforeToolCall 同为可替换 seam（阶段 10 的阈值压缩由 AgentSession 挂在这里）。
 	public prepareRequest?: PrepareRequest;
+	public transformContext?: TransformContext;
 	public toolExecution: ToolExecutionMode;
 	private activeRun?: ActiveRun;
 	private runMessages: Message[] = [];
@@ -59,6 +60,7 @@ export class Agent {
 		this.beforeToolCall = options.beforeToolCall;
 		this.afterToolCall = options.afterToolCall;
 		this.prepareRequest = options.prepareRequest;
+		this.transformContext = options.transformContext;
 		this.recoverContextOverflow = options.recoverContextOverflow;
 		this.toolExecution = options.toolExecution ?? "parallel";
 		this._state = createAgentState(
@@ -109,6 +111,7 @@ export class Agent {
 		await this.runWithLifecycle(async (signal) => {
 			// hook failure 与 listener failure 同为基础设施失败：原样冒泡，不合成 error 消息。
 			const prepareRequest = this.prepareRequest;
+			const transformContext = this.transformContext;
 			const recoverContextOverflow = this.recoverContextOverflow;
 			const afterToolCall = this.afterToolCall;
 			await agentLoop({
@@ -134,6 +137,15 @@ export class Agent {
 					? async (input) => {
 						try {
 							return await prepareRequest(input);
+						} catch (error) {
+							throw new AgentInfrastructureFailure(error);
+						}
+					}
+					: undefined,
+				transformContext: transformContext
+					? async (messages, signal) => {
+						try {
+							return await transformContext(messages, signal);
 						} catch (error) {
 							throw new AgentInfrastructureFailure(error);
 						}

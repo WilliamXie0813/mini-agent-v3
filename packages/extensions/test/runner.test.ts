@@ -232,3 +232,25 @@ describe("tool_result decision hook", () => {
 		expect(result?.role === "toolResult" && result.content[0]).toEqual({ type: "text", text: "kept" });
 	});
 });
+
+describe("context decision hook", () => {
+	test("folds across extensions: each sees the previous one's output", async () => {
+		const runner = new ExtensionRunner();
+		const sizes: number[] = [];
+		await runner.use({ name: "drop-system", factory: (api) => { api.on("context", (m) => m.filter((x) => x.role !== "system")); } });
+		await runner.use({ name: "count", factory: (api) => { api.on("context", (m) => { sizes.push(m.length); return [...m]; }); } });
+		const agent = new Agent({
+			system: "s", streamFn: createFakeStreamFn(["done"]),
+			...runner.sessionHooks(),
+		});
+		await agent.prompt("go");
+		expect(sizes).toEqual([1]);
+	});
+
+	test("a throwing handler rejects the prompt with the original error", async () => {
+		const runner = new ExtensionRunner({ log: () => {} });
+		await runner.use({ name: "boom", factory: (api) => { api.on("context", () => { throw new Error("pruner crashed"); }); } });
+		const agent = new Agent({ system: "s", streamFn: createFakeStreamFn(["done"]), ...runner.sessionHooks() });
+		await expect(agent.prompt("go")).rejects.toThrowError("pruner crashed");
+	});
+});

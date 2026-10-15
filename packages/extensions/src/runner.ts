@@ -113,6 +113,7 @@ export class ExtensionRunner implements ExtensionAPI {
 	sessionHooks(): SessionHooks {
 		const toolCallHandlers = this.handlersFor("tool_call");
 		const toolResultHandlers = this.handlersFor("tool_result");
+		const contextHandlers = this.handlersFor("context");
 		const hooks: SessionHooks = {};
 		if (toolCallHandlers.length > 0) {
 			hooks.beforeToolCall = async (context) => {
@@ -141,6 +142,21 @@ export class ExtensionRunner implements ExtensionAPI {
 					}
 				}
 				return accumulated;
+			};
+		}
+		if (contextHandlers.length > 0) {
+			hooks.transformContext = async (messages, signal) => {
+				let current = [...messages];
+				for (const { name, handler } of contextHandlers) {
+					try {
+						const next = await handler(current);
+						if (next !== undefined) current = next;
+					} catch (error) {
+						this.log(`extension "${name}" handler for "context" failed: ${errorMessage(error)}`);
+						throw error;
+					}
+				}
+				return current;
 			};
 		}
 		return hooks;
