@@ -24,3 +24,11 @@ export type {
 export { validateJsonSchema } from "./json-schema.ts";
 export type { ValidationIssue } from "./json-schema.ts";
 export { createReadTool, createEditTool, createBashTool, createDefaultTools } from "./tools.ts";
+export { SessionJournal } from "./session-journal.ts";
+export type {
+	SessionEntry,
+	SessionEntryBase,
+	SessionEntryData,
+	SessionEntryOf,
+	SessionHeader,
+} from "./session-types.ts";
