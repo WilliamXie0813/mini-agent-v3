@@ -364,9 +364,27 @@
 	.quiz-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 	.quiz {
 		border: 1.5px solid var(--hairline);
+		border-left: 4px solid var(--accent);
 		border-radius: 10px;
 		padding: 18px;
 		background: #fffdf7;
+	}
+	details.glossary {
+		background: #fffdf7;
+		border: 1px solid var(--hairline);
+		border-radius: 10px;
+		padding: 16px 20px;
+		margin: 0 0 22px;
+	}
+	details.glossary summary {
+		cursor: pointer;
+		font-weight: 700;
+		color: var(--ink);
+	}
+	details.glossary p {
+		margin: 12px 0 0;
+		font-size: 15px;
+		color: var(--ink-soft);
 	}
 	.quiz h3 { margin: 0 0 10px; font-size: 17px; }
 	.answer {
@@ -422,6 +440,14 @@
 
 <section id="s0">
 	<div class="sec-head"><div class="sec-num">1</div><h2>从两个出口，收敛成一条事件流</h2></div>
+	<details class="glossary">
+		<summary>名词表（先扫一眼，后面随时回来查）</summary>
+		<p><strong>run</strong>：一次 <code>agent.prompt()</code> 从开始到真正 idle 的整个过程，中间可能包含好几轮请求模型。</p>
+		<p><strong>turn</strong>：run 内部的一轮——一次模型请求、它可能带的工具调用、工具执行和结果，算一个 turn。一个 run 可能有好几个 turn（比如模型先调工具，再追问一次才给出最终回答）。</p>
+		<p><strong>listener</strong>：订阅 Agent 事件的外部代码，比如 CLI 把文字打到屏幕、未来往磁盘写 session。Agent 必须等它们处理完事件，才能说这一步「真的做完了」。</p>
+		<p><strong>backpressure</strong>：事件产生的速度不能超过 listener 消费的速度——Agent 发完一个事件会等 listener 处理完再继续，不会把事件堆起来不管。</p>
+		<p><strong>activeRun / isStreaming / turnOpen / messageOpen</strong>：Agent 内部的四个开关，分别回答「这次 run 还没结束吗」「assistant 还在吐字吗」「当前 turn 还没关闭吗」「当前这条 message 还没写完吗」。进阶模式里会实时看到它们怎么开关，鼠标悬停在开关上也会提示含义。</p>
+	</details>
 	<table>
 		<tr><th>观察什么</th><th>阶段 3</th><th>阶段 4</th></tr>
 		<tr><td>流式文本</td><td><code>onDelta(delta)</code></td><td><code>message_update.assistantMessageEvent</code></td></tr>
@@ -433,6 +459,7 @@
 		<span class="tag">一句话</span>
 		<p><strong>loop 负责发生什么，Agent 负责记住什么，UI 只负责听事件。</strong>真实 state 不再和 loop 共用数组，而是通过事件单向回流。</p>
 	</div>
+	<p>把这张图读成一句话：<strong>系统从原来两个出口（listener 当场看到的、和历史数组里实际存的）才能拼出"现在发生了什么"，收敛成只有一条事件流去描述它。</strong>如果继续留着两个出口，listener 在工具执行完之前打出来的日志，完全可能和稍后历史数组里真正保存的内容对不上——没人能保证这两份"现在"说的是同一件事。下面这张图，就是收敛之后一个事件具体会流过哪几步：</p>
 	<pre>state
   └─ createContextSnapshot()
        └─ agentLoop(snapshot)
@@ -490,7 +517,7 @@
 
 <section id="s2">
 	<div class="sec-head"><div class="sec-num">3</div><h2><code>message_update</code> 为什么装两份东西</h2></div>
-	<p>它连接两个层：内层保留 provider 原始增量，外层给 Agent/UI 一个统一的 message 字段。字段名相似，但职责不同。</p>
+	<p>它连接两个层：内层保留 provider 原始增量，外层给 Agent/UI 一个统一的 message 字段。字段名相似，但职责不同。下面仍然是上一节同一个 run——模型吐出最终回答「done」时，第一个字符 "d" 产生的那个事件：</p>
 	<div class="figure">
 		<div class="cap">图 2 · provider 事件 → agent 事件</div>
 		<div class="anatomy">
@@ -498,7 +525,7 @@
 				<h4>AssistantMessageEvent（ai 层）</h4>
 				<pre>{
   type: <span class="highlight">"text_delta"</span>,
-  delta: "你",
+  delta: "d",
   contentIndex: 0,
   partial: liveMessage
 }</pre>
@@ -511,17 +538,17 @@
   message: { ...partial },
   assistantMessageEvent: {
     type: "text_delta",
-    delta: "你",
+    delta: "d",
     ...
   }
 }</pre>
 			</div>
 		</div>
 		<div class="btns">
-			<button class="primary" id="anatomy-toggle">显示 UI 怎样消费它</button>
+			<button class="primary" id="anatomy-toggle">收起</button>
 		</div>
-		<div class="callout" id="anatomy-answer" hidden>
-			<span class="tag">两个消费者</span>
+		<div class="callout" id="anatomy-answer">
+			<span class="tag">两个消费者 · 这是本节的答案，默认展开</span>
 			<p>CLI 看内层 <code>delta</code>，立即写到 stdout；Agent 的 reducer不处理 update，直到 <code>message_end</code> 才把完整消息放进历史。未来 Web UI 可以用顶层 <code>message</code> 更新消息卡片，而不用理解 provider 的全部协议。</p>
 		</div>
 	</div>
@@ -577,22 +604,22 @@
 	<div class="quiz-grid">
 		<div class="quiz">
 			<h3>1. 为什么 loop 无状态？</h3>
-			<button data-answer="q1">查看参考答案</button>
+			<button class="primary" data-answer="q1">查看参考答案</button>
 			<div class="answer" id="q1" hidden>让 loop 只处理一次 run 的过程，可以独立测试；真实 state 只有事件 reducer 一条写入路径，因此 UI、持久化与内存不会各自看到不同版本。</div>
 		</div>
 		<div class="quiz">
 			<h3>2. 为什么 listener 必须 await？</h3>
-			<button data-answer="q2">查看参考答案</button>
+			<button class="primary" data-answer="q2">查看参考答案</button>
 			<div class="answer" id="q2" hidden>因为 listener 未来会做持久化等正确性工作。若不等待，<code>agent_end</code> 只表示「通知已发出」，不能表示「本轮副作用已完成」。</div>
 		</div>
 		<div class="quiz">
 			<h3>3. 为什么要三层事件？</h3>
-			<button data-answer="q3">查看参考答案</button>
+			<button class="primary" data-answer="q3">查看参考答案</button>
 			<div class="answer" id="q3" hidden>provider delta 只能描述 assistant 内容增长；turn 还包括工具，run 还包括多轮请求。三层让 UI 能分别回答「哪条消息」「哪一轮」「整个任务」是否结束。</div>
 		</div>
 		<div class="quiz">
 			<h3>4. 为什么 agent_end 只带本轮消息？</h3>
-			<button data-answer="q4">查看参考答案</button>
+			<button class="primary" data-answer="q4">查看参考答案</button>
 			<div class="answer" id="q4" hidden>完整 transcript 已在 <code>agent.state.messages</code>。事件只带增量，订阅者不必每轮重复接收旧历史，也不必再次计算哪些消息是新产生的。</div>
 		</div>
 	</div>
@@ -857,11 +884,11 @@
 		});
 		const flags = step?.flags ?? { streaming: false, active: false, turn: false, message: false };
 		$("state-flags").innerHTML = [
-			["isStreaming", flags.streaming],
-			["activeRun", flags.active],
-			["turnOpen", flags.turn],
-			["messageOpen", flags.message],
-		].map(([name, on]) => `<span class="flag ${on ? "on" : ""}">${name}=${on}</span>`).join("");
+			["isStreaming", flags.streaming, "assistant 还在吐字吗"],
+			["activeRun", flags.active, "这次 run 还没结束吗"],
+			["turnOpen", flags.turn, "当前 turn 还没关闭吗"],
+			["messageOpen", flags.message, "当前这条 message 还没写完吗"],
+		].map(([name, on, hint]) => `<span class="flag ${on ? "on" : ""}" title="${hint}">${name}=${on}</span>`).join("");
 		$("state-messages").innerHTML = (step?.messages ?? []).map((message) =>
 			`<div class="msg ${message.role}">${message.label}</div>`
 		).join("") || '<span style="color:var(--muted);font-size:11px">messages = []</span>';
@@ -947,15 +974,15 @@
 		stream: {
 			events: [
 				["message_start(partial)", ""],
-				["message_update(\"a\")", ""],
+				["message_update(\"d\")", ""],
 				["Ctrl+C → stream end without done", "cut"],
 				["message_end(aborted)", "keep"],
 				["turn_end → agent_end", "keep"],
 			],
 			history: [
-				["user: \"hi\"", "keep"],
+				["user: \"echo hello\"", "keep"],
 				["assistant: stopReason=aborted, text=\"\"", "keep"],
-				["半截 \"a\" 不入历史", "cut"],
+				["半截 \"d\" 不入历史", "cut"],
 			],
 			note: "<span class=\"tag\">流内中止</span><p>已有的 message_start 不重复发送；synthetic aborted message 直接用 message_end 关闭它。UI 留着屏幕上的半句，但历史只保存完整的 aborted 语义。</p>",
 		},

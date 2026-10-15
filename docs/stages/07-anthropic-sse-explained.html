@@ -21,6 +21,9 @@
 	.story{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.lane{padding:15px;border:1.5px solid var(--line);border-radius:10px;min-height:195px;transition:.15s}.lane.focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(214,64,31,.12)}.lane h4{font:11px Consolas,monospace;letter-spacing:.1em;border-bottom:1px solid var(--line);padding-bottom:9px;margin-bottom:10px;color:var(--muted)}.lane pre{font-size:11.5px;background:transparent;box-shadow:none;padding:0;color:var(--soft);margin:0}
 	.status{background:var(--deep);border-radius:8px;padding:13px 16px;margin-top:15px;font:13px/1.8 Consolas,monospace}.event{background:var(--code);color:var(--code-fg)}.event strong{color:#e8a04c}
 	.debugger{display:grid;grid-template-columns:225px 1fr;gap:18px}.steps{display:flex;flex-direction:column;gap:6px}.step{border-radius:6px;text-align:left;font-size:11.5px;padding:8px 10px}.step.active{background:var(--accent);color:white;border-color:var(--accent)}.detail{display:grid;grid-template-columns:1fr 1fr;gap:12px}.card{padding:15px;border:1.5px solid var(--line);border-radius:9px;min-height:100px}.card h4{font:11px Consolas,monospace;color:var(--muted);margin-bottom:8px}.card p{font-size:14px;margin:0}.source{grid-column:1/-1}.source pre{box-shadow:none;margin-bottom:0}
+	.detail-primary{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}.detail-primary .card{min-height:auto}.card.why{border-color:var(--blue);border-width:2px}.card.counter{border:none;border-left:4px solid var(--accent);background:var(--deep);border-radius:0 9px 9px 0}
+	.detail-flow{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;font-size:13.5px;color:var(--soft);margin:0 0 14px;padding:13px 15px;background:#fffdf7;border:1px solid var(--line);border-radius:8px}.detail-flow strong{color:var(--ink);font-size:11px;font-family:Consolas,monospace;letter-spacing:.06em;display:block;margin-bottom:2px}.detail-flow .arrow{color:var(--muted);font-size:16px}
+	.bridge{font-size:14.5px;color:var(--muted);margin:-6px 0 18px}
 	.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.grid .card{background:#fffdf7}.grid pre{font-size:12px}.map{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0}.chip{padding:9px 13px;background:var(--deep);border-radius:6px;border-left:3px solid var(--blue);font:12px Consolas,monospace}.chip.good{border-color:var(--green)}.chip.warn{border-color:var(--accent)}
 	table{border-collapse:collapse;width:100%;margin:20px 0;font-size:14.5px}th,td{border:1px solid var(--line);padding:11px 13px;vertical-align:top;text-align:left}th{background:var(--deep);font-family:Consolas,monospace}td{color:var(--soft)}
 	details{border:1px solid var(--line);padding:14px 17px;border-radius:9px;margin:12px 0;background:#fffdf7}summary{cursor:pointer;font-weight:700}details p{margin:15px 0 0;font-size:15px}.quiz{margin-top:16px;padding-top:15px;border-top:1px dashed var(--line)}
@@ -73,6 +76,10 @@ data: {"type":"message_stop"}</pre>
 		<p><strong>done</strong>：整次回复被证明完整（收到 message_stop）后才发出的终止事件，携带权威完整消息——只有它能进历史。</p>
 		<p><strong>terminal</strong>：done 或 error 的统称；一次请求必须恰好以一个 terminal 收尾。</p>
 		<p><strong>stopReason</strong>：模型为什么停下——stop（说完）/ toolUse（要调工具）/ length（被 max_tokens 截断）/ error / aborted。</p>
+		<p><strong>content_block_delta</strong>：上图里的那种帧，携带某个 block 的增量内容（文字片段，或工具参数 JSON 的一小段）。</p>
+		<p><strong>content_block_stop</strong>：这个 block 不会再有新内容了，但不代表整条回复已经结束——后面可能还有别的 block。</p>
+		<p><strong>message_delta / message_stop</strong>：message_delta 携带 stopReason 等整条消息级别的信息；message_stop 才是整条回复真正结束的信号，本页所有“done”判断都在等它。</p>
+		<p><strong>tool_use / rawJSON</strong>：模型要调用工具时生成的 block；它的参数是边生成边拼接的字符串（rawJSON），要等 block 结束才能尝试解析成真正的对象。</p>
 	</details>
 	<p>本页交互是离线教学模拟，不发送 API 请求、不读取 key、不执行真实工具。源码已实现，本地 HTTP 验收已覆盖；<strong>真实 Kimi 联调已于 2026-10-14 执行</strong>：流式文本 → read 工具回喂 → 最终总结完整走通，并确认了网关会主动返回 thinking block（适配器显式跳过）。</p>
 </section>
@@ -106,14 +113,19 @@ data: {"type":"message_stop"}</pre>
 			<div class="steps" id="debug-steps" aria-label="选择故事步骤"></div>
 			<div>
 				<h3 id="debug-title" style="margin-top:0"></h3>
+				<div class="detail-primary">
+					<div class="card why"><h4>为什么存在这一步</h4><p id="d-why"></p></div>
+					<div class="card counter"><h4>如果反过来会怎样</h4><p id="d-counter"></p></div>
+				</div>
+				<div class="detail-flow">
+					<span><strong>输入</strong><span id="d-input"></span></span>
+					<span class="arrow">→</span>
+					<span><strong>输出</strong><span id="d-output"></span></span>
+					<span class="arrow">→</span>
+					<span><strong>事件 / 历史</strong><span id="d-state"></span></span>
+				</div>
 				<div class="detail">
-					<div class="card"><h4>为什么存在</h4><p id="d-why"></p></div>
-					<div class="card"><h4>输入</h4><p id="d-input"></p></div>
-					<div class="card"><h4>输出</h4><p id="d-output"></p></div>
-					<div class="card"><h4>事件 / 历史</h4><p id="d-state"></p></div>
-					<div class="card"><h4>如果反过来</h4><p id="d-counter"></p></div>
-					<div class="card"><h4>到哪找源码</h4><p id="d-file"></p></div>
-					<div class="card source"><h4>关键源码摘录 / 有标记的省略</h4><pre id="d-source"></pre></div>
+					<div class="card source"><h4>关键源码摘录 / 有标记的省略 · <span id="d-file"></span></h4><pre id="d-source"></pre></div>
 				</div>
 			</div>
 		</div>
@@ -122,6 +134,7 @@ data: {"type":"message_stop"}</pre>
 
 <section id="s3">
 	<div class="sec-head"><div class="sec-num">3</div><h2>网络边界：半个中文字符不是坏 JSON</h2></div>
+	<p class="bridge">这是上面第 4 步（readSse → bytes 变帧）的放大镜，特意换成更短的“你好”，让切分点肉眼可见。</p>
 	<p>“你”的 UTF-8 是三个字节。网络可以在第一个字节之后截开。若每个 chunk 都单独 decode，半截字符变成 <code>�</code>；若使用 <code>decode(chunk, { stream: true })</code>，decoder 把半截字节留到下次。</p>
 	<div class="figure">
 		<div class="cap">逐 chunk 实验 · 故意切开“你”和“好”的 UTF-8</div>
@@ -146,6 +159,7 @@ if (data.length) yield { event, data: data.join("\n") };</pre>
 
 <section id="s4">
 	<div class="sec-head"><div class="sec-num">4</div><h2>参数边界：字符串不是参数对象</h2></div>
+	<p class="bridge">回到第 6 步（toolcall_delta / toolcall_end）：c1、c2 的参数这时候都还只是正在拼接的字符串，不是能直接拿去调用的对象。</p>
 	<pre>tool_use c1: rawJSON = '{"path":' + '"a.txt"}'
 tool_use c2: rawJSON = '{"path":"b.txt"}'
 
@@ -176,6 +190,7 @@ try {
 
 <section id="s5">
 	<div class="sec-head"><div class="sec-num">5</div><h2>终止边界：同一条参数流的四种结局</h2></div>
+	<p class="bridge">仍是 c1/c2 这次请求：第 7 步（message_stop → done）只演示了最顺利的那种结局，下面是另外三种可能发生的收尾方式。</p>
 	<div class="figure">
 		<div class="cap">终止分叉实验 · 点击场景比较历史与副作用</div>
 		<div class="btns">
@@ -286,20 +301,20 @@ pnpm dev
 (() => {
 	const $ = (id) => document.getElementById(id);
 	const steps = [
-		{ title:"prompt → Agent 快照", lane:"request", why:"loop 不直接改 Agent 的内部状态。", input:"用户问题、既有历史、工具表。", output:"一次 run 与本轮 context。", state:"user 先通过 message_end 入历史。", counter:"provider 若能改 Agent，假/真模型就有不同状态规则。", file:"core/src/agent.ts / agent-loop.ts", source:"await agentLoop({\n  messages: this._state.messages.slice(),\n  streamFn: this.streamFn,\n  // 其余配置省略\n});" },
-		{ title:"toAnthropicRequest → wire", lane:"request", why:"内部角色和 Anthropic 协议不同。", input:"StreamContext，system 仍是字符串消息。", output:"system、messages、tools.input_schema。", state:"原始 messages 不变；这里只生成请求副本。", counter:"在 core 里转换，会把 provider 协议渗入运行时。", file:"ai/src/anthropic-messages.ts", source:"body: JSON.stringify(\n  toAnthropicRequest(context, { model, maxTokens })\n)" },
-		{ title:"fetch → 立刻已有 stream", lane:"network", why:"生产源按网络节奏推进，消费者不能控制字节到达。", input:"API key、URL、POST body、AbortSignal。", output:"同步返回 stream；微任务里等 HTTP。", state:"start 已入事件队列；还没有完整 assistant。", counter:"await HTTP 再返回消费句柄，会失去早期事件与错误收尾位置。", file:"ai/src/anthropic.ts", source:"const stream = createAssistantMessageEventStream();\nconst state = createAnthropicStreamState(stream, diagnostic);\nqueueMicrotask(async () => { /* HTTP 泵，省略 */ });\nreturn stream;" },
-		{ title:"readSse → bytes 变帧", lane:"network", why:"网络 chunks 没有 JSON 边界。", input:"任意分片的 Uint8Array。", output:"空行分隔的 {event,data}。", state:"中文字节与行缓冲还在传输层。", counter:"每块独立 decode/parse，切开的中文与 JSON 会坏。", file:"ai/src/sse.ts", source:"buffer += eof ? decoder.decode()\n  : decoder.decode(chunk.value, { stream: true });\n// 空行时：\nif (data.length) yield { event, data: data.join(\"\\n\") };" },
-		{ title:"text_delta → 即时显示", lane:"provider", why:"不必等完整回复就让人看到进展。", input:"content_block_delta(text_delta)。", output:"text_delta + live partial。", state:"CLI 写字；历史仍没有完整 assistant。", counter:"每个 delta 入历史，会把一句话变成几十条消息。", file:"ai/src/anthropic-stream.ts / core/src/stream-assistant.ts", source:"if (block.type === \"text\") block.text += value;\n// 统一事件再被 core 包成 message_update。" },
-		{ title:"toolcall_delta / toolcall_end", lane:"provider", why:"两个工具的参数字符串必须分开攒。", input:"c1/c2 的 input_json_delta 碎片。", output:"各自 rawJSON；partial.arguments 仍 {}。", state:"block_stop 不是 terminal，不进入执行。", counter:"解析半截参数或 block_stop 就执行，会越过整批保护。", file:"ai/src/anthropic-stream.ts", source:"else state.json += value;\nstream.push({\n  type: block.type === \"text\" ? \"text_delta\" : \"toolcall_delta\",\n  contentIndex: index, delta: value, partial\n});" },
-		{ title:"message_stop → done(toolUse)", lane:"provider", why:"只有此刻证明整次响应完整。", input:"全部 blocks、rawJSON、tool_use stop_reason、usage。", output:"解析后的 arguments 与权威 message。", state:"done 和 result() 指向同一份终止结果。", counter:"把 message_delta 当 done，会在 message_stop 缺失时误报成功。", file:"ai/src/anthropic-stream.ts / event-stream.ts", source:"// message_stop 分支中的节选：\nblock.arguments = state.json === \"\"\n  ? state.input : object(JSON.parse(state.json));\n// 校验完成后：\nstream.push({ type: \"done\", message: { ...partial, stopReason } });" },
-		{ title:"message_end → assistant 入历史", lane:"core", why:"只有语义完整的回复能参与下一次请求。", input:"done.message，经 consumeAssistantMessage。", output:"message_end；loop 保存 assistant。", state:"历史：[user, assistant(text+c1+c2)]。", counter:"若历史含 raw 参数碎片，resume/模型回喂都没有稳定单位。", file:"core/src/stream-assistant.ts / agent-loop.ts", source:"case \"done\":\n  await emit({ type: \"message_end\", message: event.message });\n  break;\n// loop 再以 message.stopReason 决定后续路径。" },
-		{ title:"prepare 串行 → execute 并行", lane:"core", why:"阶段 7 不重写阶段 6 的调度。", input:"完整 c1/c2，schema 与 beforeToolCall。", output:"先完成两个 prepare，再执行两个 thunk。", state:"工具执行事件不等于工具结果消息。", counter:"adapter 自己执行工具，就绕过权限 hook 和文件队列。", file:"core/src/execute-tool-calls-parallel.ts", source:"// 调度结构示意，不是新 provider 代码：\nprepare(c1); prepare(c2);\nPromise.all([execute(c1), execute(c2)]);" },
-		{ title:"c2 完成 → end(c2)", lane:"core", why:"UI 应立即看到快工具完成。", input:"fast_read 的真实结果。", output:"tool_execution_end(c2)。", state:"c1 还在等；toolResult 未按完成顺序入历史。", counter:"等 c1 才显示 c2，就牺牲实时反馈。", file:"core/src/execute-tool-calls-parallel.ts", source:"// end 在各 thunk 内实时发。\n// ordered outcomes 尚未整批 settle。" },
-		{ title:"c1 完成 → end(c1)", lane:"core", why:"慢工具完成后，整批才有全部结果。", input:"slow_read 的真实结果。", output:"tool_execution_end(c1)；ordered=[c1,c2]。", state:"完成顺序是 c2→c1，返回数组仍 c1→c2。", counter:"按 Promise 完成时间生成历史，会破坏源顺序。", file:"core/src/execute-tool-calls-parallel.ts", source:"// Promise.all 按输入 index 保序，\n// 不是按 promise resolve 时间排序。" },
-		{ title:"toolResult → 源顺序入历史", lane:"core", why:"模型按发出的调用顺序理解结果。", input:"ordered outcomes [c1,c2]。", output:"两个 toolResult message_start/end。", state:"历史追加 toolResult(c1), toolResult(c2)。", counter:"把 end 事件当历史消息，两个消费者就混在一起。", file:"core/src/tool-call-events.ts / agent-loop.ts", source:"// 批次完成后，按 ordered 遍历发结果消息。\noptions.messages.push(...toolResults);" },
-		{ title:"下一次请求 → user/tool_result", lane:"request", why:"Anthropic 不接受 IR 的 toolResult 角色。", input:"assistant(tool_use×2) 后的连续结果。", output:"一条 user 包含 c1/c2 tool_result。", state:"再调用同一个 StreamFn，不额外建 provider 通道。", counter:"每个结果乱序或独立错配，会污染模型协议输入。", file:"ai/src/anthropic-messages.ts", source:"{ type: \"tool_result\",\n  tool_use_id: message.toolCallId,\n  is_error: message.isError,\n  content: /* text blocks */ [] }\n// 连续相同 role 合并 content。" },
-		{ title:"最终文本 → turn_end → agent_end", lane:"core", why:"没有工具调用，循环自然收敛。", input:"下一轮 done(stop) 的总结。", output:"完整总结、turn_end、agent_end。", state:"最后的 listener 被 await 后，Agent 才 idle。", counter:"不等 listener，落盘/显示可能在 idle 之后才完成。", file:"core/src/agent.ts / agent-loop.ts", source:"await emit({ type: \"turn_end\", message, toolResults: [] });\nawait emit({ type: \"agent_end\", messages: newMessages });\nreturn options.messages;" }
+		{ title:"prompt → Agent 快照", lane:"request", why:"loop 不直接改 Agent 的内部状态。", input:"用户问题、既有历史、工具表。", output:"一次 run 与本轮 context。", state:"user 先通过 message_end 入历史。", counter:"provider 若能改 Agent，假/真模型就有不同状态规则。", file:"core/src/agent.ts / agent-loop.ts", source:"await agentLoop({\n  messages: this._state.messages.slice(),\n  streamFn: this.streamFn,\n  // 其余配置省略\n});", req:"prompt(\"读两个文件\")\nuser → history", net:"等待 HTTP/SSE…", prov:"partial:\ncontent: []\nstopReason: pending", core:"history: [user]\n工具执行次数: 0" },
+		{ title:"toAnthropicRequest → wire", lane:"request", why:"内部角色和 Anthropic 协议不同。", input:"StreamContext，system 仍是字符串消息。", output:"system、messages、tools.input_schema。", state:"原始 messages 不变；这里只生成请求副本。", counter:"在 core 里转换，会把 provider 协议渗入运行时。", file:"ai/src/anthropic-messages.ts", source:"body: JSON.stringify(\n  toAnthropicRequest(context, { model, maxTokens })\n)", req:"POST /coding/v1/messages\nsystem + user\ninput_schema × 2\nstream: true", net:"等待 HTTP/SSE…", prov:"partial:\ncontent: []\nstopReason: pending", core:"history: [user]\n工具执行次数: 0" },
+		{ title:"fetch → 立刻已有 stream", lane:"network", why:"生产源按网络节奏推进，消费者不能控制字节到达。", input:"API key、URL、POST body、AbortSignal。", output:"同步返回 stream；微任务里等 HTTP。", state:"start 已入事件队列；还没有完整 assistant。", counter:"await HTTP 再返回消费句柄，会失去早期事件与错误收尾位置。", file:"ai/src/anthropic.ts", source:"const stream = createAssistantMessageEventStream();\nconst state = createAnthropicStreamState(stream, diagnostic);\nqueueMicrotask(async () => { /* HTTP 泵，省略 */ });\nreturn stream;", req:"POST /coding/v1/messages\nsystem + user\ninput_schema × 2\nstream: true", net:"等待 HTTP/SSE…", prov:"partial:\ncontent: []\nstopReason: pending", core:"history: [user]\n工具执行次数: 0" },
+		{ title:"readSse → bytes 变帧", lane:"network", why:"网络 chunks 没有 JSON 边界。", input:"任意分片的 Uint8Array。", output:"空行分隔的 {event,data}。", state:"中文字节与行缓冲还在传输层。", counter:"每块独立 decode/parse，切开的中文与 JSON 会坏。", file:"ai/src/sse.ts", source:"buffer += eof ? decoder.decode()\n  : decoder.decode(chunk.value, { stream: true });\n// 空行时：\nif (data.length) yield { event, data: data.join(\"\\n\") };", req:"POST /coding/v1/messages\nsystem + user\ninput_schema × 2\nstream: true", net:"bytes（任意分片）\n→ SSE 空行分帧\ncontent_block_*", prov:"partial:\ncontent: []\nstopReason: pending", core:"history: [user]\n工具执行次数: 0" },
+		{ title:"text_delta → 即时显示", lane:"provider", why:"不必等完整回复就让人看到进展。", input:"content_block_delta(text_delta)。", output:"text_delta + live partial。", state:"CLI 写字；历史仍没有完整 assistant。", counter:"每个 delta 入历史，会把一句话变成几十条消息。", file:"ai/src/anthropic-stream.ts / core/src/stream-assistant.ts", source:"if (block.type === \"text\") block.text += value;\n// 统一事件再被 core 包成 message_update。", req:"POST /coding/v1/messages\nsystem + user\ninput_schema × 2\nstream: true", net:"bytes（任意分片）\n→ SSE 空行分帧\ncontent_block_*", prov:"text: 先读两个文件。\nstopReason: pending", core:"history: [user]\n工具执行次数: 0" },
+		{ title:"toolcall_delta / toolcall_end", lane:"provider", why:"两个工具的参数字符串必须分开攒。", input:"c1/c2 的 input_json_delta 碎片。", output:"各自 rawJSON；partial.arguments 仍 {}。", state:"block_stop 不是 terminal，不进入执行。", counter:"解析半截参数或 block_stop 就执行，会越过整批保护。", file:"ai/src/anthropic-stream.ts", source:"else state.json += value;\nstream.push({\n  type: block.type === \"text\" ? \"text_delta\" : \"toolcall_delta\",\n  contentIndex: index, delta: value, partial\n});", req:"POST /coding/v1/messages\nsystem + user\ninput_schema × 2\nstream: true", net:"bytes（任意分片）\n→ SSE 空行分帧\ncontent_block_*", prov:"text + c1{} + c2{}\nrawJSON 分别积累\nstopReason: pending", core:"history: [user]\n工具执行次数: 0" },
+		{ title:"message_stop → done(toolUse)", lane:"provider", why:"只有此刻证明整次响应完整。", input:"全部 blocks、rawJSON、tool_use stop_reason、usage。", output:"解析后的 arguments 与权威 message。", state:"done 和 result() 指向同一份终止结果。", counter:"把 message_delta 当 done，会在 message_stop 缺失时误报成功。", file:"ai/src/anthropic-stream.ts / event-stream.ts", source:"// message_stop 分支中的节选：\nblock.arguments = state.json === \"\"\n  ? state.input : object(JSON.parse(state.json));\n// 校验完成后：\nstream.push({ type: \"done\", message: { ...partial, stopReason } });", req:"POST /coding/v1/messages\nsystem + user\ninput_schema × 2\nstream: true", net:"message_delta(tool_use)\nmessage_stop\n本轮传输结束", prov:"done(toolUse)\nc1 {path: a.txt}\nc2 {path: b.txt}\nusage 完整", core:"history: [user]\n工具执行次数: 0" },
+		{ title:"message_end → assistant 入历史", lane:"core", why:"只有语义完整的回复能参与下一次请求。", input:"done.message，经 consumeAssistantMessage。", output:"message_end；loop 保存 assistant。", state:"历史：[user, assistant(text+c1+c2)]。", counter:"若历史含 raw 参数碎片，resume/模型回喂都没有稳定单位。", file:"core/src/stream-assistant.ts / agent-loop.ts", source:"case \"done\":\n  await emit({ type: \"message_end\", message: event.message });\n  break;\n// loop 再以 message.stopReason 决定后续路径。", req:"POST /coding/v1/messages\nsystem + user\ninput_schema × 2\nstream: true", net:"message_delta(tool_use)\nmessage_stop\n本轮传输结束", prov:"done(toolUse)\nc1 {path: a.txt}\nc2 {path: b.txt}\nusage 完整", core:"history: [user,assistant]\nprepare c1 → c2\nexecute c1 ∥ c2" },
+		{ title:"prepare 串行 → execute 并行", lane:"core", why:"阶段 7 不重写阶段 6 的调度。", input:"完整 c1/c2，schema 与 beforeToolCall。", output:"先完成两个 prepare，再执行两个 thunk。", state:"工具执行事件不等于工具结果消息。", counter:"adapter 自己执行工具，就绕过权限 hook 和文件队列。", file:"core/src/execute-tool-calls-parallel.ts", source:"// 调度结构示意，不是新 provider 代码：\nprepare(c1); prepare(c2);\nPromise.all([execute(c1), execute(c2)]);", req:"POST /coding/v1/messages\nsystem + user\ninput_schema × 2\nstream: true", net:"message_delta(tool_use)\nmessage_stop\n本轮传输结束", prov:"done(toolUse)\nc1 {path: a.txt}\nc2 {path: b.txt}\nusage 完整", core:"history: [user,assistant]\nprepare c1 → c2\nexecute c1 ∥ c2" },
+		{ title:"c2 完成 → end(c2)", lane:"core", why:"UI 应立即看到快工具完成。", input:"fast_read 的真实结果。", output:"tool_execution_end(c2)。", state:"c1 还在等；toolResult 未按完成顺序入历史。", counter:"等 c1 才显示 c2，就牺牲实时反馈。", file:"core/src/execute-tool-calls-parallel.ts", source:"// end 在各 thunk 内实时发。\n// ordered outcomes 尚未整批 settle。", req:"POST /coding/v1/messages\nsystem + user\ninput_schema × 2\nstream: true", net:"message_delta(tool_use)\nmessage_stop\n本轮传输结束", prov:"done(toolUse)\nc1 {path: a.txt}\nc2 {path: b.txt}\nusage 完整", core:"end(c2)\nc1 等待中\n结果尚未入历史" },
+		{ title:"c1 完成 → end(c1)", lane:"core", why:"慢工具完成后，整批才有全部结果。", input:"slow_read 的真实结果。", output:"tool_execution_end(c1)；ordered=[c1,c2]。", state:"完成顺序是 c2→c1，返回数组仍 c1→c2。", counter:"按 Promise 完成时间生成历史，会破坏源顺序。", file:"core/src/execute-tool-calls-parallel.ts", source:"// Promise.all 按输入 index 保序，\n// 不是按 promise resolve 时间排序。", req:"POST /coding/v1/messages\nsystem + user\ninput_schema × 2\nstream: true", net:"message_delta(tool_use)\nmessage_stop\n本轮传输结束", prov:"done(toolUse)\nc1 {path: a.txt}\nc2 {path: b.txt}\nusage 完整", core:"end(c2) → end(c1)\nordered = [c1,c2]" },
+		{ title:"toolResult → 源顺序入历史", lane:"core", why:"模型按发出的调用顺序理解结果。", input:"ordered outcomes [c1,c2]。", output:"两个 toolResult message_start/end。", state:"历史追加 toolResult(c1), toolResult(c2)。", counter:"把 end 事件当历史消息，两个消费者就混在一起。", file:"core/src/tool-call-events.ts / agent-loop.ts", source:"// 批次完成后，按 ordered 遍历发结果消息。\noptions.messages.push(...toolResults);", req:"POST /coding/v1/messages\nsystem + user\ninput_schema × 2\nstream: true", net:"message_delta(tool_use)\nmessage_stop\n本轮传输结束", prov:"done(toolUse)\nc1 {path: a.txt}\nc2 {path: b.txt}\nusage 完整", core:"history:\nuser, assistant,\ntoolResult(c1), toolResult(c2)" },
+		{ title:"下一次请求 → user/tool_result", lane:"request", why:"Anthropic 不接受 IR 的 toolResult 角色。", input:"assistant(tool_use×2) 后的连续结果。", output:"一条 user 包含 c1/c2 tool_result。", state:"再调用同一个 StreamFn，不额外建 provider 通道。", counter:"每个结果乱序或独立错配，会污染模型协议输入。", file:"ai/src/anthropic-messages.ts", source:"{ type: \"tool_result\",\n  tool_use_id: message.toolCallId,\n  is_error: message.isError,\n  content: /* text blocks */ [] }\n// 连续相同 role 合并 content。", req:"assistant[tool_use c1,c2]\nuser[tool_result c1,c2]\n→ 再问模型", net:"message_delta(tool_use)\nmessage_stop\n本轮传输结束", prov:"done(toolUse)\nc1 {path: a.txt}\nc2 {path: b.txt}\nusage 完整", core:"history:\nuser, assistant,\ntoolResult(c1), toolResult(c2)" },
+		{ title:"最终文本 → turn_end → agent_end", lane:"core", why:"没有工具调用，循环自然收敛。", input:"下一轮 done(stop) 的总结。", output:"完整总结、turn_end、agent_end。", state:"最后的 listener 被 await 后，Agent 才 idle。", counter:"不等 listener，落盘/显示可能在 idle 之后才完成。", file:"core/src/agent.ts / agent-loop.ts", source:"await emit({ type: \"turn_end\", message, toolResults: [] });\nawait emit({ type: \"agent_end\", messages: newMessages });\nreturn options.messages;", req:"assistant[tool_use c1,c2]\nuser[tool_result c1,c2]\n→ 再问模型", net:"message_delta(tool_use)\nmessage_stop\n本轮传输结束", prov:"done(toolUse)\nc1 {path: a.txt}\nc2 {path: b.txt}\nusage 完整", core:"history 再追加总结\nturn_end → agent_end\nlisteners settle → idle" }
 	];
 	let at = 0, timer;
 	const debugButtons = [];
@@ -315,22 +330,10 @@ pnpm dev
 		$("count").textContent = `${at + 1} / ${steps.length}`;
 		$("prev").disabled = at === 0;
 		$("next").disabled = at === steps.length - 1;
-		$("body-request").textContent = at === 0 ? "prompt(\"读两个文件\")\nuser → history" : at < 12
-			? "POST /coding/v1/messages\nsystem + user\ninput_schema × 2\nstream: true"
-			: "assistant[tool_use c1,c2]\nuser[tool_result c1,c2]\n→ 再问模型";
-		$("body-network").textContent = at < 3 ? "等待 HTTP/SSE…" : at < 6
-			? "bytes（任意分片）\n→ SSE 空行分帧\ncontent_block_*"
-			: "message_delta(tool_use)\nmessage_stop\n本轮传输结束";
-		$("body-provider").textContent = at < 4 ? "partial:\ncontent: []\nstopReason: pending" : at < 5
-			? "text: 先读两个文件。\nstopReason: pending" : at < 6
-			? "text + c1{} + c2{}\nrawJSON 分别积累\nstopReason: pending"
-			: "done(toolUse)\nc1 {path: a.txt}\nc2 {path: b.txt}\nusage 完整";
-		$("body-core").textContent = at < 7 ? "history: [user]\n工具执行次数: 0" : at < 9
-			? "history: [user,assistant]\nprepare c1 → c2\nexecute c1 ∥ c2" : at === 9
-			? "end(c2)\nc1 等待中\n结果尚未入历史" : at === 10
-			? "end(c2) → end(c1)\nordered = [c1,c2]" : at < 13
-			? "history:\nuser, assistant,\ntoolResult(c1), toolResult(c2)"
-			: "history 再追加总结\nturn_end → agent_end\nlisteners settle → idle";
+		$("body-request").textContent = step.req;
+		$("body-network").textContent = step.net;
+		$("body-provider").textContent = step.prov;
+		$("body-core").textContent = step.core;
 		for (const lane of ["request", "network", "provider", "core"])
 			$("lane-" + lane).classList.toggle("focus", lane === step.lane);
 		$("debug-title").textContent = step.title;

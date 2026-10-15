@@ -497,6 +497,7 @@
 			</div>
 		</div>
 		<div class="callout"><span class="label">这个阶段唯一的新概念</span><p><strong>当前状态是历史的函数。</strong>阶段 8 不做 JSONL 持久化、不做上下文压缩、不做扩展系统；它只把三者将来依赖的地基先改对。</p></div>
+		<p>一个自然的问题是：为什么不干脆在历史旁边另外存一份“当前 system / 当前 tools”，图个方便？因为那会变成<strong>第二份权威状态</strong>——以后每次追加、分支、恢复都要保证两份数据同步，一旦有一次忘了同步，恢复出来的就是错的。把变化写进 transcript 以后，“现在是什么样”只是对历史做一次确定性计算的结果，不会跟历史本身打架。</p>
 	</section>
 
 	<section id="pain">
@@ -505,22 +506,26 @@
 			<div class="card">
 				<span class="badge">恢复会话</span>
 				<h3>历史缺了一块</h3>
+				<p><em>设想：进程被杀掉重启，你想恢复到崩溃前的对话——可当时模型能看到哪些工具、system prompt 里加过什么规则，这些信息存在哪？</em></p>
 				<p>如果只持久化 user/assistant/toolResult，恢复时还得从别处找 system 与 tools。两份状态一旦不同步，恢复出来的就不是原会话。</p>
 			</div>
 			<div class="card">
 				<span class="badge">Prompt cache</span>
 				<h3>前缀必须稳定</h3>
+				<p><em>设想：完全相同的问题问两次，第二次为什么有时候快很多？Provider 会缓存请求前缀——但前提是你每次发的前缀逐字节相同。</em></p>
 				<p>每轮重建、重排或重复插入 system 都会改变请求前缀。相同配置不新增 entry，provider 才能命中稳定前缀。</p>
 			</div>
 			<div class="card">
 				<span class="badge">上下文压缩</span>
 				<h3>不能把规则一起删掉</h3>
-				<p>阶段 10 会裁剪旧 conversation。若规则属于独立参数，裁剪器必须额外同步；若规则就在 transcript，保留 system entries 后自然仍能重放。</p>
+				<p><em>设想：聊天久了要裁掉旧对话省 token——如果规则本身也混在要删的那堆里，裁完之后模型还记得自己该遵守什么吗？</em></p>
+				<p>阶段 10（未来会用裁剪替换旧对话以节省 token）会裁剪旧 conversation。若规则属于独立参数，裁剪器必须额外同步；若规则就在 transcript，保留 system entries 后自然仍能重放。</p>
 			</div>
 			<div class="card">
 				<span class="badge">动态工具</span>
 				<h3>“什么时候可用”也是事实</h3>
-				<p>阶段 11 会切换工具。直接覆盖当前数组会抹掉过去；追加 toolsAdded/toolsRemoved 才能解释某个历史时刻为什么模型看见这些工具。</p>
+				<p><em>设想：agent 在对话中途临时拿到一个新工具、之后又被收回——你怎么证明“模型只在第 5 轮之后才看得到这个工具”？</em></p>
+				<p>阶段 11（未来会支持运行中途增删工具）会切换工具。直接覆盖当前数组会抹掉过去；追加 toolsAdded/toolsRemoved 才能解释某个历史时刻为什么模型看见这些工具。</p>
 			</div>
 		</div>
 		<h3 style="margin-top:28px">阶段 7 留下的最后一个直接读取点</h3>
@@ -571,7 +576,13 @@ interface SystemMessage {
 
 	<section id="lab">
 		<div class="section-title"><div class="section-number">3</div><h2>交互模拟器：从历史一步步推导现在</h2></div>
-		<p>这是<strong>阶段 8 计划行为</strong>的离线模拟，不会读取 API key、调用模型或执行工具。每一步都保存独立 before/after 快照；你可以往返查看 raw transcript 与 replay snapshot 的区别。</p>
+		<p>这是<strong>阶段 8 计划行为</strong>的离线模拟，不会读取 API key、调用模型或执行工具。每一步先看"这一步新增了什么事实"，再看"由全部历史推出来的现在长什么样"。</p>
+		<div class="callout"><span class="label">随手词典 · 先认识这几个词</span><p>
+			<strong>replay(重放)</strong> = 把 transcript 从头到尾读一遍，算出"现在"应该是什么样。
+			<strong>fold(折叠)</strong> = 重放时用循环把一串 system entries 合并成一份 prompt 和一份工具列表的过程。
+			<strong>snapshot(快照)</strong> = fold 算出来的那份"现在"，不是存在别处的独立状态。
+			<strong>fingerprint(指纹)</strong> = 把一次 request 的内容序列化成字符串，用来判断"这次和上次是不是完全一样"。
+		</p></div>
 		<div class="lab">
 			<div class="lab-head">
 				<label for="scenario">场景</label>
@@ -596,15 +607,15 @@ interface SystemMessage {
 						<p><strong>决策：</strong><span id="decision"></span></p>
 					</div>
 					<div class="panels">
-						<div class="panel full"><h4>RAW TRANSCRIPT · 权威历史</h4><pre id="transcript-output"></pre></div>
-						<div class="panel prompt"><h4>REPLAYED SYSTEM PROMPT</h4><pre id="prompt-output"></pre></div>
-						<div class="panel tools"><h4>REPLAYED ACTIVE TOOLS</h4><pre id="tools-output"></pre></div>
-						<div class="panel"><h4>PROVIDER REQUEST SNAPSHOT</h4><pre id="request-output"></pre></div>
-						<div class="panel cache"><h4>PROMPT CACHE OBSERVATION</h4><pre id="cache-output"></pre></div>
-						<div class="panel"><h4>COUNTS</h4><pre id="counts-output"></pre></div>
-						<div class="panel"><h4>BEFORE</h4><pre id="before-output"></pre></div>
-						<div class="panel"><h4>AFTER</h4><pre id="after-output"></pre></div>
+						<div class="panel full" style="border-color:#ff8a64"><h4>① 这一步新增/变化的事实</h4><pre id="delta-output"></pre></div>
+						<div class="panel prompt"><h4>② 现在的样子 · SYSTEM PROMPT</h4><pre id="prompt-output"></pre></div>
+						<div class="panel tools"><h4>② 现在的样子 · 可用工具</h4><pre id="tools-output"></pre></div>
+						<div class="panel full cache"><h4>③ 请求 / 缓存状态</h4><pre id="request-cache-output"></pre></div>
 					</div>
+					<details style="margin-top:12px">
+						<summary>查看完整 transcript（权威历史，默认折叠，不是日常需要看的东西）</summary>
+						<pre id="transcript-output" style="margin-top:10px"></pre>
+					</details>
 				</div>
 			</div>
 		</div>
@@ -1029,17 +1040,23 @@ function buildTrace(scenario) {
 	const state = emptyState();
 	const traces = [{
 		title: "起点：还没有 transcript",
-		before: null,
+		kind: "start",
+		addedMessages: [],
+		removedCount: 0,
 		after: snapshot(state),
 		explanation: scenario.hint,
 		decision: "先观察空历史；后续每一步只追加事实或派生 request snapshot。",
 	}];
 	for (const action of scenario.actions) {
-		const before = snapshot(state);
+		const lengthBefore = state.transcript.length;
 		applyAction(state, action);
+		const addedMessages = state.transcript.slice(lengthBefore);
+		const removedCount = action.kind === "trim" ? lengthBefore - state.transcript.length : 0;
 		traces.push({
 			title: action.title,
-			before,
+			kind: action.kind,
+			addedMessages,
+			removedCount,
 			after: snapshot(state),
 			explanation: action.explanation,
 			decision: action.decision,
@@ -1083,26 +1100,47 @@ function renderTimeline() {
 	timeline.replaceChildren(...buttons);
 }
 
+function renderDelta(step) {
+	if (step.kind === "start") return "(尚无历史，下面从空 transcript 开始)";
+	if (step.kind === "system" || step.kind === "message") {
+		return "新追加到 transcript 的这一条 message：\n" + json(step.addedMessages[0]);
+	}
+	if (step.kind === "trim") {
+		return `裁剪了 ${step.removedCount} 条旧 conversation message；system entries 原样保留，没有被动到。`;
+	}
+	if (step.kind === "request") {
+		return "没有新增任何历史记录——这一步只是读取当前 replay 结果，拿去发一次 provider 请求（结果见下方 ③）。";
+	}
+	return "";
+}
+
+function renderRequestCache(state) {
+	const requestPart = state.lastRequest
+		? json(state.lastRequest)
+		: "（还没有发起过请求）";
+	return [
+		`缓存状态：${state.cacheStatus}`,
+		`已发起请求数：${state.requestCount}`,
+		`system 消息数：${state.systemCount}　conversation 消息数：${state.conversationCount}`,
+		"",
+		"最近一次 provider request payload：",
+		requestPart,
+	].join("\n");
+}
+
 function render() {
 	const step = trace[stepIndex];
 	const state = step.after;
 	byId("step-title").textContent = step.title;
 	byId("explanation").textContent = step.explanation;
 	byId("decision").textContent = step.decision;
-	byId("transcript-output").textContent = json(state.transcript);
+	byId("delta-output").textContent = renderDelta(step);
 	byId("prompt-output").textContent = state.replay.prompt || "(empty system prompt)";
-	byId("tools-output").textContent = json(state.replay.tools);
-	byId("request-output").textContent = state.lastRequest
-		? json(state.lastRequest)
-		: "尚未构造 provider request；当前面板只显示 replay state。";
-	byId("cache-output").textContent = state.cacheStatus;
-	byId("counts-output").textContent = json({
-		systemMessages: state.systemCount,
-		conversationMessages: state.conversationCount,
-		requests: state.requestCount,
-	});
-	byId("before-output").textContent = step.before ? json(step.before) : "(none)";
-	byId("after-output").textContent = json(step.after);
+	byId("tools-output").textContent = state.replay.tools.length
+		? state.replay.tools.map((tool) => `• ${tool.name} — ${tool.description}`).join("\n")
+		: "(当前没有任何工具可用)";
+	byId("request-cache-output").textContent = renderRequestCache(state);
+	byId("transcript-output").textContent = json(state.transcript);
 	byId("count").textContent = `${stepIndex + 1} / ${trace.length}`;
 	byId("prev").disabled = stepIndex === 0;
 	byId("next").disabled = stepIndex === trace.length - 1;

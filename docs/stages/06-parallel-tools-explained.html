@@ -37,6 +37,9 @@
 	.messages{display:flex;flex-direction:column;gap:5px}.msg{padding:5px 8px;border-radius:5px;font-size:11.5px}.msg.assistant{background:var(--green);color:#fff}.msg.tool{background:var(--gold);color:#fff}
 
 	.debugger{display:grid;grid-template-columns:220px 1fr;gap:16px}.steps{display:flex;flex-direction:column;gap:6px}.step{width:100%;border-radius:7px;text-align:left;padding:8px 10px;font-size:11.5px}.step.active{background:var(--accent);border-color:var(--accent);color:#fff}.detail{display:grid;grid-template-columns:1fr 1fr;gap:12px}.card{border:1.5px solid var(--line);border-radius:9px;padding:14px;min-height:112px}.card h4{margin-bottom:8px;color:var(--muted);font:11px "Cascadia Code",Consolas,monospace;letter-spacing:.1em;text-transform:uppercase}.card p{margin:0;font-size:14px}.source{grid-column:1/-1}.source pre{box-shadow:none;margin:8px 0}
+	.detail-primary{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}.detail-primary .card{min-height:auto}.card.why{border-color:var(--blue);border-width:2px}.card.counter{border:none;border-left:4px solid var(--accent);background:var(--deep);border-radius:0 9px 9px 0}
+	.detail-flow{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;font-size:13.5px;color:var(--soft);margin:0 0 14px;padding:13px 15px;background:#fffdf7;border:1px solid var(--line);border-radius:8px}.detail-flow strong{color:var(--ink);font-size:11px;font-family:"Cascadia Code",Consolas,monospace;letter-spacing:.06em;display:block;margin-bottom:2px}.detail-flow .arrow{color:var(--muted);font-size:16px}
+	.bridge{font-size:14.5px;color:var(--muted);margin:-6px 0 18px}
 
 	.order-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.order-box{border:1.5px solid var(--line);border-radius:9px;padding:16px}.order-box h3{margin-top:0}.chip{padding:7px 10px;margin-bottom:6px;border-radius:6px;font:12px "Cascadia Code",Consolas,monospace}.chip.end{background:rgba(43,74,203,.1);border-left:3px solid var(--blue)}.chip.message{background:rgba(180,122,21,.12);border-left:3px solid var(--gold)}.chip.good{background:rgba(46,125,79,.12);border-left:3px solid var(--green)}.chip.bad{background:rgba(214,64,31,.1);border-left:3px solid var(--accent)}
 	.queue{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}.qbox{position:relative;padding:13px 9px;border:1.5px solid var(--line);border-radius:8px;text-align:center;font:11.5px/1.55 "Cascadia Code",Consolas,monospace}.qbox::after{content:"→";position:absolute;right:-16px;top:38%;color:var(--muted)}.qbox:last-child::after{display:none}.qbox.wait{border-color:var(--accent);background:rgba(214,64,31,.09)}.qbox.done{border-color:var(--green);background:rgba(46,125,79,.1)}.status{margin-top:14px;padding:12px 15px;border-radius:8px;background:var(--deep);font:12.5px "Cascadia Code",Consolas,monospace}
@@ -75,6 +78,16 @@ execute：     c1 ───────── 100ms
 end 事件：    c2 → c3 → c1       <span class="hot">// 完成顺序</span>
 result 消息： c1 → c2 → c3       <span class="good">// 源顺序</span></pre>
 	<div class="callout"><span class="tag">核心</span><p>UI 与模型不是同一个消费者。UI 要实时完成顺序；模型要稳定协议顺序。阶段 6 不是“加 Promise.all”，而是同时维护这两种顺序。</p></div>
+	<details class="source">
+		<summary>名词表（第一次看到再展开）</summary>
+		<p style="margin:12px 0 0"><strong>thunk</strong>：把“等会儿再执行”包成的一个零参数函数；prepare 阶段只生成 thunk，真正调用要等 Promise.all 阶段才发生。</p>
+		<p style="margin:12px 0 0"><strong>immediate outcome</strong>：invalid / blocked 这类不需要真正执行工具就能确定结果的情况，prepare 阶段直接 finalize，不生成 thunk。</p>
+		<p style="margin:12px 0 0"><strong>ordered entries</strong>：prepare 阶段按源顺序收集的数组，每一项要么是 immediate outcome，要么是 thunk；Promise.all 按这个数组的 index 返回结果，顺序不会被执行耗时打乱。</p>
+		<p style="margin:12px 0 0"><strong>tails Map</strong>：记录“这个文件现在排到第几位”的一张表，key 是文件的 canonical realpath，value 是“前一位什么时候做完”的 Promise 链。</p>
+		<p style="margin:12px 0 0"><strong>registrationTail</strong>：比 tails Map 更早一步的排队——专门串行化“算出 realpath、去 tails Map 里登记”这一小段准备工作，防止两个并发调用因为 realpath 返回快慢不同而抢错位置。</p>
+		<p style="margin:12px 0 0"><strong>canonical realpath</strong>：把路径（可能含相对路径、symlink、别名）解析成唯一的真实绝对路径；两个字符串不同的路径只要指向同一个文件，realpath 就相同。</p>
+		<p style="margin:12px 0 0"><strong>preflight</strong>：真正执行副作用之前要做完的检查/准备工作，比如权限 hook、schema 校验、realpath 解析。</p>
+	</details>
 </section>
 
 <section id="s1">
@@ -105,13 +118,20 @@ result 消息： c1 → c2 → c3       <span class="good">// 源顺序</span></
 			<div class="steps" id="debug-steps"></div>
 			<div>
 				<h3 id="debug-title" style="margin-top:0"></h3>
+				<div class="detail-primary">
+					<div class="card why"><h4>为什么存在这一步</h4><p id="d-why"></p></div>
+					<div class="card counter"><h4>如果反过来会怎样</h4><p id="d-counter"></p></div>
+				</div>
+				<div class="detail-flow">
+					<span><strong>输入</strong><span id="d-input"></span></span>
+					<span class="arrow">→</span>
+					<span><strong>输出</strong><span id="d-output"></span></span>
+					<span class="arrow">→</span>
+					<span><strong>事件 / 历史</strong><span id="d-state"></span></span>
+					<span class="arrow">→</span>
+					<span><strong>关键对象</strong><span id="d-object"></span></span>
+				</div>
 				<div class="detail">
-					<div class="card"><h4>为什么存在</h4><p id="d-why"></p></div>
-					<div class="card"><h4>输入</h4><p id="d-input"></p></div>
-					<div class="card"><h4>输出</h4><p id="d-output"></p></div>
-					<div class="card"><h4>事件 / 历史</h4><p id="d-state"></p></div>
-					<div class="card"><h4>如果反过来</h4><p id="d-counter"></p></div>
-					<div class="card"><h4>关键对象</h4><p id="d-object"></p></div>
 					<div class="card source"><h4>关键源码</h4><pre id="d-source"></pre></div>
 				</div>
 			</div>
@@ -166,6 +186,7 @@ after Promise.all:
 
 <section id="s4">
 	<div class="sec-head"><div class="sec-num">4</div><h2>双顺序：同一批结果为什么要排两次</h2></div>
+	<p class="bridge">这是上面 STEPS 第 5-8 步（c2/c3/c1 陆续完成 → 按源顺序发 toolResult）的放大镜：同一批 finalized 结果，被 UI 和模型用两种不同顺序分别消费。</p>
 	<div class="figure">
 		<div class="cap">点击观察两种消费者</div>
 		<div class="order-grid">
@@ -187,6 +208,7 @@ after Promise.all:
 
 <section id="s5">
 	<div class="sec-head"><div class="sec-num">5</div><h2>同文件 mutation queue：并行不是无条件同时写</h2></div>
+	<p class="bridge">前四节讲的是"同一批工具之间"怎么排序；这一节换一个维度——当多个工具调用都在写同一份文件时，光靠并行执行还不够，需要一套额外的队列机制。接下来几小节会比前面更技术化，一步步拆开这套机制的每一层。</p>
 	<p>工具层已经允许并行，但文件不是普通的独立任务。两个 edit 即使修改不同片段，也可能读取同一份旧快照，最后一个写入者会覆盖前一个结果。本章从这个完整失败现场开始，再逐层解释 queue 里的每个 Promise。</p>
 
 	<h3>5.1 没有 queue：为什么会丢更新</h3>
@@ -292,6 +314,7 @@ try {
 }</pre>
 
 	<h3>5.7 <code>registrationTail</code>：防止异步 realpath 反转调用顺序</h3>
+	<p><em>设想：你连续发起两个 edit 调用，先调用的那个因为路径里经过好几层 symlink，realpath 算得比后调用的慢。如果谁先算完 realpath 谁就先登记排队顺序，那后发起的调用反而会插到先发起的前面——对同一个文件做了两次修改，生效顺序却和你实际调用的顺序不一致。</em></p>
 	<p>这里解决的是一个更隐蔽的竞态：函数调用顺序是 #1、#2，但 <code>realpath()</code> 的返回顺序可能是 #2、#1。如果谁先拿到 realpath 谁先注册 Map，后调用的 #2 就可能排到 #1 前面。</p>
 	<div class="figure">
 		<div class="cap">Realpath registration race · 切换观察有无 registrationTail</div>
@@ -363,6 +386,8 @@ try {
 		<div class="quiz"><h3>4. 为什么一个 sequential 工具让整批降级？</h3><button data-answer="a4">查看参考答案</button><div class="answer" id="a4" hidden>否则会形成“这个工具串行、其他工具同时跑”的半并行状态，依赖和事件语义难以预测。</div></div>
 		<div class="quiz"><h3>5. 为什么锁要包 read/validate/write？</h3><button data-answer="a5">查看参考答案</button><div class="answer" id="a5" hidden>只锁 write 时，两个 edit 已经基于相同旧内容计算，后写仍会覆盖先写。</div></div>
 		<div class="quiz"><h3>6. 为什么 queue key 用 realpath？</h3><button data-answer="a6">查看参考答案</button><div class="answer" id="a6" hidden>相对路径、绝对路径和 symlink 可能指向同一个文件；字符串不同不代表资源不同。</div></div>
+		<div class="quiz"><h3>7. tails Map 里存的 Promise 链条到底在等什么？</h3><button data-answer="a7">查看参考答案</button><div class="answer" id="a7" hidden>它不等 operation 的结果，只等"前一位已经 release"这个信号；operation 自己的成功/失败单独返回给调用方，这样一个失败的调用不会把后面排队的调用一起拖进 rejection。</div></div>
+		<div class="quiz"><h3>8. 已经有 tails Map 了，为什么还需要 registrationTail？</h3><button data-answer="a8">查看参考答案</button><div class="answer" id="a8" hidden>tails Map 只有在拿到 realpath 之后才能查询/登记，而多个调用算出 realpath 的快慢可能和它们被调用的先后顺序不一致。registrationTail 专门把"算 realpath + 登记进 tails Map"这一小段也串行化，保证登记顺序严格等于调用顺序，不被异步 realpath 的完成速度打乱。</div></div>
 	</div>
 </section>
 

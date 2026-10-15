@@ -115,6 +115,25 @@
 		color: var(--accent);
 	}
 	.callout p { margin: 0; font-size: 15.5px; }
+	details.glossary {
+		background: #fffdf7;
+		border: 1px solid var(--hairline);
+		border-radius: 12px;
+		padding: 18px 22px;
+		margin: 22px 0;
+	}
+	details.glossary summary {
+		cursor: pointer;
+		font-weight: 700;
+		color: var(--ink);
+	}
+	details.glossary dl { margin-top: 14px; }
+	details.glossary dt {
+		font: 13px "Cascadia Code", Consolas, monospace;
+		color: var(--accent);
+		margin-top: 10px;
+	}
+	details.glossary dd { margin: 4px 0 0; color: var(--ink-soft); font-size: 15px; }
 	.figure {
 		background: #fffdf7;
 		border: 1px solid var(--hairline);
@@ -137,6 +156,7 @@
 		color: var(--muted);
 		font-size: 14px;
 	}
+	.bridge { color: var(--muted); font-size: 14.5px; margin: -6px 0 18px; }
 	.btns { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; align-items: center; }
 	button {
 		border: 1.5px solid var(--ink);
@@ -350,6 +370,18 @@
 		<tr><td>execute</td><td>执行工具、收集 onUpdate、捕获工具 throw</td><td>不生成历史消息</td></tr>
 		<tr><td>finalize</td><td>归一化 result、duration、ToolResultMessage</td><td>不再调用工具或 hook</td></tr>
 	</table>
+	<details class="glossary">
+		<summary>先认识几个词（第一次看再展开）</summary>
+		<dl>
+			<dt>before hook</dt><dd>执行前的权限检查函数；它可以放行，也可以直接拒绝整个调用。</dd>
+			<dt>block 判定</dt><dd>hook 拒绝之后的状态——这次调用不会跑真正的工具代码，但仍要走完完整生命周期。</dd>
+			<dt>prepared data</dt><dd>prepare 阶段产出的、还没有执行任何副作用的中间结果；只有它存在，「执行前还能反悔」才成立。</dd>
+			<dt>onUpdate</dt><dd>工具执行过程中用来汇报进度的回调，每调用一次就对应一次 tool_execution_update 事件。</dd>
+			<dt>duration / immediate error</dt><dd>duration 是 finalize 阶段统一补上的耗时统计；immediate error 指 prepare 阶段就已经确定失败、根本不会进入 execute 的那种错误（权限拒绝、参数非法、hook 抛错都算）。</dd>
+			<dt>terminate</dt><dd>某个工具调用是否要求「这就是这一轮的最后一步，不用再问模型了」。</dd>
+		</dl>
+	</details>
+	<p><strong>设想：</strong>如果把权限判断写在 execute 内部——判断「允许」之前，bash 工具已经把 <code>rm -rf /tmp/project</code> 跑完了。等 hook 真正返回「拒绝」时，文件已经删掉，拒绝已经来不及生效。</p>
 	<div class="callout">
 		<span class="tag">关键判断</span>
 		<p>如果权限 hook 与 execute 混在一起，唯一能询问用户的时刻就是「工具已经开始运行」。三段式让 prepare 返回一个<strong>还没有副作用的 prepared data</strong>。</p>
@@ -375,6 +407,7 @@
 			<button data-scenario="invalid">参数非法</button>
 			<button data-scenario="hookError">Hook 抛错</button>
 		</div>
+		<div style="font:12px &quot;Cascadia Code&quot;,Consolas,monospace;color:var(--muted);margin:-8px 0 16px" id="pipe-diverge"></div>
 		<div class="pipeline">
 			<div class="phase" id="p-call">
 				<h4>① ToolCall</h4>
@@ -402,13 +435,16 @@
 				<span class="step-count" id="pipe-count"></span>
 			</div>
 		</div>
-		<div class="foot">注意 blocked / invalid / hook error 都不会进入 execute，但仍然会 finalize，并产生平衡的 end 与 toolResult message。</div>
+		<div class="callout">
+			<span class="tag">为什么还要 finalize</span>
+			<p>blocked / invalid / hook error 都不会进入 execute，但仍然会 finalize，并产生平衡的 end 与 toolResult message——没有这一步，模型永远等不到「为什么失败」的答案。</p>
+		</div>
 	</div>
 </section>
 
 <section id="s2">
 	<div class="sec-head"><div class="sec-num">3</div><h2>Schema 路径实验室：错误要告诉模型改哪里</h2></div>
-	<p>选择一组 arguments，观察 validator 返回的结构化 issues。校验不会在第一个错误处停止。</p>
+	<p>沿用阶段 5 的三段式流程——这里把 prepare 阶段的 schema 校验单独放大看。换成一个假设的工具（带 path / options / tags 参数）是故意的：bash 的单个 <code>command</code> 字符串参数展示不出「嵌套对象里的字段错误」（比如 <code>arguments.options.mode</code>——“递归”说的就是校验器会顺着这条路径一层层往下钻）和「数组元素错误」这两种场景。选择一组 arguments，观察 validator 返回的结构化 issues；校验不会在第一个错误处停止。</p>
 	<div class="figure">
 		<div class="cap">交互图 2 · 递归 schema 校验</div>
 		<div class="scenario">
@@ -433,6 +469,7 @@
 
 <section id="s3">
 	<div class="sec-head"><div class="sec-num">4</div><h2>为什么 update listener 要在 end 前 settle</h2></div>
+	<p class="bridge">继续 s1 allow 场景里的 <code>tool.execute()</code> → <code>onUpdate(partial)</code> 两步——这里把「发出 update」到「真正发出 end」之间那段等待放大看。</p>
 	<div class="figure">
 		<div class="cap">交互图 3 · update backpressure</div>
 		<div class="update-track">
@@ -449,23 +486,26 @@
 			<button id="update-late" disabled>工具结束后再发 late update</button>
 			<button id="update-reset">重置</button>
 		</div>
-		<div class="foot">late update 被忽略，因为 acceptingUpdates 在工具 promise settle 时已经变成 false。</div>
+		<div class="callout">
+			<span class="tag">为什么 late update 被丢弃</span>
+			<p>late update 被忽略，因为 acceptingUpdates 在工具 promise settle 时已经变成 false——允许它继续写进去，UI 就可能先看到「工具已结束」又看到「旧进度」，时间线会倒流。</p>
+		</div>
 	</div>
 </section>
 
 <section id="s4">
 	<div class="sec-head"><div class="sec-num">5</div><h2>terminate 是整个 batch 的投票</h2></div>
-	<p>一个 assistant message 可以同时发两个调用。切换结果，观察是否还会发下一次模型请求。</p>
+	<p>继续用阶段 5 的 bash 工具：一个 assistant message 这次同时发出两个调用。切换结果，观察是否还会发下一次模型请求。</p>
 	<div class="figure">
 		<div class="cap">交互图 4 · outcomes.every(terminate === true)</div>
 		<div class="term-grid">
 			<div class="term-card">
-				<h4>toolCall #1</h4>
+				<h4>toolCall #1 · bash pwd</h4>
 				<div class="switch-row"><span>terminate</span><input type="checkbox" id="term-a"></div>
 				<div class="chips"><div class="chip info">无论 true/false 都会 finalize</div></div>
 			</div>
 			<div class="term-card">
-				<h4>toolCall #2</h4>
+				<h4>toolCall #2 · bash ls -la</h4>
 				<div class="switch-row"><span>terminate</span><input type="checkbox" id="term-b"></div>
 				<div class="chips"><div class="chip info">不会被第一个 true 跳过</div></div>
 			</div>
@@ -553,6 +593,7 @@
 		],
 	};
 
+	const divergeAt = { allow: null, block: 4, invalid: 3, hookError: 4 };
 	function steps() { return scenarios[scenario]; }
 	function pause() {
 		clearInterval(timer);
@@ -566,6 +607,9 @@
 			? `<strong>第 ${index + 1} 步</strong> · ${step.note}`
 			: "按「单步」开始。";
 		$("pipe-count").textContent = `第 ${Math.max(index + 1, 0)} / ${steps().length} 步`;
+		$("pipe-diverge").textContent = divergeAt[scenario]
+			? `本场景从第 ${divergeAt[scenario]} 步起，和「允许执行」出现分叉。`
+			: "基线场景：下面三种命运都会在某一步偏离这里，点场景按钮对比分叉点。";
 		phaseIds.forEach((id) => $("p-" + id).classList.toggle("focus", step?.focus === id));
 		$("call-body").innerHTML = chips(step?.call);
 		$("prepare-body").innerHTML = chips(step?.prepare, step?.bad);
