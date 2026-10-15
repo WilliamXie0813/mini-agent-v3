@@ -23,7 +23,9 @@ type Snapshot = {
 };
 type Trace = {
 	title: string;
-	before: Snapshot | null;
+	kind: string;
+	addedMessages: { role: string }[];
+	removedCount: number;
 	after: Snapshot;
 	explanation: string;
 	decision: string;
@@ -179,12 +181,15 @@ describe("Stage 8 system history teaching simulator", () => {
 		const { lesson } = await page();
 		const trace = lesson.buildTrace(lesson.scenarios.trim!);
 		const trim = trace.at(-1)!;
+		// 页面重设计（ca4f636）后 trace 不再存 before 快照：上一步的 after 就是裁剪前。
+		const beforeTrim = trace.at(-2)!.after;
 		expect(trim.title).toContain("裁剪");
-		expect(trim.before!.replay).toEqual(trim.after.replay);
+		expect(trim.removedCount).toBeGreaterThan(0);
+		expect(beforeTrim.replay).toEqual(trim.after.replay);
 		expect(trim.after.conversationCount).toBeLessThan(
-			trim.before!.conversationCount,
+			beforeTrim.conversationCount,
 		);
-		expect(trim.after.systemCount).toBe(trim.before!.systemCount);
+		expect(trim.after.systemCount).toBe(beforeTrim.systemCount);
 	});
 
 	it("treats a changed same-name tool as remove then add", async () => {
@@ -214,7 +219,7 @@ describe("Stage 8 system history teaching simulator", () => {
 		expect(get("prompt-output").textContent).toContain(
 			"You are a minimal coding agent.",
 		);
-		expect(get("tools-output").textContent).toContain('"read"');
+		expect(get("tools-output").textContent).toContain("• read —");
 		get("jump-end").click();
 		expect(get("prompt-output").textContent).toContain(
 			"Work only inside the current repository.",
@@ -225,14 +230,14 @@ describe("Stage 8 system history teaching simulator", () => {
 		expect(get("step-title").textContent).toContain("起点");
 		get("play").click();
 		for (let index = 0; index < 10; index++) tick();
-		expect(get("cache-output").textContent).toContain("HIT");
+		expect(get("request-cache-output").textContent).toContain("HIT");
 		expect(get("play").disabled).toBe(true);
 
 		select("trim");
 		get("timeline").children.at(-1)!.click();
 		expect(get("decision").textContent).toContain("system entries");
-		expect(get("counts-output").textContent).toContain(
-			'"conversationMessages": 2',
+		expect(get("request-cache-output").textContent).toContain(
+			"conversation 消息数：2",
 		);
 		get("prev").click();
 		expect(get("next").disabled).toBe(false);
