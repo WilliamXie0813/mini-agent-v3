@@ -27,6 +27,8 @@ submit({ requestId, prompt })
 
 `requestId` 是整个 session 文件的幂等键：同进程并发、重启后、其他分支里的重复提交，都返回原来的 submission，不追加、不再请求模型。这不是“重试直到成功”：如果原 submission 被中断，同一个 id 仍指向它；新的用户操作需要新的 id。
 
+不同 requestId 的并发提交，以及 submit／system／tools／branch 之间的冲突，都会在写日志前拒绝。会话从第一个 await 前就保留操作所有权；`waitForIdle()` 包括 submission 和策略变更的持久化等待，而不仅是模型生成。CLI 空白行仍是 no-op，不创建 submission。
+
 ## Pi 的哪条决策是答案
 
 对应总设计中的 Pi session tree、append-only 历史与工具 `replay` 声明。本项目采用其决策，不照搬分布式 durable runtime。
@@ -35,9 +37,11 @@ submit({ requestId, prompt })
 
 首行是 `{ type: "session", version: 1, id, createdAt }`，其后每行一个带 `id`、`parentId`、`createdAt` 的 entry。类型包括 `submission`、`message`、`tool_intent`、`tool_update`、`tool_outcome` 和 `run_end`。
 
-`SessionJournal.append()` 串行化写入，用 append-mode 文件句柄写 `JSON + "\n"`，等待 `FileHandle.sync()` 后才更新内存。`writeFile()` 在这里是**句柄方法**，不是对路径覆盖文件；只有初建 header 使用独占创建模式。旧字节永远是新文件的前缀。
+`SessionJournal.append()` 串行化写入，用 append-mode 文件句柄写 `JSON + "\n"`，等待 `FileHandle.sync()` 后才更新内存。`writeFile()` 在这里是**句柄方法**，不是对路径覆盖文件；只有初建 header 使用独占创建模式。完整历史的旧字节永远是新文件的前缀。
 
 读取器拒绝未知 version、重复 id、缺失 parent、中间坏 JSON，以及以换行结束的坏 JSON。它只容忍最后一条**没有换行、且无法解析**的残缺 fragment，加载其前面的有效历史。完整 JSON 即使没有最后换行，也仍须通过结构检查；不能把所有坏尾行都当成崩溃。
+
+**经用户批准的例外（2026-10-15）**：open 完成有效前缀校验后，只截掉这个残片并 fsync，保留所有完整 entry；若最后一条 JSON 完整但缺换行，则只追加换行并 fsync。这修复了“首次 open 能读，继续追加后第二次 open 却损坏”的窗口。原先的“任何旧字节绝不删除”放宽为“完整历史绝不修改”，不是悄悄扩大损坏容忍范围。
 
 这是本地文件持久化，不是多进程数据库：同一 journal 实例内的 appends 排队；不承诺跨进程写锁、跨文件事务或外部工具副作用的 exactly-once。
 
@@ -60,7 +64,7 @@ submit({ requestId, prompt })
 
 intent 保存工具声明、JSON-safe 参数、`replay`、submission、assistant entry 和 source index，不保存执行闭包、provider、HTTP headers 或 API key。
 
-prepare 失败（未知工具、schema、权限阻断、abort）不写 intent，因为执行边界没有到达。intent 持久化失败是基础设施故障，不转成“工具成功”或普通模型可修复错误。
+prepare 失败（未知工具、schema、权限阻断、abort）不写 intent，因为执行边界没有到达。intent 持久化失败是基础设施故障：原错误向 submit 调用方传播，不生成模型错误消息或 run_end 把未完成工具封死；后续恢复仍能处理已经 durable 的 intent。
 
 parallel batch 更严格：先按 assistant 中的源顺序完成所有 prepare 和 intent commits，再启动任何 execute。第二条 intent 的 fsync 失败时，整个 prepared batch 的 execute 次数为 0。工具可以乱序完成，toolResult transcript 仍按调用源顺序记录。
 
@@ -69,6 +73,8 @@ parallel batch 更严格：先按 assistant 中的源顺序完成所有 prepare 
 ### 4. 恢复先处理不确定性，再交还完整 turn
 
 `AgentSession.open()` 在构造恢复后的 Agent 前扫描当前祖先路径。以 assistant entry 和 source index 关联 intent，避免早期轮次复用 toolCall id 时混淆。
+
+新的 submit 也先规范化 active path，再重建 Agent：同进程持久化失败后继续，或 branch 到历史 tool_update／intent 时，不能绕过缺失的工具结果直接进入模型。恢复扫描在下一条 submission 前截止，不拿另一个请求的 assistant 收尾旧 run。branch 本身仍只移动 leaf，不追加恢复记录；这些记录在下一次新 submit 前追加。
 
 | 崩溃窗口 | 恢复动作 | 是否再次 execute |
 |---|---|---|
@@ -107,6 +113,8 @@ unsafe 的 partial output 只是**已持久化的观察**，不能证明副作�
 
 四个会话文件在 Task 7 时共 **815 行**：journal 206、recovery 210、types 49、AgentSession 350；加上 CLI／执行链接线，阶段源码净增 **893 行**。这超出约 400 行的教学目标，是明确接受的偏差，不是达标。
 
+最终审查修复后，会话文件为 **859 行**（222／216／49／372），阶段源码净增 **950 行**。额外代码用于尾部规范化、会话操作所有权、intent 基础设施错误传播和继续对话前的恢复，不是后续阶段功能。
+
 检查后保留实现：journal 的 fsync／结构校验、recovery 的多个崩溃窗口、AgentSession 的提交去重／事件持久化／重建各有不同边界，没有引入后续阶段功能。机械拆文件不能减少复杂度，删除恢复规则又会弱化正确性。代价是阅读与维护负担更大，尤其 AgentSession 职责较多；后续重构应由真实重复或行为问题驱动，而不是行数。
 
 零新增 registry 运行时依赖。未实现 `/fork` 新文件命令、交互式分支选择器、compaction、扩展系统或 provider 自动恢复。HTML 中的树与恢复实验仅是教学模拟器，不是 CLI 新功能。
@@ -119,6 +127,9 @@ unsafe 的 partial output 只是**已持久化的观察**，不能证明副作�
 - 同文件分支、全 session 幂等提交、持久化先于外部事件。
 - safe／unsafe 执行中的真实 SIGKILL，unsafe 保留 partial output。
 - outcome/message 崩溃窗口、源顺序补结果、toolCall id 跨轮复用。
-- 旧字节前缀不变、intent commit 失败时零执行、torn tail 与中间损坏的不同处理。
+- 完整旧字节前缀不变、intent commit 失败时零执行、torn tail 修复后可再次写入和 reopen。
+- pending persistence 期间操作互斥与 idle 等待、intent 错误穿过 Agent 后仍可恢复。
+- 同进程 outcome 写入失败／branch 到 partial 节点后，保留 partial 并规范化再继续。
+- CLI 空白输入不退出、不写 submission、不请求 provider。
 
 这些结果证明已覆盖的边界，不代表任意外部工具副作用都能自动恢复。

@@ -1,4 +1,45 @@
-# Stage 9 Execution Handoff — 2026-10-15
+# Stage 9 Completion Handoff — 2026-10-15
+
+## Current status (supersedes the archived pause below)
+
+**Tasks 1–8 are complete and committed. A fresh whole-branch review and one regression-driven fix pass are complete. Integration into master is still the user's decision; nothing has been pushed.**
+
+Learning deliverables:
+
+- `docs/stages/09-session-persistence.md`
+- `docs/stages/09-session-persistence-explained.html`
+- `packages/ai/test/session-persistence-teaching.test.ts` (seven executable VM behavior tests)
+
+Review fixes:
+
+| Commit | Correctness fix |
+|---|---|
+| `8d80f4e` | Writable torn-tail repair and separation of valid unterminated records |
+| `a24306e` | Session ownership before persistence; conflicting operations reject before writes; idle includes persistence |
+| `16e8f89` | Intent infrastructure failures propagate without sealing pending recovery |
+| `b7dae19` | Normalize interrupted/branched tool turns before new submission; bound recovery by submission |
+| `174f66d` | Preserve CLI blank input as a no-op |
+
+Each fix has a regression observed RED then GREEN. Final `pnpm test`: **158 AI + 202 Core = 360 tests, zero failures**; `pnpm check`: AI/Core/CLI pass. No registry runtime dependencies were added.
+
+### Recorded rulings and costs
+
+1. User-requested teaching HTML added as Task 8: one extra documentation/test commit, no runtime scope expansion.
+2. Use the existing Stage 9 checkout by user choice: less isolation from concurrent local edits.
+3. Accept the source budget deviation rather than deleting recovery boundaries: greater teaching/maintenance burden. At Task 7 session files were 815 lines and source net growth 893; after fixes, **859 lines / 950 net source lines**, not the original ~400-line target.
+4. **User-approved policy change:** truncate only a confirmed invalid, non-newline-terminated final fragment after validating the complete prefix, then sync. Complete entries stay byte-identical; valid unterminated JSON gets an appended newline. Cost: the incomplete fragment is lost. Strict rejection of complete/middle corruption remains.
+5. No cross-process lock or exactly-once external effects: concurrent processes can conflict and safe tools may rerun.
+6. No compaction, /fork, interactive tree UI, provider checkpoints or task graph: those workflows remain future work.
+7. Header-only/user-only interruption never regenerates provider output automatically: a new requestId is needed to continue; committed tool intents/partials are still recovered.
+8. Source-size and checkout choices are not correctness exemptions: maintenance/isolation costs remain, but the independent review judged behavior.
+
+No deferred minor findings: the reviewer labeled blank-input exit Minor, but it was re-graded Important as a CLI behavior regression and fixed.
+
+The original pause record below is retained only for historical context. Its pending tasks, strict no-truncate wording, line counts and resume instructions are superseded by this completion record and the updated learning document/plan.
+
+---
+
+# Archived execution pause — 2026-10-15
 
 > Repository: `WilliamXie0813/mini-agent-v3`  
 > Branch: `stage-9-session-persistence`  

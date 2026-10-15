@@ -51,7 +51,7 @@
 
 	<h2>01 / 从内存历史，到可恢复的事实</h2>
 	<div class="grid">
-		<article class="card"><h3>SessionJournal：只追加</h3><p>首行是 version=1 的 session header。其后每行一个 entry，带 id / parentId。先 write，再 fsync，再改变内存；旧字节不改、不删。</p><code>.mini-agent/sessions/&lt;epochMs&gt;_&lt;uuid&gt;.jsonl</code></article>
+		<article class="card"><h3>SessionJournal：完整历史只追加</h3><p>首行是 version=1 的 session header。其后每行一个 entry，带 id / parentId。先 write，再 fsync，再改变内存；完整旧记录不改、不删。残缺尾片的修复是明确批准的例外。</p><code>.mini-agent/sessions/&lt;epochMs&gt;_&lt;uuid&gt;.jsonl</code></article>
 		<article class="card"><h3>AgentSession：包住执行入口</h3><p>submission 先持久化，再 prompt。内部 awaited listener 先存 assistant、工具结果和 run_end，再让外部订阅者观察。CLI 默认新建，<code>--continue</code> 恢复当前目录最新文件。</p></article>
 	</div>
 	<pre class="flow">submission + fsync → assistant + fsync → prepare
@@ -96,6 +96,7 @@
 物理顺序：A, B, C, D, E
 当前路径：A, D, E</pre>
 	<p><code>branch(A)</code> 只移动内存 leaf；下一条 D 的 parentId 指向 A。reopen 默认选择物理最后一条有效 entry，再走 parent 链。全 session 的 requestId 去重读所有 entry，不只读当前路径。</p>
+	<p>若 branch 落在未完成工具的节点，新的 submit 先恢复这个 turn，再写新输入。不同请求或策略变更在持久化等待期间也互斥；不能趁 fsync 未完成偷偷改 live state。</p>
 
 	<h2>04 / 恢复规则，不是猜测</h2>
 	<table>
@@ -110,7 +111,7 @@
 	</table>
 	<p>内置 read = safe；edit / bash = unsafe；默认 unsafe。unsafe 的 partial content 是已记录的观察，不是副作用完成证明。replay 声明不能产生跨外部系统的 exactly-once。</p>
 	<p class="note">级别 2：修复到完整 turn 边界。不做任意 step checkpoint、provider 自动生成恢复、task graph、compaction、<code>/fork</code> 或 CLI 树选择器。只有 submission 的崩溃保留 user-only 历史，不自动重发。</p>
-	<p>torn tail：仅忽略末尾无换行且无法解析的一条 fragment；中间坏 JSON、换行结束的坏 JSON、重复 id、缺 parent、未知版本必须报错。这不是“坏数据都跳过”。</p>
+	<p>torn tail：仅容忍末尾无换行且无法解析的一条 fragment。经用户批准，open 校验完整前缀后只截掉这个残片并 fsync；完整 JSON 仅缺最后换行时补换行。否则下一次 append 会拼进残片，导致日志无法再打开。中间坏 JSON、换行结束的坏 JSON、重复 id、缺 parent、未知版本仍必须报错。</p>
 
 	<h2>05 / 换个设计，会失去什么？</h2>
 	<div class="grid">
@@ -119,7 +120,7 @@
 		<article class="card"><h3>pending 全部重跑？</h3><p>可能把文件改两次，把命令执行两次。safe / unsafe 是副作用决策，不是性能选项。</p></article>
 		<article class="card"><h3>幂等键只放内存？</h3><p>一重启就忘了。同一个请求可能再次调模型和工具；按 active branch 去重也会漏掉旧分支。</p></article>
 	</div>
-	<footer><p>源码入口：<code>session-journal.ts</code> / <code>agent-session.ts</code> / <code>session-recovery.ts</code>。为保留 durability 与崩溃窗口规则，Task 7 明确接受 815 行会话实现，超出约 400 行教学预算。</p></footer>
+	<footer><p>源码入口：<code>session-journal.ts</code> / <code>agent-session.ts</code> / <code>session-recovery.ts</code>。为保留 durability 与崩溃窗口规则，Task 7 明确接受 815 行会话实现；审查修复后为 859 行，超出约 400 行教学预算。</p></footer>
 </main>
 <script>
 	const systemText = "You are a minimal coding agent.";

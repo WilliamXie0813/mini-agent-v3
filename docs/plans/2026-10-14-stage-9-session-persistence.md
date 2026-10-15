@@ -21,8 +21,8 @@
 - 默认存储目录固定为 `.mini-agent/sessions/`；测试可注入临时目录。该目录已由 `.gitignore` 的 `.mini-agent/` 规则覆盖。
 - 文件名固定为 `<epochMs>_<sessionId>.jsonl`。首行必须是 `SessionHeader`，其余每行恰好一个 `SessionEntry`。
 - `SessionHeader.version` 固定为 `1`；未知 version 明确拒绝，不能猜测兼容。
-- 每次 append 写完整 JSON + `\n`，等待 `FileHandle.sync()` 后才算 committed。不得通过重写、截断、rename 全文件或修改旧行“修正”历史。
-- loader 只容忍**文件末尾没有换行的一条残缺 JSON fragment**（进程在 append 中被杀）；中间坏行、以换行结尾的坏 JSON、重复 entry id、缺失 parent 都明确报错。
+- 每次 append 写完整 JSON + `\n`，等待 `FileHandle.sync()` 后才算 committed。不得通过重写、rename 全文件或修改完整旧行“修正”历史。**2026-10-15 用户批准的审查修订**：open 校验有效前缀后，仅允许截掉无换行的残缺尾片并 sync，不触碰完整记录。
+- loader 只容忍**文件末尾没有换行的一条残缺 JSON fragment**（进程在 append 中被杀），并按上述例外修复为可继续追加的文件；完整 JSON 仅缺尾部换行时只追加换行。中间坏行、以换行结尾的坏 JSON、重复 entry id、缺失 parent 都明确报错。
 - entry 的 `id` / `parentId` 组成树；物理行顺序是 append 时间，不等于当前分支的祖先顺序。`leafId` 只存在于内存，默认取最后一条有效 entry。
 - `branch(fromId)` 只把内存 `leafId` 移到既有 entry，不写新行、不建新文件；下一次 append 以 `fromId` 为 parent。阶段 9 不实现 `/fork` 新文件命令或交互式树选择器。
 - `requestId` 在整个 session 文件内全局幂等，包括其他分支、重启后与同进程并发调用；重复 id 返回原 `submission`，不重复写、不重复调模型。
@@ -912,7 +912,7 @@ git diff --numstat dca4381 -- 'packages/*/src/*.ts'
 Expected:
 
 - 无新增 registry 运行时依赖；
-- session 文件实现不重写旧 JSONL（header 初建除外；append 使用 open/write/sync）；
+- session 文件实现不重写完整旧 JSONL（header 初建除外；append 使用 open/write/sync；用户批准只截掉无换行残缺尾片）；
 - session 层不含凭据字段；
 - read safe、edit/bash unsafe；
 - 新文件职责清晰，阶段源码净增量约 400 行，超出时先检查重复与过早功能。
@@ -982,7 +982,7 @@ Expected: 全工作区通过。
 ## 完成标准
 
 - [ ] 新 session 写入 `.mini-agent/sessions/<timestamp>_<id>.jsonl`，header version=1。
-- [ ] journal append 每次 write + fsync，旧 bytes 从不修改。
+- [ ] journal append 每次 write + fsync，完整旧记录 bytes 从不修改；残缺尾片按用户批准的例外修复。
 - [ ] entries 用 id/parentId 成树，branch 只移动 leaf，旧后代保留。
 - [ ] active leaf path 能重建完整 SystemMessage/user/assistant/toolResult transcript。
 - [ ] submit 在 append submission 后才调用 Agent；requestId 全 session 幂等。
