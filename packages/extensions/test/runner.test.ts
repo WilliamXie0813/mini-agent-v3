@@ -291,3 +291,42 @@ describe("turn_end decision hook", () => {
 		expect(agent.state.messages.filter((m) => m.role === "assistant")).toHaveLength(1);
 	});
 });
+
+describe("next_turn decision hook", () => {
+	test("merges fields across extensions; later handlers win per field", async () => {
+		const runner = new ExtensionRunner();
+		await runner.use({
+			name: "a",
+			factory: (api) => { api.on("next_turn", () => ({ sections: [{ text: "clock" }] })); },
+		});
+		await runner.use({
+			name: "b",
+			factory: (api) => { api.on("next_turn", () => ({ toolsRemoved: ["read"] })); },
+		});
+		const agent = new Agent({
+			system: "s",
+			tools: [{ name: "read", description: "read", parameters: {}, execute: async () => ({ content: [] }) }],
+			streamFn: createFakeStreamFn([[{ type: "toolCall" as const, id: "c1", name: "read", arguments: {} }], "done"]),
+			...runner.sessionHooks(),
+		});
+		await agent.prompt("go");
+		// transcript 尾部是收敛轮的 assistant 消息；hook 追加的 SystemMessage 在 system 序列尾部。
+		const last = agent.state.messages.filter((m) => m.role === "system").at(-1);
+		expect(last?.role).toBe("system");
+		expect(last?.role === "system" && last.sections[0]!.text).toBe("clock");
+		expect(last?.role === "system" && last.toolsRemoved).toEqual(["read"]);
+	});
+
+	test("all handlers returning void appends nothing", async () => {
+		const runner = new ExtensionRunner();
+		await runner.use({ name: "noop", factory: (api) => { api.on("next_turn", () => undefined); } });
+		const agent = new Agent({
+			system: "s",
+			tools: [{ name: "read", description: "read", parameters: {}, execute: async () => ({ content: [] }) }],
+			streamFn: createFakeStreamFn([[{ type: "toolCall" as const, id: "c1", name: "read", arguments: {} }], "done"]),
+			...runner.sessionHooks(),
+		});
+		await agent.prompt("go");
+		expect(agent.state.messages.filter((m) => m.role === "system")).toHaveLength(1);
+	});
+});

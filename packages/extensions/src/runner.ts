@@ -1,5 +1,5 @@
 import type { AgentEvent, AfterToolCallResult, SessionHooks, ToolDef } from "@mini-agent/core";
-import type { StreamFn } from "@mini-agent/ai";
+import type { StreamFn, SystemSection, Tool } from "@mini-agent/ai";
 import type {
 	DecisionEventHandlers,
 	Extension,
@@ -116,6 +116,7 @@ export class ExtensionRunner implements ExtensionAPI {
 		const toolResultHandlers = this.handlersFor("tool_result");
 		const contextHandlers = this.handlersFor("context");
 		const turnEndHandlers = this.handlersFor("turn_end");
+		const nextTurnHandlers = this.handlersFor("next_turn");
 		const hooks: SessionHooks = {};
 		if (toolCallHandlers.length > 0) {
 			hooks.beforeToolCall = async (context) => {
@@ -173,6 +174,33 @@ export class ExtensionRunner implements ExtensionAPI {
 					}
 				}
 				return undefined;
+			};
+		}
+		if (nextTurnHandlers.length > 0) {
+			// merge 语义：跨扩展拼接，全部 handler 都运行。sections 与 toolsAdded 按注册序
+			// 拼接（各扩展加的东西互不相干，覆盖会让注册顺序决定谁生效）；
+			// toolsRemoved 去重保留首次出现位置，便于读日志时对应到具体扩展。
+			// 三个字段都为空时返回的对象仍是真值——agent-loop 的空检查会把它当 no-op，
+			// 与 void 表现一致。
+			hooks.prepareNextTurnWithContext = async (context) => {
+				const sections: SystemSection[] = [];
+				const toolsAdded: Tool[] = [];
+				const toolsRemoved: string[] = [];
+				for (const { name, handler } of nextTurnHandlers) {
+					try {
+						const partial = await handler(context);
+						if (!partial) continue;
+						if (partial.sections) sections.push(...partial.sections);
+						if (partial.toolsAdded) toolsAdded.push(...partial.toolsAdded);
+						if (partial.toolsRemoved)
+							for (const toolName of partial.toolsRemoved)
+								if (!toolsRemoved.includes(toolName)) toolsRemoved.push(toolName);
+					} catch (error) {
+						this.log(`extension "${name}" handler for "next_turn" failed: ${errorMessage(error)}`);
+						throw error;
+					}
+				}
+				return { sections, toolsAdded, toolsRemoved };
 			};
 		}
 		return hooks;

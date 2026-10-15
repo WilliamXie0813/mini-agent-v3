@@ -4,7 +4,7 @@ import { agentLoop } from "./agent-loop.ts";
 import { AgentInfrastructureFailure } from "./agent-infrastructure-failure.ts";
 export { AgentInfrastructureFailure } from "./agent-infrastructure-failure.ts";
 import type { AgentOptions } from "./agent-options.ts";
-import type { AfterToolCall, FinishTurn, PrepareRequest, RecoverContextOverflow, TransformContext } from "./agent-options.ts";
+import type { AfterToolCall, FinishTurn, PrepareNextTurn, PrepareRequest, RecoverContextOverflow, TransformContext } from "./agent-options.ts";
 import type { AgentEvent, AgentEventListener } from "./agent-event.ts";
 import { appendSystemSections, createAgentState, reduceAgentState, replaceAgentTools } from "./agent-state.ts";
 import type { AgentState } from "./agent-state.ts";
@@ -33,6 +33,7 @@ export class Agent {
 	public prepareRequest?: PrepareRequest;
 	public transformContext?: TransformContext;
 	public finishTurn?: FinishTurn;
+	public prepareNextTurnWithContext?: PrepareNextTurn;
 	public toolExecution: ToolExecutionMode;
 	private activeRun?: ActiveRun;
 	private runMessages: Message[] = [];
@@ -58,6 +59,7 @@ export class Agent {
 		this.prepareRequest = options.prepareRequest;
 		this.transformContext = options.transformContext;
 		this.finishTurn = options.finishTurn;
+		this.prepareNextTurnWithContext = options.prepareNextTurnWithContext;
 		this.recoverContextOverflow = options.recoverContextOverflow;
 		this.toolExecution = options.toolExecution ?? "parallel";
 		this._state = createAgentState(
@@ -112,6 +114,7 @@ export class Agent {
 			const recoverContextOverflow = this.recoverContextOverflow;
 			const afterToolCall = this.afterToolCall;
 			const finishTurn = this.finishTurn;
+			const prepareNextTurnWithContext = this.prepareNextTurnWithContext;
 			await agentLoop({
 				prompt,
 				messages: this._state.messages.slice(),
@@ -162,6 +165,15 @@ export class Agent {
 					? async (context, signal) => {
 						try {
 							return await finishTurn(context, signal);
+						} catch (error) {
+							throw new AgentInfrastructureFailure(error);
+						}
+					}
+					: undefined,
+				prepareNextTurnWithContext: prepareNextTurnWithContext
+					? async (context) => {
+						try {
+							return await prepareNextTurnWithContext(context);
 						} catch (error) {
 							throw new AgentInfrastructureFailure(error);
 						}

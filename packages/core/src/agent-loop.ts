@@ -3,11 +3,12 @@ import type {
 	Message,
 	StreamContext,
 	StreamFn,
+	SystemMessage,
 	ToolResultMessage,
 } from "@mini-agent/ai";
 import { AgentInfrastructureFailure } from "./agent-infrastructure-failure.ts";
 import type { AgentEventSink } from "./agent-event.ts";
-import type { AfterToolCall, FinishTurn, PrepareRequest, RecoverContextOverflow, TransformContext } from "./agent-options.ts";
+import type { AfterToolCall, FinishTurn, PrepareNextTurn, PrepareRequest, RecoverContextOverflow, TransformContext } from "./agent-options.ts";
 import {
 	executeToolCalls,
 	failTruncatedToolCalls,
@@ -36,6 +37,7 @@ export interface AgentLoopOptions {
 	transformContext?: TransformContext;
 	recoverContextOverflow?: RecoverContextOverflow;
 	finishTurn?: FinishTurn;
+	prepareNextTurnWithContext?: PrepareNextTurn;
 }
 
 // 提前返回都在构造 user 消息之前（阶段 1 的约定，不要动）：已中止的 signal 不产生半条消息；
@@ -72,6 +74,39 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 	for (let turn = 0; turn < maxTurns; turn++) {
 		if (turn > 0) await emit({ type: "turn_start" });
 		if (options.signal?.aborted) throw new Error("agent loop aborted");
+		// 阶段 11：prepareNextTurnWithContext 在 turn_start 之后、replay 之前被咨询——
+		// turn_start 已发出，本轮的 system 变更因此归属下一轮（与 pi 的顺序一致）。
+		// 三个字段合并进一条真 SystemMessage 追加进 transcript：getCurrentSystemMessage /
+		// getCurrentTools 的权威是历史本身，旁路改 context 会在下一轮 replay 时被抹掉、
+		// 也进不了 journal。三者全空时是 no-op：不发事件、不写历史。
+		if (turn > 0 && options.prepareNextTurnWithContext) {
+			const result = await options.prepareNextTurnWithContext({
+				messages: options.messages,
+				turn,
+				signal: options.signal ?? runSignal,
+			});
+			if (
+				result &&
+				(result.sections?.length ||
+					result.toolsAdded?.length ||
+					result.toolsRemoved?.length)
+			) {
+				const message: SystemMessage = {
+					role: "system",
+					sections: result.sections?.map((section) => ({ ...section })) ?? [],
+					...(result.toolsRemoved?.length
+						? { toolsRemoved: [...result.toolsRemoved] }
+						: {}),
+					...(result.toolsAdded?.length
+						? { toolsAdded: [...result.toolsAdded] }
+						: {}),
+				};
+				options.messages.push(message);
+				newMessages.push(message);
+				await emit({ type: "message_start", message });
+				await emit({ type: "message_end", message });
+			}
+		}
 		// 每轮都从 transcript 重新重放：system 与工具声明的唯一权威是历史本身。
 		// replay 结果只活在本次请求 context 里，不写回 transcript。
 		const currentSystem = getCurrentSystemMessage(options.messages);
