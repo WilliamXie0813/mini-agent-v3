@@ -386,3 +386,84 @@ describe("prepareCompaction", () => {
 			.toBeUndefined();
 	});
 });
+
+// ── 摘要请求：同一个 StreamFn，但独立请求——单独 system prompt、
+// 一个序列化 conversation 的 user message、tools: []（计划 Global Constraints）。
+import { createAssistantMessageEventStream } from "@mini-agent/ai";
+import type { StreamContext, StreamFn } from "@mini-agent/ai";
+import { generateCompactionSummary } from "../src/compaction.ts";
+import type { ContentBlock } from "@mini-agent/ai";
+
+function streamOf(message: AssistantMessage) {
+	const stream = createAssistantMessageEventStream();
+	stream.push({ type: "done", message });
+	stream.end();
+	return stream;
+}
+
+function textOfContent(content: ContentBlock[]): string {
+	return content
+		.filter((block) => block.type === "text")
+		.map((block) => block.text)
+		.join("");
+}
+
+describe("generateCompactionSummary", () => {
+	it("summarizes with a separate tool-free request", async () => {
+		const contexts: StreamContext[] = [];
+		const streamFn: StreamFn = (context) => {
+			contexts.push(context);
+			return streamOf({
+				role: "assistant",
+				content: [{ type: "text", text: "  the summary  " }],
+				stopReason: "stop",
+			});
+		};
+		const messages: Message[] = [
+			userMessage("old question"),
+			assistantMessage("old answer"),
+		];
+		const summary = await generateCompactionSummary(streamFn, messages);
+
+		expect(summary).toBe("the summary");
+		expect(contexts).toHaveLength(1);
+		const context = contexts[0]!;
+		expect(context.system.sections).toEqual([{
+			text: "Summarize the earlier mini-agent conversation for another model that will continue the same task. Preserve goals, constraints, decisions, completed work, open work, exact file paths, commands, and errors. Do not continue the task and do not call tools. Return only the summary.",
+		}]);
+		expect(context.tools).toEqual([]);
+		expect(context.messages).toHaveLength(1);
+		const request = context.messages[0]!;
+		expect(request.role).toBe("user");
+		expect(request.role === "user" && textOfContent(request.content))
+			.toBe(`<conversation>\n${JSON.stringify(messages, null, 2)}\n</conversation>`);
+	});
+
+	it.each<[string, AssistantMessage]>([
+		["error stop", {
+			role: "assistant", content: [], stopReason: "error", errorMessage: "boom",
+		}],
+		["aborted", {
+			role: "assistant", content: [], stopReason: "aborted",
+		}],
+		["output length", {
+			role: "assistant",
+			content: [{ type: "text", text: "partial" }],
+			stopReason: "length",
+		}],
+		["tool call", {
+			role: "assistant",
+			content: [{ type: "toolCall", id: "c1", name: "read", arguments: {} }],
+			stopReason: "toolUse",
+		}],
+		["blank text", {
+			role: "assistant",
+			content: [{ type: "text", text: "   \n  " }],
+			stopReason: "stop",
+		}],
+	])("rejects unsafe summary responses: %s", async (_name, message) => {
+		const streamFn: StreamFn = () => streamOf(message);
+		await expect(generateCompactionSummary(streamFn, [userMessage("x")]))
+			.rejects.toThrow(/summary|summarization/i);
+	});
+});

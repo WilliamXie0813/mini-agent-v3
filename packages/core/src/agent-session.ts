@@ -1,10 +1,12 @@
 import { join } from "node:path";
+import { getDefaultStreamFn } from "@mini-agent/ai";
 import {
 	getCurrentTools,
 	getToolStateChanges,
 } from "@mini-agent/ai";
 import type {
 	Message,
+	StreamFn,
 	SystemMessage,
 	SystemSection,
 } from "@mini-agent/ai";
@@ -15,10 +17,19 @@ import type {
 	AgentEventListener,
 } from "./agent-event.ts";
 import type { AgentState } from "./agent-state.ts";
+import {
+	DEFAULT_COMPACTION_SETTINGS,
+	generateCompactionSummary,
+	prepareCompaction,
+} from "./compaction.ts";
 import { SessionJournal } from "./session-journal.ts";
 import { recoverInterruptedTools } from "./session-recovery.ts";
-import { messagesFromSessionPath } from "./session-context.ts";
+import {
+	messagesFromSessionPath,
+	projectSessionContext,
+} from "./session-context.ts";
 import type {
+	CompactionReason,
 	SessionEntry,
 	SessionEntryOf,
 } from "./session-types.ts";
@@ -43,6 +54,8 @@ export type OpenAgentSessionOptions = AgentSessionOptions & {
 export class AgentSession {
 	private readonly journal: SessionJournal;
 	private readonly options: AgentSessionOptions;
+	// 普通 Agent 请求与 summarization 共用同一份引用——摘要路径不悄悄换 provider。
+	private readonly streamFn: StreamFn;
 	private agent: Agent;
 	private readonly listeners = new Set<AgentEventListener>();
 	private readonly submissions = new Map<
@@ -67,8 +80,10 @@ export class AgentSession {
 		messages: Message[] = [],
 	) {
 		this.journal = journal;
+		this.streamFn = options.streamFn ?? getDefaultStreamFn();
 		this.options = {
 			...options,
+			streamFn: this.streamFn,
 			tools: options.tools?.slice(),
 		};
 		this.agent = this.createAgent(messages);
@@ -209,6 +224,71 @@ export class AgentSession {
 
 	abort(): void {
 		this.agent.abort();
+	}
+
+	// 手动压缩只在 idle 时运行（runExclusive 守卫）；成功落盘后立即重建 idle Agent。
+	// 无可摘要前缀时返回 undefined：零事件、零 provider 调用、零写入。
+	compact(): Promise<SessionEntryOf<"compaction"> | undefined> {
+		return this.runExclusive("compact", async () => {
+			const entry = await this.compactInternal("manual");
+			if (entry) {
+				this.agent = this.createAgent(
+					messagesFromSessionPath(this.journal.pathTo()),
+				);
+			}
+			return entry;
+		});
+	}
+
+	// 内部编排：manual / threshold / overflow 三条路径共用。
+	// threshold 与 overflow 在 active run 内调用，只 append entry，
+	// 由调用方决定何时重建 Agent——这里绝不当场替换 this.agent。
+	private async compactInternal(
+		reason: CompactionReason,
+		signal?: AbortSignal,
+	): Promise<SessionEntryOf<"compaction"> | undefined> {
+		const projection = projectSessionContext(this.journal.pathTo());
+		const preparation = prepareCompaction(
+			projection,
+			DEFAULT_COMPACTION_SETTINGS.keepRecentTurns,
+		);
+		if (!preparation) return undefined;
+		await this.deliverEvent({
+			type: "compaction_start",
+			reason,
+			contextTokens: preparation.tokensBefore,
+		});
+		try {
+			const summary = await generateCompactionSummary(
+				this.streamFn,
+				preparation.messagesToSummarize,
+				signal,
+			);
+			const entry = await this.journal.append({
+				type: "compaction",
+				reason,
+				summary,
+				firstKeptEntryId: preparation.firstKeptEntryId,
+				tokensBefore: preparation.tokensBefore,
+			});
+			await this.deliverEvent({
+				type: "compaction_end",
+				reason,
+				status: "completed",
+				entryId: entry.id,
+				firstKeptEntryId: entry.firstKeptEntryId,
+				tokensBefore: preparation.tokensBefore,
+			});
+			return entry;
+		} catch (error) {
+			await this.deliverEvent({
+				type: "compaction_end",
+				reason,
+				status: "error",
+				errorMessage: error instanceof Error ? error.message : String(error),
+			});
+			throw error;
+		}
 	}
 
 	waitForIdle(): Promise<void> {

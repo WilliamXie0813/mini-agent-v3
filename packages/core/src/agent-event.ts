@@ -3,6 +3,7 @@ import type {
 	Message,
 	ToolResultMessage,
 } from "@mini-agent/ai";
+import type { CompactionReason } from "./session-types.ts";
 
 // 分层生命周期：agent > turn > message，tool_execution 嵌在 turn 内。
 // 四层各自成对（start/end），监听方只消费事件流就能渲染 CLI，无需读内部状态。
@@ -54,6 +55,28 @@ export type AgentEvent =
 			result: unknown;
 			isError: boolean;
 			durationMs?: number; // performance.now() 差值；不用 Date.now()，避免时钟回拨
+	  }
+	// 阶段 10：压缩事件成对出现——start 在摘要请求前，completed 在 entry fsync 后；
+	// 失败时是 start + end(error) 一对，journal 不留 compaction entry。
+	// 这些事件不落盘：journal 只存 compaction entry 这个事实，不存过程。
+	| {
+			type: "compaction_start";
+			reason: CompactionReason;
+			contextTokens: number;
+	  }
+	| {
+			type: "compaction_end";
+			reason: CompactionReason;
+			status: "completed";
+			entryId: string;
+			firstKeptEntryId: string;
+			tokensBefore: number;
+	  }
+	| {
+			type: "compaction_end";
+			reason: CompactionReason;
+			status: "error";
+			errorMessage: string;
 	  };
 
 // 返回 Promise 是有意的：慢 listener 对整个 run 施加 backpressure，

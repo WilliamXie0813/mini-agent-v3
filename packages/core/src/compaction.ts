@@ -1,6 +1,7 @@
 // 阶段 10：上下文压缩的纯函数核心。压缩不删除历史，只追加 compaction entry；
 // 这里只负责「什么时候压、压到哪、多大」，投影与摘要在 session-context.ts / 本文件后半。
-import type { Message, Usage } from "@mini-agent/ai";
+import { consumeAssistantMessage } from "@mini-agent/ai";
+import type { Message, StreamContext, StreamFn, Usage } from "@mini-agent/ai";
 import type { SessionEntry, SessionEntryOf } from "./session-types.ts";
 
 export interface CompactionSettings {
@@ -186,4 +187,60 @@ export function prepareCompaction(
 	const cut = findCutPoint(projection.entries, keepRecentTurns);
 	if (!cut) return undefined;
 	return { ...cut, tokensBefore: estimateContextTokens(projection) };
+}
+
+// 固定 wrapper（计划 Global Constraints）：模型需要一眼认出这段是摘要而不是用户新输入。
+export function createCompactionSummaryMessage(summary: string): Message {
+	return {
+		role: "user",
+		content: [{
+			type: "text",
+			text: "The conversation history before this point was compacted into the following summary:" +
+				`\n\n<summary>\n${summary}\n</summary>`,
+		}],
+	};
+}
+
+// 摘要走同一个底层 StreamFn，但必须是独立请求：单独 system prompt、
+// 一个序列化 conversation 的 user message、tools: []——不是一条普通 session turn。
+const SUMMARIZATION_SYSTEM_PROMPT =
+	"Summarize the earlier mini-agent conversation for another model that will continue the same task. Preserve goals, constraints, decisions, completed work, open work, exact file paths, commands, and errors. Do not continue the task and do not call tools. Return only the summary.";
+
+// 失败规则（计划 Global Constraints）：error/aborted/length、含 toolCall、空白文本
+// 都明确失败——宁可不压缩，也不能把一个 success 形状的空摘要写进 journal。
+export async function generateCompactionSummary(
+	streamFn: StreamFn,
+	messages: readonly Message[],
+	signal?: AbortSignal,
+): Promise<string> {
+	const context: StreamContext = {
+		system: {
+			role: "system",
+			sections: [{ text: SUMMARIZATION_SYSTEM_PROMPT }],
+		},
+		messages: [{
+			role: "user",
+			content: [{
+				type: "text",
+				text: `<conversation>\n${JSON.stringify(messages, null, 2)}\n</conversation>`,
+			}],
+		}],
+		tools: [],
+	};
+	const message = await consumeAssistantMessage(streamFn(context, signal));
+	if (message.stopReason === "error" || message.stopReason === "aborted")
+		throw new Error(
+			`Compaction summary failed: ${message.errorMessage ?? message.stopReason}`,
+		);
+	if (message.stopReason === "length")
+		throw new Error("Compaction summary hit the output token limit");
+	if (message.content.some((block) => block.type === "toolCall"))
+		throw new Error("Compaction summary must not contain tool calls");
+	const summary = message.content
+		.filter((block) => block.type === "text")
+		.map((block) => block.text)
+		.join("")
+		.trim();
+	if (summary === "") throw new Error("Compaction summary returned empty text");
+	return summary;
 }

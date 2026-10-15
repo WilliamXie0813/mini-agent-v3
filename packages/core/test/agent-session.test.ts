@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { createFakeStreamFn } from "@mini-agent/ai";
+import { createAssistantMessageEventStream, createFakeStreamFn } from "@mini-agent/ai";
 import type { Message, StreamContext, StreamFn } from "@mini-agent/ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../src/agent-session.ts";
@@ -817,3 +817,198 @@ describe("AgentSession", () => {
 		expect(starts).toBe(1);
 	});
 });
+
+describe("AgentSession compaction", () => {
+	// 摘要请求走同一个 streamFn，用 summarization system prompt 识别并返回脚本化摘要。
+	async function createSessionWithTurns(
+		turns: number,
+		options: { summaries?: string[]; summaryError?: string } = {},
+	) {
+		const events: AgentEvent[] = [];
+		const order: string[] = [];
+		const summaryContexts: StreamContext[] = [];
+		const inner = createFakeStreamFn(
+			Array.from({ length: turns + 4 }, (_, i) => `answer ${i + 1}`),
+		);
+		const streamFn: StreamFn = (context, signal) => {
+			if (context.system.sections.some((s) => s.text.startsWith("Summarize the earlier"))) {
+				summaryContexts.push(structuredClone(context));
+				order.push("summary");
+				const stream = createAssistantMessageEventStream();
+				if (options.summaryError) {
+					stream.push({
+						type: "error", reason: "error",
+						error: {
+							role: "assistant", content: [], stopReason: "error",
+							errorMessage: options.summaryError,
+						},
+					});
+				} else {
+					const text = options.summaries?.[summaryContexts.length - 1] ??
+						"checkpoint summary";
+					stream.push({
+						type: "done",
+						message: {
+							role: "assistant", content: [{ type: "text", text }], stopReason: "stop",
+						},
+					});
+				}
+				stream.end();
+				return stream;
+			}
+			return inner(context, signal);
+		};
+		const session = await AgentSession.create({
+			directory: await temporaryDirectory(), system: "base", streamFn,
+		});
+		session.subscribe((event) => {
+			events.push(event);
+			if (event.type === "compaction_start") order.push("start");
+			if (event.type === "compaction_end") order.push(`end:${event.status}`);
+		});
+		for (let i = 1; i <= turns; i++)
+			await session.submit({ requestId: `r${i}`, prompt: `question ${i}` });
+		return { session, events, order, summaryContexts };
+	}
+
+	function compactionEventsOf(events: AgentEvent[]): AgentEvent[] {
+		return events.filter((event) => event.type.startsWith("compaction"));
+	}
+
+	it("manually compacts append-only and emits committed events", async () => {
+		const { session, events, order, summaryContexts } =
+			await createSessionWithTurns(5);
+		const before = await readFile(session.filePath, "utf8");
+		const entriesBefore = session.entries.length;
+
+		const entry = await session.compact();
+
+		// start 在摘要 provider 调用前，completed 在 journal append/fsync 后。
+		expect(order).toEqual(["start", "summary", "end:completed"]);
+		expect(entry).toBeDefined();
+		expect(compactionEventsOf(events)).toEqual([
+			{
+				type: "compaction_start", reason: "manual",
+				contextTokens: expect.any(Number),
+			},
+			{
+				type: "compaction_end", reason: "manual", status: "completed",
+				entryId: entry!.id, firstKeptEntryId: entry!.firstKeptEntryId,
+				tokensBefore: expect.any(Number),
+			},
+		]);
+		// 返回 entry 即 journal 最后一条；旧 bytes/entries 逐字节不变。
+		expect(entry).toEqual(session.entries.at(-1));
+		expect((await readFile(session.filePath, "utf8")).startsWith(before)).toBe(true);
+		expect(session.entries.length).toBe(entriesBefore + 1);
+
+		// state 重建为 summary + retained tail（keepRecentTurns=4：a2..a5 + u3..u5）。
+		expect(session.state.messages.map((message) => message.role)).toEqual([
+			"system", "user", "assistant", "user", "assistant",
+			"user", "assistant", "user", "assistant",
+		]);
+		const summaryMessage = session.state.messages[1]!;
+		expect(summaryMessage.role).toBe("user");
+		expect(summaryMessage.role === "user" && text(summaryMessage))
+			.toContain("checkpoint summary");
+		expect(summaryMessage.role === "user" && text(summaryMessage))
+			.toContain("<summary>");
+
+		// reopen 得到相同 state。
+		const reopened = await AgentSession.open({
+			path: session.filePath, system: "base",
+			streamFn: sessionStreamFnStub,
+		});
+		expect(reopened.state.messages).toEqual(session.state.messages);
+
+		// 第二次压缩：摘要输入含第一份摘要与 a2，不含已丢弃的 raw prefix。
+		await session.submit({ requestId: "r6", prompt: "question 6" });
+		const second = await session.compact();
+		expect(second).toBeDefined();
+		expect(summaryContexts).toHaveLength(2);
+		const secondRequest = summaryContexts[1]!.messages[0]!;
+		const serialized = secondRequest.role === "user" ? text(secondRequest) : "";
+		expect(serialized).toContain("checkpoint summary");
+		expect(serialized).toContain("answer 2");
+		expect(serialized).not.toContain("question 1");
+		expect(serialized).not.toContain("answer 1");
+	});
+
+	it("does nothing when no eligible prefix exists", async () => {
+		const { session, events, summaryContexts } = await createSessionWithTurns(2);
+		const before = await readFile(session.filePath, "utf8");
+
+		const result = await session.compact();
+
+		expect(result).toBeUndefined();
+		expect(compactionEventsOf(events)).toEqual([]);
+		expect(summaryContexts).toEqual([]);
+		expect(await readFile(session.filePath, "utf8")).toBe(before);
+	});
+
+	it("emits a paired error end and rethrows when the summary provider fails", async () => {
+		const { session, events } = await createSessionWithTurns(5, {
+			summaryError: "provider exploded",
+		});
+		const before = await readFile(session.filePath, "utf8");
+		const messagesBefore = session.state.messages.slice();
+
+		await expect(session.compact()).rejects.toThrow(/summary/i);
+
+		expect(compactionEventsOf(events)).toEqual([
+			{
+				type: "compaction_start", reason: "manual",
+				contextTokens: expect.any(Number),
+			},
+			{
+				type: "compaction_end", reason: "manual", status: "error",
+				errorMessage: expect.stringMatching(/provider exploded/),
+			},
+		]);
+		expect(session.entries.every((entry) => entry.type !== "compaction")).toBe(true);
+		expect(await readFile(session.filePath, "utf8")).toBe(before);
+		expect(session.state.messages).toEqual(messagesBefore);
+	});
+
+	it("emits a paired error end and keeps raw state when the append fails", async () => {
+		const { session, events } = await createSessionWithTurns(5);
+		const append = SessionJournal.prototype.append;
+		const failure = new Error("disk full");
+		const spy = vi.spyOn(SessionJournal.prototype, "append").mockImplementation(
+			function <TData extends SessionEntryData>(
+				this: SessionJournal, data: TData,
+			): Promise<SessionEntryBase & TData> {
+				if (data.type === "compaction") return Promise.reject(failure);
+				return (append<TData>).call(this, data);
+			},
+		);
+
+		await expect(session.compact()).rejects.toBe(failure);
+		spy.mockRestore();
+
+		expect(compactionEventsOf(events)).toEqual([
+			{
+				type: "compaction_start", reason: "manual",
+				contextTokens: expect.any(Number),
+			},
+			{
+				type: "compaction_end", reason: "manual", status: "error",
+				errorMessage: "disk full",
+			},
+		]);
+		expect(session.entries.every((entry) => entry.type !== "compaction")).toBe(true);
+		// state 不切换为摘要；旧历史仍可 reopen。
+		expect(session.state.messages.some((message) =>
+			message.role === "user" && text(message).includes("<summary>")
+		)).toBe(false);
+		const reopened = await AgentSession.open({
+			path: session.filePath, system: "base", streamFn: sessionStreamFnStub,
+		});
+		expect(reopened.state.messages).toEqual(session.state.messages);
+	});
+});
+
+// reopen 只需要合法 streamFn；这些测试不会在 reopen 后真正请求 provider。
+const sessionStreamFnStub: StreamFn = () => {
+	throw new Error("unexpected provider call");
+};
