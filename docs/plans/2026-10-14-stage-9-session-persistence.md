@@ -943,6 +943,42 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
 
 ---
 
+### Task 8: 交互式教学 HTML 与行为测试
+
+**Files:**
+- Create: `docs/stages/09-session-persistence-explained.html`
+- Create: `packages/ai/test/session-persistence-teaching.test.ts`
+
+**Interfaces:**
+- Consumes: Tasks 1–7 的 journal/tree/recovery 语义，沿用阶段 7/8 的 Node VM 教学脚本测试方式。
+- Produces: 可离线打开的中文教学页；不新增 runtime API 或依赖。
+
+- [ ] **Step 1: 先写并运行失败测试**
+
+执行 HTML 内真实 JavaScript，验证 safe intent 重跑、unsafe 保留 partial 并中断、已有 outcome 仅补 message、branch 只改 leaf 后追加、intent commit 失败零执行、全 session requestId 去重，以及 scenario/timeline/prev/next/reset/jump-end 的交互。
+
+Run: `pnpm --filter @mini-agent/ai exec vitest run test/session-persistence-teaching.test.ts`
+
+Expected: 因教学页尚不存在而失败；测试预期使用手工推导的执行次数、parent 和结果内容。
+
+- [ ] **Step 2: 实现教学页**
+
+解释新增内容、替代方案、append-only、write/sync/execute 屏障、id/parentId 树与级别 2 恢复边界。模拟器展示 durable journal、active ancestor path、模型 transcript、工具执行次数；允许逐步导航与场景切换。明确模拟器不执行真实文件 I/O 或工具。
+
+Run: `pnpm --filter @mini-agent/ai exec vitest run test/session-persistence-teaching.test.ts`
+
+Expected: 所有教学行为测试通过。
+
+- [ ] **Step 3: 完整验证并提交**
+
+Run: `pnpm test && pnpm check`
+
+Expected: 全工作区通过。
+
+提交教学页、测试与本 Task 8 计划补充；message `docs(stage-9): add tested interactive persistence lesson`，附 Co-authored-by trailer。随后记录 task-done。
+
+---
+
 ## 完成标准
 
 - [ ] 新 session 写入 `.mini-agent/sessions/<timestamp>_<id>.jsonl`，header version=1。

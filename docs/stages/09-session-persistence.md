@@ -23,7 +23,7 @@ submit({ requestId, prompt })
   → run_end 写入并 fsync
 ```
 
-新会话位于当前目录的 `.mini-agent/sessions/<epochMs>_<uuid>.jsonl`。CLI 默认创建新文件；`pnpm dev -- --continue` 打开当前目录最新的会话。未知参数、没有可继续会话、日志损坏和持久化失败都明确报错。
+新会话位于当前目录的 `.mini-agent/sessions/<epochMs>_<uuid>.jsonl`。CLI 默认创建新文件；从仓库根运行 `node --experimental-strip-types packages/cli/src/index.ts --continue` 打开当前目录最新的会话。使用 `pnpm dev` 时进程 cwd 是 `packages/cli`，会话目录也随之改变。未知参数、没有可继续会话、日志损坏和持久化失败都明确报错。
 
 `requestId` 是整个 session 文件的幂等键：同进程并发、重启后、其他分支里的重复提交，都返回原来的 submission，不追加、不再请求模型。这不是“重试直到成功”：如果原 submission 被中断，同一个 id 仍指向它；新的用户操作需要新的 id。
 

@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>让历史活过进程 — 阶段 9 交互教学</title>
+<style>
+	:root { --paper: #f4efe3; --panel: #fffaf0; --ink: #172033; --soft: #586174; --line: #d8cfbe; --blue: #2457d6; --accent: #d95d39; }
+	* { box-sizing: border-box; }
+	body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.8 Georgia, "Songti SC", serif; }
+	main { max-width: 1200px; margin: auto; padding: 45px 24px 80px; }
+	header { border-bottom: 4px double var(--ink); padding-bottom: 30px; }
+	h1 { font-size: clamp(36px, 6vw, 68px); line-height: 1.15; margin: 12px 0; }
+	h2 { margin: 36px 0 12px; font-size: 29px; }
+	h3 { margin: 0 0 10px; font-size: 19px; }
+	p { color: var(--soft); }
+	.kicker { color: var(--accent); font: 13px/1.6 monospace; letter-spacing: .15em; }
+	a { color: var(--blue); }
+	code { font: .88em monospace; background: #e8e1d2; padding: 2px 5px; border-radius: 4px; }
+	pre { padding: 16px; margin: 0; background: #111827; color: #e5e9f2; border-radius: 8px; font: 13px/1.7 monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 440px; overflow: auto; }
+	.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+	.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; min-width: 0; }
+	.flow { margin: 22px 0; border-left: 4px solid var(--accent); }
+	button, select { font: 14px/1.5 system-ui, sans-serif; padding: 9px 14px; color: var(--ink); border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
+	button { cursor: pointer; }
+	button:hover:not(:disabled), button.active { background: var(--ink); color: var(--paper); }
+	button:disabled { opacity: .4; cursor: not-allowed; }
+	button:focus-visible, select:focus-visible, a:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
+	.controls { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; margin: 15px 0; }
+	select { max-width: 100%; }
+	#timeline { display: flex; flex-wrap: wrap; gap: 7px; margin: 15px 0; }
+	#timeline button { font-size: 12px; }
+	#step-title { color: var(--accent); }
+	#path-output { min-height: 60px; }
+	#error-output { color: #b83c3c; font-family: system-ui, sans-serif; }
+	table { width: 100%; border-collapse: collapse; font-size: 15px; }
+	th, td { text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); padding: 12px 8px; }
+	.note { border-left: 4px solid var(--blue); padding: 12px 18px; background: var(--panel); }
+	footer { margin-top: 38px; border-top: 1px solid var(--line); font-size: 14px; }
+	@media (max-width: 760px) { .grid { grid-template-columns: 1fr; } main { padding: 25px 16px 50px; } }
+</style>
+</head>
+<body>
+<main>
+	<header>
+		<div class="kicker">MINI-AGENT / STAGE 09 / DURABLE HISTORY</div>
+		<h1>让历史活过进程</h1>
+		<p>保存对话不难。难的是重启后知道：工具是没做，还是做了但来不及记？</p>
+		<p><a href="09-session-persistence.md">阶段文档</a> · <a href="08-system-prompt-history-explained.html">上一阶段：System prompt 即历史</a></p>
+	</header>
+
+	<h2>01 / 从内存历史，到可恢复的事实</h2>
+	<div class="grid">
+		<article class="card"><h3>SessionJournal：只追加</h3><p>首行是 version=1 的 session header。其后每行一个 entry，带 id / parentId。先 write，再 fsync，再改变内存；旧字节不改、不删。</p><code>.mini-agent/sessions/&lt;epochMs&gt;_&lt;uuid&gt;.jsonl</code></article>
+		<article class="card"><h3>AgentSession：包住执行入口</h3><p>submission 先持久化，再 prompt。内部 awaited listener 先存 assistant、工具结果和 run_end，再让外部订阅者观察。CLI 默认新建，<code>--continue</code> 恢复当前目录最新文件。</p></article>
+	</div>
+	<pre class="flow">submission + fsync → assistant + fsync → prepare
+→ tool_intent + fsync → execute → tool_outcome + fsync
+→ toolResult message + fsync → run_end + fsync</pre>
+	<p class="note">“没有 outcome”不等于“没有副作用”。intent 是执行可能发生的证据，不是执行已经成功的证据。parallel 必须先提交全批 intent，才能启动任一 execute。</p>
+
+	<h2>02 / 自己走一遍崩溃窗口</h2>
+	<p>选择场景，逐步观察 durable journal、祖先路径和模型历史。此模拟器不执行真实文件 I/O、fsync、模型请求或工具；执行计数展示真实实现的语义边界。</p>
+	<div class="controls">
+		<label for="scenario">实验场景</label>
+		<select id="scenario">
+			<option value="safe">safe：执行中崩溃，允许重跑</option>
+			<option value="unsafe">unsafe：保留 partial，不重跑</option>
+			<option value="outcome">outcome 已写：只补 message</option>
+			<option value="branch">branch：同文件的两条历史</option>
+			<option value="barrier">parallel：第二条 intent fsync 失败</option>
+			<option value="dedupe">requestId：重启／分支后仍去重</option>
+		</select>
+	</div>
+	<div class="controls">
+		<button id="prev">上一步</button><button id="next">下一步</button>
+		<button id="jump-end">看最终状态</button><button id="reset">重置</button>
+		<span id="position"></span>
+	</div>
+	<nav id="timeline" aria-label="实验时间线"></nav>
+	<article class="card" aria-live="polite">
+		<h3 id="step-title"></h3><p id="explanation"></p><strong id="decision"></strong>
+		<p id="error-output" role="status"></p>
+	</article>
+	<div class="grid" style="margin-top:18px">
+		<article class="card"><h3>物理 journal / durable entries</h3><p>header 单列展示；下方记录按追加顺序排列。</p><pre id="journal-output"></pre></article>
+		<article class="card"><h3>当前祖先路径 / active leaf</h3><pre id="path-output"></pre><h3 style="margin-top:18px">执行与模型请求</h3><pre id="execution-output"></pre></article>
+		<article class="card"><h3>模型 transcript</h3><p>submission 变成 user；intent/update/outcome 不直接进入模型。</p><pre id="transcript-output"></pre></article>
+		<article class="card"><h3>现在最值得区分什么？</h3><p>执行次数与 durable 结果不是同一个量。safe 可以 execute 两次；unsafe 一次后状态未知；有 outcome 时没有理由再次 execute。</p><p>恢复不自动调模型，补齐 turn 后等待新的用户输入。</p></article>
+	</div>
+
+	<h2>03 / 树不是文件最后几行</h2>
+	<pre>A → B → C    旧分支仍在文件
+└→ D → E    当前 leaf = E
+
+物理顺序：A, B, C, D, E
+当前路径：A, D, E</pre>
+	<p><code>branch(A)</code> 只移动内存 leaf；下一条 D 的 parentId 指向 A。reopen 默认选择物理最后一条有效 entry，再走 parent 链。全 session 的 requestId 去重读所有 entry，不只读当前路径。</p>
+
+	<h2>04 / 恢复规则，不是猜测</h2>
+	<table>
+		<thead><tr><th>日志证据</th><th>恢复动作</th><th>为什么</th></tr></thead>
+		<tbody>
+			<tr><td>toolCall，没 intent</td><td>补未到执行边界的 error</td><td>只有 prepare 成功后才允许提交 intent</td></tr>
+			<tr><td>safe intent，没 outcome</td><td>声明匹配且当前仍 safe 才重跑</td><td>工具作者允许重跑；不保证数据不变</td></tr>
+			<tr><td>unsafe／工具缺失／声明变化</td><td>partial + interrupted error</td><td>不能把未知副作用放大成重复执行</td></tr>
+			<tr><td>outcome，没有 message</td><td>只补 toolResult</td><td>durable 结果已经存在</td></tr>
+			<tr><td>最终 assistant，没有 run_end</td><td>按 stopReason 补 run_end</td><td>无需再生成一次模型回复</td></tr>
+		</tbody>
+	</table>
+	<p>内置 read = safe；edit / bash = unsafe；默认 unsafe。unsafe 的 partial content 是已记录的观察，不是副作用完成证明。replay 声明不能产生跨外部系统的 exactly-once。</p>
+	<p class="note">级别 2：修复到完整 turn 边界。不做任意 step checkpoint、provider 自动生成恢复、task graph、compaction、<code>/fork</code> 或 CLI 树选择器。只有 submission 的崩溃保留 user-only 历史，不自动重发。</p>
+	<p>torn tail：仅忽略末尾无换行且无法解析的一条 fragment；中间坏 JSON、换行结束的坏 JSON、重复 id、缺 parent、未知版本必须报错。这不是“坏数据都跳过”。</p>
+
+	<h2>05 / 换个设计，会失去什么？</h2>
+	<div class="grid">
+		<article class="card"><h3>覆盖 session.json？</h3><p>旧历史被反复触碰，写一半可能毁掉快照；branch 和审计也失去共同事实。</p></article>
+		<article class="card"><h3>execute 后再记 intent？</h3><p>最需要日志的窗口恰好没有日志：命令已跑，进程死了，重启只能猜。</p></article>
+		<article class="card"><h3>pending 全部重跑？</h3><p>可能把文件改两次，把命令执行两次。safe / unsafe 是副作用决策，不是性能选项。</p></article>
+		<article class="card"><h3>幂等键只放内存？</h3><p>一重启就忘了。同一个请求可能再次调模型和工具；按 active branch 去重也会漏掉旧分支。</p></article>
+	</div>
+	<footer><p>源码入口：<code>session-journal.ts</code> / <code>agent-session.ts</code> / <code>session-recovery.ts</code>。为保留 durability 与崩溃窗口规则，Task 7 明确接受 815 行会话实现，超出约 400 行教学预算。</p></footer>
+</main>
+<script>
+	const systemText = "You are a minimal coding agent.";
+	const header = { type: "session", version: 1, id: "demo-session", createdAt: "2026-10-15T00:00:00.000Z" };
+	const action = (kind, title, explanation, data = {}) => ({ kind, title, explanation, ...data });
+	const submit = action("submit", "submission + fsync", "先写入 req-1，再启动模型。", { id: "B", requestId: "req-1", prompt: "Run the tool" });
+	const assistant = action("append", "assistant + fsync", "工具调用已进入历史，execute 还没有开始。", { entry: { id: "C", type: "message", role: "assistant", content: "toolCall" } });
+	const intent = (replay) => action("append", "intent + fsync", "prepare 成功后持久化 intent。", { entry: { id: "D", type: "tool_intent", assistantEntryId: "C", sourceIndex: 0, toolCallId: "call-1", tool: { name: replay === "safe" ? "read" : "bash" }, replay, args: {} } });
+	const execute = action("execute", "execute 开始", "副作用可能已经发生，尚无 durable outcome。");
+	const crash = action("crash", "SIGKILL / reopen", "内存丢失；从最后的 durable entry 重建路径。恢复不自动请求模型。");
+	const recover = (policy, content) => action("recover", "恢复 turn 边界", policy === "safe" ? "声明匹配且仍 safe：重跑并追加 outcome / message。" : policy === "outcome" ? "已有 durable outcome：只补 message，不执行。" : "unsafe：保留 partial，再追加明确的 interrupted error。", { policy, content });
+	const scenarios = {
+		safe: { decision: "safe 允许重跑，不等于 exactly-once。", actions: [submit, assistant, intent("safe"), execute, crash, recover("safe", "read complete")] },
+		unsafe: { decision: "未知副作用不能被伪装成未执行或成功。", actions: [submit, assistant, intent("unsafe"), execute,
+			action("append", "partial + fsync", "已观察到的输出必须先存住。", { entry: { id: "U", type: "tool_update", intentId: "D", content: "partial output" } }),
+			crash, recover("unsafe", "")] },
+		outcome: { decision: "恢复缺失的消息，不重复已经有结果的工具。", actions: [submit, assistant, intent("unsafe"), execute,
+			action("append", "outcome + fsync", "结果 durable，但 toolResult message 尚未写入。", { entry: { id: "O", type: "tool_outcome", intentId: "D", content: "durable result", isError: false } }),
+			crash, recover("outcome", "")] },
+		branch: { decision: "移动 leaf，不复制文件，不删除旧后代。", actions: [
+			action("submit", "旧分支输入", "先追加旧分支。", { id: "B", requestId: "old", prompt: "old branch" }),
+			action("append", "旧分支回复", "C 的 parent 是 B。", { entry: { id: "C", type: "message", role: "assistant", content: "old answer" } }),
+			action("branch", "branch(A)", "文件没变化；只有内存 leaf 回到 A。", { id: "A" }),
+			action("submit", "新分支输入", "D 追加在 C 后面，但 parent 指向 A。", { id: "D", requestId: "new", prompt: "new branch" }),
+			action("append", "新分支回复", "E 的 parent 是 D，B/C 仍存在。", { entry: { id: "E", type: "message", role: "assistant", content: "new answer" } }),
+			crash] },
+		barrier: { decision: "parallel：全部 prepare + intent commit 完成后才允许 execute。", actions: [submit, assistant, intent("safe"),
+			action("failure", "第二条 intent fsync 失败", "第一条 intent 已 durable，第二条失败；本批 prepared tools 的 execute 次数为 0。")] },
+		dedupe: { decision: "requestId 查整个文件，重复提交只返回原 submission。", actions: [
+			submit,
+			action("append", "完成回复", "req-1 已经请求过模型。", { entry: { id: "C", type: "message", role: "assistant", content: "answer" } }),
+			action("append", "run_end", "持久化原请求完成。", { entry: { id: "R", type: "run_end", submissionId: "B", status: "completed" } }),
+			crash,
+			action("branch", "branch(A)", "active path 不再包含 req-1，但文件仍含它。", { id: "A" }),
+			action("submit", "重复 req-1", "返回原 submission B，不追加，不再调模型。", { id: "X", requestId: "req-1", prompt: "Run the tool" })] },
+	};
+
+	function append(state, entry) {
+		state.entries.push({ ...entry, parentId: state.leafId });
+		state.leafId = entry.id;
+	}
+	function snapshot(state) {
+		const byId = new Map(state.entries.map((entry) => [entry.id, entry]));
+		const ancestors = [];
+		for (let id = state.leafId; id !== null;) {
+			const entry = byId.get(id);
+			if (!entry) throw new Error("Unknown demo entry: " + id);
+			ancestors.unshift(entry);
+			id = entry.parentId;
+		}
+		const transcript = ancestors.flatMap((entry) => {
+			if (entry.type === "submission") return [{ role: "user", content: entry.prompt }];
+			if (entry.type === "message") return [{ role: entry.role, content: entry.content, ...(entry.role === "toolResult" ? { isError: entry.isError } : {}) }];
+			return [];
+		});
+		return structuredClone({ ...state, path: ancestors.map((entry) => entry.id), transcript });
+	}
+	function buildTrace(scenario) {
+		const state = { entries: [], leafId: null, executions: 0, modelRequests: 0, error: "" };
+		append(state, { id: "A", type: "message", role: "system", content: systemText });
+		const trace = [{ title: "起点", explanation: "header 与初始 system message 已 durable。", after: snapshot(state) }];
+		for (const step of scenario.actions) {
+			if (step.kind === "submit") {
+				if (!state.entries.some((entry) => entry.type === "submission" && entry.requestId === step.requestId)) {
+					append(state, { id: step.id, type: "submission", requestId: step.requestId, prompt: step.prompt });
+					state.modelRequests++;
+				}
+			} else if (step.kind === "append") {
+				append(state, step.entry);
+			} else if (step.kind === "execute") {
+				state.executions++;
+			} else if (step.kind === "branch") {
+				if (!state.entries.some((entry) => entry.id === step.id)) throw new Error("Unknown branch entry");
+				state.leafId = step.id;
+			} else if (step.kind === "crash") {
+				state.leafId = state.entries.at(-1).id;
+			} else if (step.kind === "failure") {
+				state.error = "fsync failed — infrastructure error; executeCalls = 0";
+			} else if (step.kind === "recover") {
+				let content = step.content;
+				const isError = step.policy === "unsafe";
+				if (step.policy === "safe") state.executions++;
+				if (step.policy === "unsafe")
+					content = state.entries.filter((entry) => entry.type === "tool_update").map((entry) => entry.content).concat("interrupted").join("\n");
+				if (step.policy === "outcome") {
+					const outcome = state.entries.find((entry) => entry.type === "tool_outcome");
+					if (!outcome) throw new Error("Missing durable outcome");
+					content = outcome.content;
+				} else {
+					append(state, { id: "O", type: "tool_outcome", intentId: "D", content, isError });
+				}
+				append(state, { id: "M", type: "message", role: "toolResult", intentId: "D", content, isError });
+				append(state, { id: "R", type: "run_end", submissionId: "B", status: "interrupted" });
+			} else {
+				throw new Error("Unknown demo action: " + step.kind);
+			}
+			trace.push({ title: step.title, explanation: step.explanation, after: snapshot(state) });
+		}
+		return trace;
+	}
+
+	const get = (id) => document.getElementById(id);
+	let selected = "safe";
+	let trace = buildTrace(scenarios[selected]);
+	let cursor = 0;
+	function render() {
+		const step = trace[cursor];
+		get("step-title").textContent = step.title;
+		get("explanation").textContent = step.explanation;
+		get("decision").textContent = scenarios[selected].decision;
+		get("journal-output").textContent = JSON.stringify(header, null, 2) + "\n\n" + step.after.entries.map((entry) => JSON.stringify(entry, null, 2)).join("\n");
+		get("path-output").textContent = "leaf = " + step.after.leafId + "\n" + step.after.path.join(" → ");
+		get("transcript-output").textContent = JSON.stringify(step.after.transcript, null, 2);
+		get("execution-output").textContent = JSON.stringify({ executeCalls: step.after.executions, modelRequests: step.after.modelRequests }, null, 2);
+		get("error-output").textContent = step.after.error;
+		get("position").textContent = (cursor + 1) + " / " + trace.length;
+		get("prev").disabled = cursor === 0;
+		get("next").disabled = cursor === trace.length - 1;
+		get("jump-end").disabled = cursor === trace.length - 1;
+		get("timeline").replaceChildren(...trace.map((item, index) => {
+			const button = document.createElement("button");
+			button.textContent = (index + 1) + ". " + item.title;
+			button.className = index === cursor ? "active" : "";
+			button.setAttribute("aria-current", index === cursor ? "step" : "false");
+			button.addEventListener("click", () => { cursor = index; render(); });
+			return button;
+		}));
+	}
+	get("scenario").value = selected;
+	get("scenario").addEventListener("change", () => {
+		selected = get("scenario").value;
+		if (!scenarios[selected]) throw new Error("Unknown scenario");
+		trace = buildTrace(scenarios[selected]);
+		cursor = 0;
+		render();
+	});
+	get("prev").addEventListener("click", () => { cursor = Math.max(0, cursor - 1); render(); });
+	get("next").addEventListener("click", () => { cursor = Math.min(trace.length - 1, cursor + 1); render(); });
+	get("jump-end").addEventListener("click", () => { cursor = trace.length - 1; render(); });
+	get("reset").addEventListener("click", () => { cursor = 0; render(); });
+	render();
+</script>
+</body>
+</html>
