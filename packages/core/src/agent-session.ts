@@ -243,6 +243,8 @@ export class AgentSession {
 		prompt: string;
 	}): Promise<SessionEntryOf<"submission">> {
 		return this.runExclusive("submit", async () => {
+			await recoverInterruptedTools(this.journal, this.options.tools ?? []);
+			this.agent = this.createAgent(messagesFromPath(this.journal.pathTo()));
 			const submission = await this.journal.append({
 				type: "submission",
 				requestId: input.requestId,

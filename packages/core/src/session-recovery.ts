@@ -90,7 +90,13 @@ export async function recoverInterruptedTools(
 	const submission = lastUnfinishedSubmission(path);
 	if (!submission) return;
 	const submissionIndex = path.indexOf(submission);
-	const runEntries = path.slice(submissionIndex + 1);
+	const nextSubmissionIndex = path.findIndex((entry, index) =>
+		index > submissionIndex && entry.type === "submission"
+	);
+	const runEntries = path.slice(
+		submissionIndex + 1,
+		nextSubmissionIndex === -1 ? undefined : nextSubmissionIndex,
+	);
 	const assistantEntry = runEntries.findLast(
 		(entry): entry is SessionEntryOf<"message"> =>
 			entry.type === "message" && entry.message.role === "assistant",

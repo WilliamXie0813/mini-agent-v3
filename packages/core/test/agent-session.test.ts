@@ -90,6 +90,78 @@ afterEach(async () => {
 });
 
 describe("AgentSession", () => {
+	it.each(["outcome failure", "historical branch"] as const)(
+		"normalizes partial tool history before a new submission after %s",
+		async (trigger) => {
+			const contexts: StreamContext[] = [];
+			let executes = 0;
+			const definition: ToolDef = {
+				name: "unsafe", description: "unsafe", replay: "unsafe",
+				parameters: { type: "object" },
+				execute: async (_args, _signal, onUpdate) => {
+					executes++;
+					onUpdate?.({ content: [{ type: "text", text: "committed partial" }] });
+					return { content: [{ type: "text", text: "original result" }] };
+				},
+			};
+			const inner = createFakeStreamFn([
+				[{ type: "toolCall", id: "c1", name: "unsafe", arguments: {} }],
+				"old final", "new final",
+			]);
+			const session = await AgentSession.create({
+				directory: await temporaryDirectory(), system: "base", tools: [definition],
+				streamFn: (context, signal) => {
+					contexts.push(structuredClone(context));
+					return inner(context, signal);
+				},
+			});
+			const append = SessionJournal.prototype.append;
+			if (trigger === "outcome failure") {
+				const failure = new Error("outcome fsync failed");
+				const spy = vi.spyOn(SessionJournal.prototype, "append").mockImplementation(
+					function <TData extends SessionEntryData>(
+						this: SessionJournal, data: TData,
+					): Promise<SessionEntryBase & TData> {
+						if (data.type === "tool_outcome") return Promise.reject(failure);
+						return (append<TData>).call(this, data);
+					},
+				);
+				await expect(session.submit({ requestId: "old", prompt: "run unsafe" }))
+					.rejects.toBe(failure);
+				spy.mockRestore();
+			} else {
+				await session.submit({ requestId: "old", prompt: "run unsafe" });
+				const partial = session.entries.find(({ type }) => type === "tool_update")!;
+				const before = await readFile(session.filePath, "utf8");
+				session.branch(partial.id);
+				expect(await readFile(session.filePath, "utf8")).toBe(before);
+			}
+			const next = await session.submit({ requestId: "next", prompt: "continue" });
+			expect(executes).toBe(1);
+			const context = contexts.at(-1)!;
+			expect(context.messages.map(({ role }) => role)).toEqual([
+				"system", "user", "assistant", "toolResult", "user",
+			]);
+			expect(context.messages[3]).toMatchObject({
+				role: "toolResult", toolCallId: "c1", isError: true,
+				content: [
+					{ type: "text", text: "committed partial" },
+					{ type: "text", text: expect.stringMatching(/interrupted/i) },
+				],
+			});
+			const activePath = pathTo(session.entries, session.leafId!);
+			const nextIndex = activePath.indexOf(next.id);
+			expect(session.entries.find(({ id }) => id === activePath[nextIndex - 1]))
+				.toMatchObject({ type: "run_end", status: "interrupted" });
+			const reopened = await AgentSession.open({
+				path: session.filePath, system: "base", tools: [definition],
+				streamFn: createFakeStreamFn(["unused"]),
+			});
+			expect(reopened.state.messages).toEqual(session.state.messages);
+			expect(executes).toBe(1);
+		},
+	);
+
 	it.each(["parallel", "sequential"] as const)(
 		"propagates a failed second %s intent without sealing pending recovery",
 		async (toolExecution) => {

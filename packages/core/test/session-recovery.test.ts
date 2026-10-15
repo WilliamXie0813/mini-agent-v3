@@ -66,6 +66,55 @@ afterEach(async () => {
 });
 
 describe("recoverInterruptedTools", () => {
+	it("bounds an unfinished run before a later submission's terminal assistant", async () => {
+		const store = await journal();
+		const call = toolCall("c1", "edit");
+		const { submission, assistant } =
+			await appendSubmissionAndAssistant(store, [call]);
+		let executes = 0;
+		const edit = tool("edit", "unsafe", async () => {
+			executes++;
+			return { content: [] };
+		});
+		const intent = await store.append({
+			type: "tool_intent", submissionId: submission.id,
+			assistantEntryId: assistant.id, sourceIndex: 0, toolCallId: call.id,
+			tool: toToolDeclarations([edit])[0]!, args: {}, replay: "unsafe",
+		});
+		await store.append({
+			type: "tool_update", intentId: intent.id,
+			partialResult: { content: [{ type: "text", text: "old partial" }] },
+		});
+		const later = await store.append({
+			type: "submission", requestId: "later", prompt: "later",
+		});
+		await store.append({
+			type: "message",
+			message: { role: "assistant", content: [], stopReason: "stop" },
+		});
+		await store.append({
+			type: "run_end", submissionId: later.id, status: "completed",
+		});
+
+		await recoverInterruptedTools(store, [edit]);
+
+		expect(executes).toBe(0);
+		expect(store.entries.find((entry) =>
+			entry.type === "message" && entry.intentId === intent.id
+		)).toMatchObject({
+			message: {
+				role: "toolResult", isError: true,
+				content: [
+					{ type: "text", text: "old partial" },
+					{ type: "text", text: expect.stringMatching(/interrupted/i) },
+				],
+			},
+		});
+		expect(store.entries.at(-1)).toMatchObject({
+			type: "run_end", submissionId: submission.id, status: "interrupted",
+		});
+	});
+
 	it("replays a safe intent and preserves committed updates", async () => {
 		const store = await journal();
 		const call = toolCall("c1", "read", { path: "a.txt" });
