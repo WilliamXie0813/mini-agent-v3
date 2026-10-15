@@ -1,4 +1,4 @@
-import type { AgentEvent, SessionHooks, ToolDef } from "@mini-agent/core";
+import type { AgentEvent, AfterToolCallResult, SessionHooks, ToolDef } from "@mini-agent/core";
 import type { StreamFn } from "@mini-agent/ai";
 import type {
 	DecisionEventHandlers,
@@ -107,13 +107,16 @@ export class ExtensionRunner implements ExtensionAPI {
 
 	// 决策 hook 逐个接上；未注册任何 handler 时返回空对象。
 	// tool_call 是短路语义：首个非 undefined 返回值生效，后续 handler 不再运行。
-	// handler 抛错只记录后重抛——prepareToolCall 会把异常转成 error result（fail-closed）。
+	// tool_result 是 fold 语义：逐个传递，字段级最后一个生效，void 不动已累积字段。
+	// handler 抛错只记录后重抛——tool_call 由 prepareToolCall 转成 error result（fail-closed），
+	// tool_result 则由 agent.ts 包装为 AgentInfrastructureFailure 冒泡。
 	sessionHooks(): SessionHooks {
-		const handlers = this.handlersFor("tool_call");
-		if (handlers.length === 0) return {};
-		return {
-			beforeToolCall: async (context) => {
-				for (const { name, handler } of handlers) {
+		const toolCallHandlers = this.handlersFor("tool_call");
+		const toolResultHandlers = this.handlersFor("tool_result");
+		const hooks: SessionHooks = {};
+		if (toolCallHandlers.length > 0) {
+			hooks.beforeToolCall = async (context) => {
+				for (const { name, handler } of toolCallHandlers) {
 					try {
 						const result = await handler(context);
 						if (result !== undefined) return result;
@@ -123,8 +126,24 @@ export class ExtensionRunner implements ExtensionAPI {
 					}
 				}
 				return undefined;
-			},
-		};
+			};
+		}
+		if (toolResultHandlers.length > 0) {
+			hooks.afterToolCall = async (context) => {
+				let accumulated: AfterToolCallResult = {};
+				for (const { name, handler } of toolResultHandlers) {
+					try {
+						const partial = await handler(context);
+						if (partial) accumulated = { ...accumulated, ...partial };
+					} catch (error) {
+						this.log(`extension "${name}" handler for "tool_result" failed: ${errorMessage(error)}`);
+						throw error;
+					}
+				}
+				return accumulated;
+			};
+		}
+		return hooks;
 	}
 
 	// 传给 factory 的绑定视图：私有对象字面量，方法体只做箭头函数转发。
@@ -145,11 +164,13 @@ export class ExtensionRunner implements ExtensionAPI {
 	}
 
 	// handler 表按 Function 存储，组合决策 hook 时按注册序还原 owner 名，供错误消息使用。
-	private handlersFor(event: string): { name: string; handler: DecisionEventHandlers["tool_call"] }[] {
+	private handlersFor<K extends keyof DecisionEventHandlers>(
+		event: K,
+	): { name: string; handler: DecisionEventHandlers[K] }[] {
 		const list = this.handlers.get(event) ?? [];
 		return list.map((handler) => ({
 			name: this.handlerOwners.get(handler) ?? "unknown",
-			handler: handler as DecisionEventHandlers["tool_call"],
+			handler: handler as DecisionEventHandlers[K],
 		}));
 	}
 }

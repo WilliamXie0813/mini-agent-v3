@@ -2,7 +2,7 @@ import { getDefaultStreamFn } from "@mini-agent/ai";
 import type { AssistantMessage, Message, StreamFn, SystemSection } from "@mini-agent/ai";
 import { agentLoop } from "./agent-loop.ts";
 import type { AgentOptions } from "./agent-options.ts";
-import type { PrepareRequest, RecoverContextOverflow } from "./agent-options.ts";
+import type { AfterToolCall, PrepareRequest, RecoverContextOverflow } from "./agent-options.ts";
 import type { AgentEvent, AgentEventListener } from "./agent-event.ts";
 import { appendSystemSections, createAgentState, reduceAgentState, replaceAgentTools } from "./agent-state.ts";
 import type { AgentState } from "./agent-state.ts";
@@ -33,6 +33,7 @@ export class Agent {
 	private readonly listeners = new Set<AgentEventListener>();
 	private readonly _state: AgentState;
 	public beforeToolCall?: BeforeToolCall;
+	public afterToolCall?: AfterToolCall;
 	// 与 beforeToolCall 同为可替换 seam（阶段 10 的阈值压缩由 AgentSession 挂在这里）。
 	public prepareRequest?: PrepareRequest;
 	public toolExecution: ToolExecutionMode;
@@ -56,6 +57,7 @@ export class Agent {
 			}
 			: undefined;
 		this.beforeToolCall = options.beforeToolCall;
+		this.afterToolCall = options.afterToolCall;
 		this.prepareRequest = options.prepareRequest;
 		this.recoverContextOverflow = options.recoverContextOverflow;
 		this.toolExecution = options.toolExecution ?? "parallel";
@@ -108,6 +110,7 @@ export class Agent {
 			// hook failure 与 listener failure 同为基础设施失败：原样冒泡，不合成 error 消息。
 			const prepareRequest = this.prepareRequest;
 			const recoverContextOverflow = this.recoverContextOverflow;
+			const afterToolCall = this.afterToolCall;
 			await agentLoop({
 				prompt,
 				messages: this._state.messages.slice(),
@@ -116,6 +119,15 @@ export class Agent {
 				tools: this._state.tools.slice(),
 				maxTurns: this.maxTurns,
 				beforeToolCall: this.beforeToolCall,
+				afterToolCall: afterToolCall
+					? async (context, hookSignal) => {
+						try {
+							return await afterToolCall(context, hookSignal);
+						} catch (error) {
+							throw new AgentInfrastructureFailure(error);
+						}
+					}
+					: undefined,
 				toolExecution: this.toolExecution,
 				commitToolIntent: this.commitToolIntent,
 				prepareRequest: prepareRequest

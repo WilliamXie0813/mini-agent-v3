@@ -4,6 +4,8 @@ import type {
 	ToolResultMessage,
 } from "@mini-agent/ai";
 import type { AgentEventSink } from "./agent-event.ts";
+import type { AfterToolCall, AfterToolCallContext } from "./agent-options.ts";
+import { applyAfterToolCall } from "./after-tool-call.ts";
 import { executeToolCallsParallel } from "./execute-tool-calls-parallel.ts";
 import {
 	executePreparedToolCall,
@@ -12,6 +14,7 @@ import {
 import type {
 	ExecutedToolCallOutcome,
 	ImmediateToolCallOutcome,
+	PreparedToolCall,
 } from "./tool-call.ts";
 import {
 	emitToolEnd,
@@ -36,6 +39,7 @@ export interface ExecuteToolCallsOptions {
 	signal?: AbortSignal;
 	emit?: AgentEventSink;
 	beforeToolCall?: BeforeToolCall;
+	afterToolCall?: AfterToolCall;
 	toolExecution?: ToolExecutionMode;
 	commitToolIntent?: CommitToolIntent;
 }
@@ -110,7 +114,18 @@ async function executeToolCallsSequential(
 				}),
 			);
 		}
-		const result = finalizeToolCall(outcome);
+		const base = finalizeToolCall(outcome);
+		const result = await applyAfterToolCall(
+			base,
+			options.afterToolCall,
+			toolCallContext(
+				outcome,
+				preparation.kind === "prepared" ? preparation : undefined,
+				base,
+				options.messages,
+			),
+			options.signal,
+		);
 		await emitToolEnd(result, emit);
 		await emitToolResultMessage(result.message, emit);
 		finalized.push(result);
@@ -157,5 +172,26 @@ function errorResult(text: string): ToolResult {
 	return {
 		content: [{ type: "text", text }],
 		isError: true,
+	};
+}
+
+// 顺序与并行两条路径共用，避免两处把 tool / args 的取值规则写岔。
+// finalized 必须作为参数传入而不是在里面重算：performance.now() 调两次
+// 会得到不同值，hook 看到的 durationMs 必须与 tool_execution_end 报的一致。
+// prepared 为 undefined 时（工具未找到 / 校验失败 / 被 block / 已中止）tool 就是 undefined。
+export function toolCallContext(
+	outcome: ExecutedToolCallOutcome | ImmediateToolCallOutcome,
+	prepared: PreparedToolCall | undefined,
+	finalized: FinalizedToolCallOutcome,
+	messages: readonly Message[],
+): AfterToolCallContext {
+	return {
+		toolCall: outcome.toolCall,
+		tool: prepared?.tool,
+		args: prepared?.args ?? outcome.toolCall.arguments,
+		result: finalized.result,
+		isError: finalized.isError,
+		durationMs: finalized.durationMs,
+		messages,
 	};
 }

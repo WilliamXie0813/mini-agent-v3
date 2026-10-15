@@ -1,4 +1,5 @@
 export { Agent } from "./agent.ts";
+export { applyAfterToolCall } from "./after-tool-call.ts";
 export type {
 	AfterToolCall,
 	AfterToolCallContext,

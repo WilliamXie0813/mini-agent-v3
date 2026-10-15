@@ -193,3 +193,42 @@ describe("tool_call decision hook", () => {
 		expect(agent.state.messages.at(-1)?.role).toBe("assistant");
 	});
 });
+
+describe("tool_result decision hook", () => {
+	test("folds in registration order, last handler's fields win", async () => {
+		const runner = new ExtensionRunner();
+		await runner.use({
+			name: "a",
+			factory: (api) => { api.on("tool_result", (e) => ({ content: [{ type: "text" as const, text: `a:${e.result.content.length}` }] })); },
+		});
+		await runner.use({
+			name: "b",
+			factory: (api) => { api.on("tool_result", () => ({ isError: true })); },
+		});
+		const agent = new Agent({
+			system: "s",
+			tools: [{ name: "read", description: "read", parameters: {}, execute: async () => ({ content: [{ type: "text", text: "x" }] }) }],
+			streamFn: createFakeStreamFn([[{ type: "toolCall" as const, id: "c1", name: "read", arguments: {} }], "done"]),
+			...runner.sessionHooks(),
+		});
+		await agent.prompt("go");
+		const result = agent.state.messages.find((m) => m.role === "toolResult");
+		expect(result).toMatchObject({ isError: true });
+		expect(result?.role === "toolResult" && result.content[0]).toEqual({ type: "text", text: "a:1" });
+	});
+
+	test("a handler returning void leaves the previous fields intact", async () => {
+		const runner = new ExtensionRunner();
+		await runner.use({ name: "a", factory: (api) => { api.on("tool_result", () => ({ content: [{ type: "text" as const, text: "kept" }] })); } });
+		await runner.use({ name: "b", factory: (api) => { api.on("tool_result", () => undefined); } });
+		const agent = new Agent({
+			system: "s",
+			tools: [{ name: "read", description: "read", parameters: {}, execute: async () => ({ content: [] }) }],
+			streamFn: createFakeStreamFn([[{ type: "toolCall" as const, id: "c1", name: "read", arguments: {} }], "done"]),
+			...runner.sessionHooks(),
+		});
+		await agent.prompt("go");
+		const result = agent.state.messages.find((m) => m.role === "toolResult");
+		expect(result?.role === "toolResult" && result.content[0]).toEqual({ type: "text", text: "kept" });
+	});
+});

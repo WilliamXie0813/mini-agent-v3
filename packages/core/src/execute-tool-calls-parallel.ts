@@ -1,15 +1,17 @@
 import type { AgentEventSink } from "./agent-event.ts";
+import { applyAfterToolCall } from "./after-tool-call.ts";
 import type {
 	ExecutedToolBatch,
 	ExecuteToolCallsOptions,
 } from "./execute-tool-calls.ts";
+import { toolCallContext } from "./execute-tool-calls.ts";
 import { finalizeToolCall } from "./finalize-tool-call.ts";
 import type { FinalizedToolCallOutcome } from "./finalize-tool-call.ts";
 import {
 	executePreparedToolCall,
 	prepareToolCall,
 } from "./tool-call.ts";
-import type { ImmediateToolCallOutcome } from "./tool-call.ts";
+import type { ImmediateToolCallOutcome, PreparedToolCall } from "./tool-call.ts";
 import {
 	emitToolEnd,
 	emitToolResultMessage,
@@ -38,6 +40,7 @@ export async function executeToolCallsParallel(
 			entries.push(await finishImmediate(
 				aborted(toolCall, startedAt),
 				emit,
+				options,
 			));
 			continue;
 		}
@@ -51,7 +54,7 @@ export async function executeToolCallsParallel(
 			startedAt,
 		});
 		if (preparation.kind === "immediate") {
-			entries.push(await finishImmediate(preparation, emit));
+			entries.push(await finishImmediate(preparation, emit, options));
 			continue;
 		}
 		await options.commitToolIntent?.({
@@ -75,7 +78,13 @@ export async function executeToolCallsParallel(
 							partialResult,
 						}),
 					);
-			const finalized = finalizeToolCall(outcome);
+			const base = finalizeToolCall(outcome);
+			const finalized = await applyAfterToolCall(
+				base,
+				options.afterToolCall,
+				toolCallContext(outcome, preparation, base, options.messages),
+				options.signal,
+			);
 			await emitToolEnd(finalized, emit);
 			return finalized;
 		});
@@ -107,8 +116,16 @@ export async function executeToolCallsParallel(
 async function finishImmediate(
 	outcome: ImmediateToolCallOutcome,
 	emit: AgentEventSink,
+	options: ExecuteToolCallsOptions,
+	prepared?: PreparedToolCall,
 ): Promise<FinalizedToolCallOutcome> {
-	const finalized = finalizeToolCall(outcome);
+	const base = finalizeToolCall(outcome);
+	const finalized = await applyAfterToolCall(
+		base,
+		options.afterToolCall,
+		toolCallContext(outcome, prepared, base, options.messages),
+		options.signal,
+	);
 	await emitToolEnd(finalized, emit);
 	return finalized;
 }

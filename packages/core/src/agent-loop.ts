@@ -6,7 +6,7 @@ import type {
 	ToolResultMessage,
 } from "@mini-agent/ai";
 import type { AgentEventSink } from "./agent-event.ts";
-import type { PrepareRequest, RecoverContextOverflow } from "./agent-options.ts";
+import type { AfterToolCall, PrepareRequest, RecoverContextOverflow } from "./agent-options.ts";
 import {
 	executeToolCalls,
 	failTruncatedToolCalls,
@@ -28,6 +28,7 @@ export interface AgentLoopOptions {
 	tools?: ToolDef<any>[]; // 执行注册表；缺省 []：无工具的调用走一轮就收敛，与阶段 1 行为一致
 	maxTurns?: number; // 缺省 10：模型反复要工具时的熔断，防止无限烧 token
 	beforeToolCall?: BeforeToolCall;
+	afterToolCall?: AfterToolCall;
 	toolExecution?: ToolExecutionMode;
 	commitToolIntent?: CommitToolIntent;
 	prepareRequest?: PrepareRequest;
@@ -147,6 +148,7 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 					signal: options.signal,
 					emit,
 					beforeToolCall: options.beforeToolCall,
+					afterToolCall: options.afterToolCall,
 					toolExecution: options.toolExecution,
 					commitToolIntent: options.commitToolIntent,
 				},
