@@ -811,3 +811,37 @@ describe("agentLoop (stage 10: context overflow recovery)", () => {
 		expect(plain.at(-1)).toMatchObject({ stopReason: "error" });
 	});
 });
+
+// 终审修复：recovery hook 必须拿到本次 run 的 signal——否则 abort 穿不进恢复摘要。
+describe("agentLoop (stage 10: recovery signal)", () => {
+	it("passes the run signal to the recovery hook", async () => {
+		const controller = new AbortController();
+		let seen: AbortSignal | undefined;
+		const stream = createAssistantMessageEventStream();
+		const streamFn: StreamFn = () => {
+			const s = createAssistantMessageEventStream();
+			s.push({
+				type: "start",
+				partial: { role: "assistant", content: [], stopReason: "pending" },
+			});
+			s.push({
+				type: "error", reason: "error",
+				error: {
+					role: "assistant", content: [], stopReason: "error",
+					errorKind: "context_overflow", errorMessage: "prompt is too long",
+				},
+			});
+			s.end();
+			return s;
+		};
+		void stream;
+		await agentLoop({
+			...base(), prompt: "go", signal: controller.signal, streamFn,
+			recoverContextOverflow: (input) => {
+				seen = input.signal;
+				return false;
+			},
+		});
+		expect(seen).toBe(controller.signal);
+	});
+});

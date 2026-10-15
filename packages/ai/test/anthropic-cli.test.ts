@@ -260,3 +260,17 @@ describe("CLI composition root", () => {
 		},
 	);
 });
+
+describe("CLI /compact failure (stage 10 review fix)", () => {
+	it("prints a compaction failure and keeps the REPL alive", async () => {
+		const text = await fixture("text");
+		// 5 轮正常对话（超出 keepRecentTurns=4），第 6 个请求是摘要 → 500。
+		const replies: { status?: number; body: string }[] =
+			Array.from({ length: 5 }, () => ({ body: text }));
+		replies.push({ status: 500, body: "summary exploded" });
+		const result = await runCli("一\n二\n三\n四\n五\n/compact\n/exit\n", replies);
+		expect(result.code).toBe(0);
+		expect(result.requests).toHaveLength(6);
+		expect(result.stdout).toMatch(/compaction failed/i);
+	});
+});

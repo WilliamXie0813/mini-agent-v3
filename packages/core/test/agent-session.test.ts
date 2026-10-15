@@ -1399,3 +1399,73 @@ describe("AgentSession overflow recovery", () => {
 			.toBe(false);
 	});
 });
+
+// 终审修复：overflow 恢复摘要必须可 abort——signal 从 run 一路穿到 streamFn。
+describe("AgentSession overflow recovery signal", () => {
+	it("threads the run signal into the overflow recovery summary", async () => {
+		const summarySignals: (AbortSignal | undefined)[] = [];
+		let formal = 0;
+		const streamFn: StreamFn = (context, signal) => {
+			if (context.system.sections
+				.some((s) => s.text.startsWith("Summarize the earlier"))) {
+				summarySignals.push(signal);
+				const stream = createAssistantMessageEventStream();
+				stream.push({
+					type: "start",
+					partial: { role: "assistant", content: [], stopReason: "pending" },
+				});
+				// 只有 abort 能结束这个摘要请求。
+				signal?.addEventListener("abort", () => {
+					stream.push({
+						type: "error", reason: "aborted",
+						error: { role: "assistant", content: [], stopReason: "aborted" },
+					});
+					stream.end();
+				}, { once: true });
+				return stream;
+			}
+			formal++;
+			if (formal === 6) {
+				const stream = createAssistantMessageEventStream();
+				stream.push({
+					type: "start",
+					partial: { role: "assistant", content: [], stopReason: "pending" },
+				});
+				stream.push({
+					type: "error", reason: "error",
+					error: {
+						role: "assistant", content: [], stopReason: "error",
+						errorKind: "context_overflow",
+						errorMessage: "prompt is too long",
+					},
+				});
+				stream.end();
+				return stream;
+			}
+			const stream = createAssistantMessageEventStream();
+			stream.push({
+				type: "done",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: `answer ${formal}` }],
+					stopReason: "stop",
+				},
+			});
+			stream.end();
+			return stream;
+		};
+		const session = await AgentSession.create({
+			directory: await temporaryDirectory(), system: "base", streamFn,
+		});
+		for (let i = 1; i <= 5; i++)
+			await session.submit({ requestId: `r${i}`, prompt: `q${i}` });
+
+		const pending = session.submit({ requestId: "r6", prompt: "too big" });
+		pending.catch(() => {});
+		await vi.waitFor(() => expect(summarySignals).toHaveLength(1));
+		session.abort();
+		await expect(pending).rejects.toThrow();
+		// 摘要请求收到的是本次 run 的 signal，abort 已传达。
+		expect(summarySignals[0]?.aborted).toBe(true);
+	});
+});
