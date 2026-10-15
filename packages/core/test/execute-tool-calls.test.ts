@@ -75,6 +75,102 @@ function textOf(result: { content: Array<{ type: string; text?: string }> }): st
 }
 
 describe("executeToolCalls", () => {
+	it("commits after prepare and before execute in sequential mode", async () => {
+		const order: string[] = [];
+		const calls = [call("c1", "echo", { text: "hello" })];
+		const tool = makeTool(
+			"echo",
+			async ({ text }: { text: string }) => {
+				order.push("execute:c1");
+				return { content: [{ type: "text", text }] };
+			},
+			{
+				type: "object",
+				properties: { text: { type: "string" } },
+				required: ["text"],
+			},
+		);
+		let committed: unknown;
+
+		await executeToolCalls(calls, options(calls, [tool], {
+			toolExecution: "sequential",
+			beforeToolCall: ({ toolCall }) => {
+				order.push(`before:${toolCall.id}`);
+			},
+			commitToolIntent: (context) => {
+				order.push(`commit:${context.toolCall.id}`);
+				committed = context;
+			},
+			emit: (event) => {
+				if (event.type === "tool_execution_end")
+					order.push(`end:${event.toolCallId}`);
+			},
+		}));
+
+		expect(order).toEqual([
+			"before:c1",
+			"commit:c1",
+			"execute:c1",
+			"end:c1",
+		]);
+		expect(committed).toMatchObject({
+			assistantMessage: assistant(calls),
+			toolCall: calls[0],
+			tool,
+			args: { text: "hello" },
+			sourceIndex: 0,
+		});
+	});
+
+	it("commits every parallel intent before any execute", async () => {
+		const order: string[] = [];
+		const calls = [
+			call("c1", "first"),
+			call("c2", "second"),
+			call("c3", "third"),
+		];
+		const tools = calls.map(({ id, name }) =>
+			makeTool(name, async () => {
+				order.push(`execute:${id}`);
+				return { content: [] };
+			})
+		);
+		const sourceIndexes: number[] = [];
+
+		await executeToolCalls(calls, options(calls, tools, {
+			commitToolIntent: ({ toolCall, sourceIndex }) => {
+				order.push(`commit:${toolCall.id}`);
+				sourceIndexes.push(sourceIndex);
+			},
+		}));
+
+		expect(order.slice(0, 3)).toEqual([
+			"commit:c1",
+			"commit:c2",
+			"commit:c3",
+		]);
+		expect(order.findIndex((value) => value.startsWith("execute:")))
+			.toBeGreaterThan(2);
+		expect(sourceIndexes).toEqual([0, 1, 2]);
+	});
+
+	it("does not execute a parallel batch when an intent commit fails", async () => {
+		const execute = vi.fn(async () => ({ content: [] }));
+		const calls = [
+			call("c1", "first"),
+			call("c2", "second"),
+			call("c3", "third"),
+		];
+		const tools = calls.map(({ name }) => makeTool(name, execute));
+
+		await expect(executeToolCalls(calls, options(calls, tools, {
+			commitToolIntent: ({ sourceIndex }) => {
+				if (sourceIndex === 1) throw new Error("journal failed");
+			},
+		}))).rejects.toThrow("journal failed");
+		expect(execute).not.toHaveBeenCalled();
+	});
+
 	it("executes serially and returns messages in assistant source order", async () => {
 		const log: string[] = [];
 		const calls = [
@@ -180,6 +276,7 @@ describe("executeToolCalls", () => {
 
 	it("balances blocked, invalid, and unknown call lifecycles without executing", async () => {
 		const execute = vi.fn(async () => ({ content: [] }));
+		const commitToolIntent = vi.fn();
 		const calls = [
 			call("c1", "blocked", { value: "ok" }),
 			call("c2", "invalid", { value: 7 }),
@@ -203,12 +300,14 @@ describe("executeToolCalls", () => {
 		const batch = await executeToolCalls(calls, options(calls, tools, {
 			toolExecution: "sequential",
 			beforeToolCall,
+			commitToolIntent,
 			emit: (event) => {
 				events.push(event);
 			},
 		}));
 
 		expect(execute).not.toHaveBeenCalled();
+		expect(commitToolIntent).not.toHaveBeenCalled();
 		expect(batch.messages.map((message) => message.isError))
 			.toEqual([true, true, true]);
 		expect(events.map((event) => event.type)).toEqual([

@@ -9,6 +9,10 @@ import {
 	executePreparedToolCall,
 	prepareToolCall,
 } from "./tool-call.ts";
+import type {
+	ExecutedToolCallOutcome,
+	ImmediateToolCallOutcome,
+} from "./tool-call.ts";
 import {
 	emitToolEnd,
 	emitToolResultMessage,
@@ -18,6 +22,7 @@ import { finalizeToolCall } from "./finalize-tool-call.ts";
 import type { FinalizedToolCallOutcome } from "./finalize-tool-call.ts";
 import type {
 	BeforeToolCall,
+	CommitToolIntent,
 	ToolCall,
 	ToolDef,
 	ToolExecutionMode,
@@ -32,6 +37,7 @@ export interface ExecuteToolCallsOptions {
 	emit?: AgentEventSink;
 	beforeToolCall?: BeforeToolCall;
 	toolExecution?: ToolExecutionMode;
+	commitToolIntent?: CommitToolIntent;
 }
 
 export interface ExecutedToolBatch {
@@ -68,7 +74,7 @@ async function executeToolCallsSequential(
 ): Promise<ExecutedToolBatch> {
 	const finalized: FinalizedToolCallOutcome[] = [];
 	const emit = options.emit ?? (() => {});
-	for (const toolCall of toolCalls) {
+	for (const [sourceIndex, toolCall] of toolCalls.entries()) {
 		if (options.signal?.aborted) break;
 		const startedAt = performance.now();
 		await emitToolStart(toolCall, emit);
@@ -81,19 +87,29 @@ async function executeToolCallsSequential(
 			signal: options.signal,
 			startedAt,
 		});
-		const outcome = preparation.kind === "immediate"
-			? preparation
-			: await executePreparedToolCall(
-					preparation,
-					options.signal,
-					(partialResult) => emit({
-						type: "tool_execution_update",
-						toolCallId: toolCall.id,
-						toolName: toolCall.name,
-						args: toolCall.arguments,
-						partialResult,
-					}),
-				);
+		let outcome: ExecutedToolCallOutcome | ImmediateToolCallOutcome;
+		if (preparation.kind === "immediate") {
+			outcome = preparation;
+		} else {
+			await options.commitToolIntent?.({
+				assistantMessage: options.assistantMessage,
+				toolCall,
+				tool: preparation.tool,
+				args: preparation.args,
+				sourceIndex,
+			});
+			outcome = await executePreparedToolCall(
+				preparation,
+				options.signal,
+				(partialResult) => emit({
+					type: "tool_execution_update",
+					toolCallId: toolCall.id,
+					toolName: toolCall.name,
+					args: toolCall.arguments,
+					partialResult,
+				}),
+			);
+		}
 		const result = finalizeToolCall(outcome);
 		await emitToolEnd(result, emit);
 		await emitToolResultMessage(result.message, emit);

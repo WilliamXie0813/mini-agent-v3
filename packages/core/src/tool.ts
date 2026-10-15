@@ -3,6 +3,18 @@ import type { AssistantMessage, ContentBlock, JSONSchema, Message, Tool } from "
 export type ToolCall = Extract<ContentBlock, { type: "toolCall" }>;
 export type ToolExecutionMode = "sequential" | "parallel";
 
+export interface CommitToolIntentContext {
+	assistantMessage: AssistantMessage;
+	toolCall: ToolCall;
+	tool: ToolDef<any>;
+	args: Record<string, unknown>;
+	sourceIndex: number;
+}
+
+export type CommitToolIntent = (
+	context: CommitToolIntentContext,
+) => void | Promise<void>;
+
 export interface BeforeToolCallResult {
 	block?: boolean; reason?: string; terminate?: boolean;
 }

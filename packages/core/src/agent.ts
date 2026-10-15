@@ -5,7 +5,12 @@ import type { AgentOptions } from "./agent-options.ts";
 import type { AgentEvent, AgentEventListener } from "./agent-event.ts";
 import { appendSystemSections, createAgentState, reduceAgentState, replaceAgentTools } from "./agent-state.ts";
 import type { AgentState } from "./agent-state.ts";
-import type { BeforeToolCall, ToolDef, ToolExecutionMode } from "./tool.ts";
+import type {
+	BeforeToolCall,
+	CommitToolIntent,
+	ToolDef,
+	ToolExecutionMode,
+} from "./tool.ts";
 
 type ActiveRun = {
 	promise: Promise<void>; resolve: () => void; abortController: AbortController;
@@ -21,6 +26,7 @@ class AgentListenerFailure extends Error {
 export class Agent {
 	private readonly streamFn: StreamFn;
 	private readonly maxTurns?: number;
+	private readonly commitToolIntent?: CommitToolIntent;
 	private readonly listeners = new Set<AgentEventListener>();
 	private readonly _state: AgentState;
 	public beforeToolCall?: BeforeToolCall;
@@ -34,6 +40,7 @@ export class Agent {
 	constructor(options: AgentOptions) {
 		this.streamFn = options.streamFn ?? getDefaultStreamFn();
 		this.maxTurns = options.maxTurns;
+		this.commitToolIntent = options.commitToolIntent;
 		this.beforeToolCall = options.beforeToolCall;
 		this.toolExecution = options.toolExecution ?? "parallel";
 		this._state = createAgentState(
@@ -91,6 +98,7 @@ export class Agent {
 				maxTurns: this.maxTurns,
 				beforeToolCall: this.beforeToolCall,
 				toolExecution: this.toolExecution,
+				commitToolIntent: this.commitToolIntent,
 				emit: (event) => this.processEvents(event),
 			});
 		});

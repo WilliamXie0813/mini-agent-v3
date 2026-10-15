@@ -1184,4 +1184,39 @@ describe("Agent", () => {
 			await prompt;
 		});
 	});
+
+	describe("Agent (stage 9: durable tool intent)", () => {
+		it("awaits the commit hook before executing a prepared tool", async () => {
+			const commitGate = deferred();
+			const commitReached = deferred();
+			const execute = vi.fn(echoTool.execute);
+			const agent = new Agent({
+				system: "test",
+				tools: [{ ...echoTool, execute }],
+				streamFn: createFakeStreamFn([
+					[{
+						type: "toolCall",
+						id: "c1",
+						name: "echo",
+						arguments: { text: "hello" },
+					}],
+					"done",
+				]),
+				commitToolIntent: async ({ toolCall, sourceIndex }) => {
+					expect(toolCall.id).toBe("c1");
+					expect(sourceIndex).toBe(0);
+					commitReached.resolve();
+					await commitGate.promise;
+				},
+			});
+
+			const running = agent.prompt("go");
+			await commitReached.promise;
+			expect(agent.state.isStreaming).toBe(true);
+			expect(execute).not.toHaveBeenCalled();
+			commitGate.resolve();
+			await running;
+			expect(execute).toHaveBeenCalledTimes(1);
+		});
+	});
 });

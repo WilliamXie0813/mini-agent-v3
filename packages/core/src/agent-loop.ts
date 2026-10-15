@@ -13,6 +13,7 @@ import {
 import { streamAssistantMessage } from "./stream-assistant.ts";
 import type {
 	BeforeToolCall,
+	CommitToolIntent,
 	ToolDef,
 	ToolExecutionMode,
 } from "./tool.ts";
@@ -27,6 +28,7 @@ export interface AgentLoopOptions {
 	maxTurns?: number; // 缺省 10：模型反复要工具时的熔断，防止无限烧 token
 	beforeToolCall?: BeforeToolCall;
 	toolExecution?: ToolExecutionMode;
+	commitToolIntent?: CommitToolIntent;
 }
 
 // 提前返回都在构造 user 消息之前（阶段 1 的约定，不要动）：已中止的 signal 不产生半条消息；
@@ -112,6 +114,7 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 					emit,
 					beforeToolCall: options.beforeToolCall,
 					toolExecution: options.toolExecution,
+					commitToolIntent: options.commitToolIntent,
 				},
 			);
 			toolResults = batch.messages;

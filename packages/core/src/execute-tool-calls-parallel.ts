@@ -31,7 +31,7 @@ export async function executeToolCallsParallel(
 	const emit = options.emit ?? (() => {});
 	const entries: Entry[] = [];
 
-	for (const toolCall of toolCalls) {
+	for (const [sourceIndex, toolCall] of toolCalls.entries()) {
 		const startedAt = performance.now();
 		await emitToolStart(toolCall, emit);
 		if (options.signal?.aborted) {
@@ -54,6 +54,13 @@ export async function executeToolCallsParallel(
 			entries.push(await finishImmediate(preparation, emit));
 			continue;
 		}
+		await options.commitToolIntent?.({
+			assistantMessage: options.assistantMessage,
+			toolCall,
+			tool: preparation.tool,
+			args: preparation.args,
+			sourceIndex,
+		});
 		entries.push(async () => {
 			const outcome = options.signal?.aborted
 				? aborted(toolCall, startedAt)

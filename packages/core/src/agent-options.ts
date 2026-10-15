@@ -4,6 +4,7 @@ import type {
 } from "@mini-agent/ai";
 import type {
 	BeforeToolCall,
+	CommitToolIntent,
 	ToolDef,
 	ToolExecutionMode,
 } from "./tool.ts";
@@ -18,4 +19,5 @@ export interface AgentOptions {
 	maxTurns?: number;
 	beforeToolCall?: BeforeToolCall;
 	toolExecution?: ToolExecutionMode;
+	commitToolIntent?: CommitToolIntent;
 }
