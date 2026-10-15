@@ -27,6 +27,7 @@ export { validateJsonSchema } from "./json-schema.ts";
 export type { ValidationIssue } from "./json-schema.ts";
 export { createReadTool, createEditTool, createBashTool, createDefaultTools } from "./tools.ts";
 export { SessionJournal } from "./session-journal.ts";
+export { recoverInterruptedTools } from "./session-recovery.ts";
 export { AgentSession } from "./agent-session.ts";
 export type {
 	AgentSessionOptions,

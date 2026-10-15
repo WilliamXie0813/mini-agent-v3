@@ -16,6 +16,7 @@ import type {
 } from "./agent-event.ts";
 import type { AgentState } from "./agent-state.ts";
 import { SessionJournal } from "./session-journal.ts";
+import { recoverInterruptedTools } from "./session-recovery.ts";
 import type {
 	SessionEntry,
 	SessionEntryOf,
@@ -106,6 +107,7 @@ export class AgentSession {
 	): Promise<AgentSession> {
 		const { path, ...agentOptions } = options;
 		const journal = await SessionJournal.open(path);
+		await recoverInterruptedTools(journal, agentOptions.tools ?? []);
 		return new AgentSession(
 			journal,
 			agentOptions,
