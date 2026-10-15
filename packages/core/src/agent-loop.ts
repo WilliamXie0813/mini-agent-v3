@@ -6,7 +6,7 @@ import type {
 	ToolResultMessage,
 } from "@mini-agent/ai";
 import type { AgentEventSink } from "./agent-event.ts";
-import type { PrepareRequest } from "./agent-options.ts";
+import type { PrepareRequest, RecoverContextOverflow } from "./agent-options.ts";
 import {
 	executeToolCalls,
 	failTruncatedToolCalls,
@@ -31,6 +31,7 @@ export interface AgentLoopOptions {
 	toolExecution?: ToolExecutionMode;
 	commitToolIntent?: CommitToolIntent;
 	prepareRequest?: PrepareRequest;
+	recoverContextOverflow?: RecoverContextOverflow;
 }
 
 // 提前返回都在构造 user 消息之前（阶段 1 的约定，不要动）：已中止的 signal 不产生半条消息；
@@ -47,6 +48,9 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 	// PrepareRequestContext.signal 是必需字段；调用方没给 signal 时用永不可中止的占位。
 	const runSignal = new AbortController().signal;
 	const newMessages: Message[] = [];
+	// 一次 run 最多 compact-and-retry 一次：第二次 overflow 正常结束为 error，
+	// 不得递归重试（否则超窗 + 压缩失败会烧成无限循环）。
+	let overflowRecovered = false;
 
 	const userMessage: Message = {
 		role: "user",
@@ -93,6 +97,28 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 		newMessages.push(message);
 		if (message.stopReason === "error" || message.stopReason === "aborted") {
 			await emit({ type: "turn_end", message, toolResults: [] });
+			// 结构化超窗（provider 已分类，core 不匹配错误字符串）：先 append 诊断、
+			// 走完当前 turn_end，再交给编排层压缩一次并重试。stopReason "length"
+			// 是输出上限，不是超窗，不走这条路。
+			if (
+				message.errorKind === "context_overflow" &&
+				!overflowRecovered &&
+				options.recoverContextOverflow
+			) {
+				const recovered = await options.recoverContextOverflow({
+					context: {
+						system: getCurrentSystemMessage(options.messages),
+						messages: [...options.messages],
+						tools: getCurrentTools(options.messages),
+					},
+					message,
+					signal: options.signal ?? runSignal,
+				});
+				if (recovered) {
+					overflowRecovered = true;
+					continue; // loop 顶部会为下一轮 emit turn_start
+				}
+			}
 			await emit({ type: "agent_end", messages: newMessages });
 			return options.messages;
 		}

@@ -2,7 +2,7 @@ import { getDefaultStreamFn } from "@mini-agent/ai";
 import type { AssistantMessage, Message, StreamFn, SystemSection } from "@mini-agent/ai";
 import { agentLoop } from "./agent-loop.ts";
 import type { AgentOptions } from "./agent-options.ts";
-import type { PrepareRequest } from "./agent-options.ts";
+import type { PrepareRequest, RecoverContextOverflow } from "./agent-options.ts";
 import type { AgentEvent, AgentEventListener } from "./agent-event.ts";
 import { appendSystemSections, createAgentState, reduceAgentState, replaceAgentTools } from "./agent-state.ts";
 import type { AgentState } from "./agent-state.ts";
@@ -28,6 +28,8 @@ export class Agent {
 	private readonly streamFn: StreamFn;
 	private readonly maxTurns?: number;
 	private readonly commitToolIntent?: CommitToolIntent;
+	// 只由构造配置与 AgentSession 编排持有，不成为通用扩展 hook（阶段 11 再说）。
+	private readonly recoverContextOverflow?: RecoverContextOverflow;
 	private readonly listeners = new Set<AgentEventListener>();
 	private readonly _state: AgentState;
 	public beforeToolCall?: BeforeToolCall;
@@ -55,6 +57,7 @@ export class Agent {
 			: undefined;
 		this.beforeToolCall = options.beforeToolCall;
 		this.prepareRequest = options.prepareRequest;
+		this.recoverContextOverflow = options.recoverContextOverflow;
 		this.toolExecution = options.toolExecution ?? "parallel";
 		this._state = createAgentState(
 			options.messages ?? [],
@@ -104,6 +107,7 @@ export class Agent {
 		await this.runWithLifecycle(async (signal) => {
 			// hook failure 与 listener failure 同为基础设施失败：原样冒泡，不合成 error 消息。
 			const prepareRequest = this.prepareRequest;
+			const recoverContextOverflow = this.recoverContextOverflow;
 			await agentLoop({
 				prompt,
 				messages: this._state.messages.slice(),
@@ -118,6 +122,15 @@ export class Agent {
 					? async (input) => {
 						try {
 							return await prepareRequest(input);
+						} catch (error) {
+							throw new AgentInfrastructureFailure(error);
+						}
+					}
+					: undefined,
+				recoverContextOverflow: recoverContextOverflow
+					? async (input) => {
+						try {
+							return await recoverContextOverflow(input);
 						} catch (error) {
 							throw new AgentInfrastructureFailure(error);
 						}

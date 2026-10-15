@@ -1,6 +1,7 @@
 import { createAssistantMessageEventStream } from "./event-stream.ts";
 import { toAnthropicRequest } from "./anthropic-messages.ts";
 import { createAnthropicStreamState } from "./anthropic-stream.ts";
+import { classifyHttpError } from "./anthropic-error.ts";
 import { readSse } from "./sse.ts";
 import type { StreamFn } from "./stream-fn.ts";
 
@@ -38,7 +39,17 @@ export function createAnthropicStreamFn(options: AnthropicStreamOptions): Stream
 					body: JSON.stringify(toAnthropicRequest(context, { model, maxTokens })),
 				});
 				body = response.body;
-				if (!response.ok) throw new Error(`Anthropic HTTP ${response.status}`);
+				if (!response.ok) {
+					// 非 2xx：读取有限诊断 body 做结构化分类（超窗 → context_overflow）。
+					// text() 已消费流，置空避免 finally 里重复 cancel 产生噪音。
+					const classification = classifyHttpError(
+						response.status,
+						(await response.text()).slice(0, 4096),
+					);
+					body = null;
+					state.fail("error", classification.diagnostic, classification.kind);
+					return;
+				}
 				if (!body) throw new Error("Anthropic response has no body");
 				if (response.headers.get("content-type")?.split(";")[0].trim() !== "text/event-stream")
 					throw new Error("Anthropic response is not SSE");

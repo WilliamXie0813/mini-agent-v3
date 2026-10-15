@@ -150,3 +150,33 @@ describe("Anthropic response state", () => {
 		expect((await eventsFor([{ event: "message_stop", data: JSON.stringify({ type: "message_start" }) }])).message.stopReason).toBe("error");
 	});
 });
+
+describe("Anthropic error kind (stage 10)", () => {
+	it("classifies an SSE context overflow without core string matching", async () => {
+		const { events, message } = await eventsFor([frame({
+			type: "error",
+			error: {
+				type: "invalid_request_error",
+				message: "prompt is too long for the model context window",
+			},
+		})]);
+		expect(events.map((e) => e.type)).toEqual(["start", "error"]);
+		expect(message).toMatchObject({
+			stopReason: "error",
+			errorKind: "context_overflow",
+			errorMessage: expect.stringMatching(/prompt is too long/i),
+		});
+	});
+
+	it("marks generic errors as provider and leaves abort without a kind", async () => {
+		const { message } = await eventsFor(await frames("error"));
+		expect(message).toMatchObject({ stopReason: "error", errorKind: "provider" });
+		const stream = createAssistantMessageEventStream();
+		const state = createAnthropicStreamState(stream);
+		state.fail("aborted", "Operation aborted");
+		stream.end();
+		const aborted = await stream.result();
+		expect(aborted.stopReason).toBe("aborted");
+		expect(aborted.errorKind).toBeUndefined();
+	});
+});

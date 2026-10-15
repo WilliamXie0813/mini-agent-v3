@@ -1,4 +1,5 @@
 import type {
+	AssistantMessage,
 	Message,
 	StreamContext,
 	StreamFn,
@@ -21,6 +22,19 @@ export type PrepareRequest = (
 	input: PrepareRequestContext,
 ) => StreamContext | Promise<StreamContext>;
 
+// 阶段 10：provider 报结构化超窗（errorKind: "context_overflow"）后，
+// 由编排层（AgentSession）压缩并决定是否重试。一次 run 最多调用一次——
+// 第二次 overflow 正常结束为 error，不递归重试。
+export interface RecoverContextOverflowContext {
+	context: StreamContext;
+	message: AssistantMessage;
+	signal: AbortSignal;
+}
+
+export type RecoverContextOverflow = (
+	input: RecoverContextOverflowContext,
+) => boolean | Promise<boolean>;
+
 export interface AgentOptions {
 	// 新会话的组装层简写：仅当 messages 不含任何 system entry 时，
 	// 用它生成 transcript 的 leading SystemMessage；已有 system 历史时该值被忽略。
@@ -33,4 +47,5 @@ export interface AgentOptions {
 	toolExecution?: ToolExecutionMode;
 	commitToolIntent?: CommitToolIntent;
 	prepareRequest?: PrepareRequest;
+	recoverContextOverflow?: RecoverContextOverflow;
 }

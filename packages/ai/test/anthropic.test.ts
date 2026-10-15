@@ -169,3 +169,54 @@ describe("Anthropic HTTP provider", () => {
 		expect(body.locked).toBe(false);
 	});
 });
+
+describe("Anthropic error classification (stage 10)", () => {
+	it("classifies an HTTP context overflow as a structured errorKind", async () => {
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+			type: "error",
+			error: {
+				type: "invalid_request_error",
+				message: "prompt is too long for the model context window",
+			},
+		}), { status: 400 })));
+		const { message } = await drain(createAnthropicStreamFn({ apiKey: key })(context));
+		expect(message).toMatchObject({
+			stopReason: "error",
+			errorKind: "context_overflow",
+			errorMessage: expect.stringMatching(/prompt is too long/i),
+		});
+	});
+
+	it.each<[_name: string, status: number, body: unknown]>([
+		["overloaded_error", 529, {
+			type: "error",
+			error: { type: "overloaded_error", message: "Provider overloaded" },
+		}],
+		["a plain HTTP 500", 500, "server failed"],
+		["a non-overflow invalid request", 400, {
+			type: "error",
+			error: { type: "invalid_request_error", message: "messages.0: bad role" },
+		}],
+	])("classifies %s as a provider error", async (_name, status, body) => {
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(
+			typeof body === "string" ? body : JSON.stringify(body),
+			{ status },
+		)));
+		const { message } = await drain(createAnthropicStreamFn({ apiKey: key })(context));
+		expect(message).toMatchObject({ stopReason: "error", errorKind: "provider" });
+	});
+
+	it("redacts credentials and bounds the diagnostic of a classified HTTP error", async () => {
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+			type: "error",
+			error: {
+				type: "invalid_request_error",
+				message: `prompt is too long: ${key} ${"x".repeat(2000)}`,
+			},
+		}), { status: 400 })));
+		const { message } = await drain(createAnthropicStreamFn({ apiKey: key })(context));
+		expect(message.errorKind).toBe("context_overflow");
+		expect(message.errorMessage).not.toContain(key);
+		expect(message.errorMessage!.length).toBeLessThanOrEqual(1024);
+	});
+});

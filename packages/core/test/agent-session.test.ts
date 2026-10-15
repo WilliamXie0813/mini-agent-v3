@@ -1187,3 +1187,215 @@ describe("AgentSession threshold compaction", () => {
 		expect(summaryCalls).toBe(2);
 	});
 });
+
+describe("AgentSession overflow recovery", () => {
+	function isSummarization(context: StreamContext): boolean {
+		return context.system.sections
+			.some((s) => s.text.startsWith("Summarize the earlier"));
+	}
+
+	function doneStream(textValue: string) {
+		const stream = createAssistantMessageEventStream();
+		stream.push({
+			type: "start",
+			partial: { role: "assistant", content: [], stopReason: "pending" },
+		});
+		stream.push({
+			type: "done",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: textValue }],
+				stopReason: "stop",
+			},
+		});
+		stream.end();
+		return stream;
+	}
+
+	function overflowStream() {
+		const stream = createAssistantMessageEventStream();
+		stream.push({
+			type: "start",
+			partial: { role: "assistant", content: [], stopReason: "pending" },
+		});
+		stream.push({
+			type: "error", reason: "error",
+			error: {
+				role: "assistant", content: [], stopReason: "error",
+				errorKind: "context_overflow",
+				errorMessage: "prompt is too long for the model context window",
+			},
+		});
+		stream.end();
+		return stream;
+	}
+
+	// overflowOn：第 N 次正式请求（1-based）返回超窗；summaryError 让摘要失败。
+	function overflowSession(options: {
+		overflowOn: number[];
+		summaryError?: boolean;
+		summaryText?: string;
+	}) {
+		const events: AgentEvent[] = [];
+		const contexts: StreamContext[] = [];
+		const state = { formal: 0, summary: 0 };
+		const streamFn: StreamFn = (context) => {
+			if (isSummarization(context)) {
+				state.summary++;
+				if (options.summaryError) {
+					const stream = createAssistantMessageEventStream();
+					stream.push({
+						type: "error", reason: "error",
+						error: {
+							role: "assistant", content: [], stopReason: "error",
+							errorMessage: "summary provider exploded",
+						},
+					});
+					stream.end();
+					return stream;
+				}
+				return doneStream(options.summaryText ?? "checkpoint");
+			}
+			state.formal++;
+			contexts.push(structuredClone(context));
+			if (options.overflowOn.includes(state.formal)) return overflowStream();
+			return doneStream(`answer ${state.formal}`);
+		};
+		return { events, contexts, state, streamFn };
+	}
+
+	async function createOverflowSession(
+		options: { overflowOn: number[]; summaryError?: boolean },
+		turns: number,
+	) {
+		const rig = overflowSession(options);
+		const session = await AgentSession.create({
+			directory: await temporaryDirectory(), system: "base",
+			streamFn: rig.streamFn,
+		});
+		session.subscribe((event) => {
+			rig.events.push(event);
+		});
+		for (let i = 1; i <= turns; i++)
+			await session.submit({ requestId: `r${i}`, prompt: `question ${i}` });
+		return { session, ...rig };
+	}
+
+	it("compacts and retries one context overflow", async () => {
+		const { session, events, contexts, state } =
+			await createOverflowSession({ overflowOn: [6] }, 5);
+		await session.submit({ requestId: "r6", prompt: "too big" });
+
+		// 5 正常 + overflow + retry；summary 恰好 1 次。
+		expect(state.formal).toBe(7);
+		expect(state.summary).toBe(1);
+		// 第一次 overflow 诊断已 journaled（供审计），run_end 为 completed。
+		const overflowEntries = session.entries.filter((entry) =>
+			entry.type === "message" && entry.message.role === "assistant" &&
+			entry.message.errorKind === "context_overflow"
+		);
+		expect(overflowEntries).toHaveLength(1);
+		const runEnd = session.entries.filter((entry) => entry.type === "run_end").at(-1);
+		expect(runEnd).toMatchObject({ type: "run_end", status: "completed" });
+
+		// overflow turn 先 turn_end，然后 compaction events，再发新的 turn_start。
+		const types = events.map((event) => event.type);
+		const lastRun = types.slice(types.lastIndexOf("agent_start"));
+		expect(lastRun).toEqual([
+			"agent_start", "turn_start",
+			"message_start", "message_end", "message_start", "message_end",
+			"turn_end", "compaction_start", "compaction_end",
+			"turn_start", "message_start", "message_end", "turn_end", "agent_end",
+		]);
+		const compaction = events.find((event) => event.type === "compaction_start");
+		expect(compaction).toMatchObject({ reason: "overflow" });
+
+		// retry context：checkpoint 摘要 + retained tail，不含 overflow 诊断。
+		const retry = contexts.at(-1)!;
+		expect(retry.messages.some((message) =>
+			message.role === "assistant" && message.errorKind === "context_overflow"
+		)).toBe(false);
+		const retryTexts = retry.messages.map((message) => text(message)).join(" ");
+		expect(retryTexts).toContain("checkpoint");
+		expect(retryTexts).toContain("too big");
+		expect(session.state.messages.at(-1)).toMatchObject({
+			role: "assistant", stopReason: "stop",
+		});
+	});
+
+	it("does not retry a second overflow or a plain provider error", async () => {
+		// 第二次 overflow：不再摘要、不再重试，run_end 为 error。
+		const second = await createOverflowSession({ overflowOn: [6, 7] }, 5);
+		await second.session.submit({ requestId: "r6", prompt: "too big" });
+		expect(second.state.formal).toBe(7);
+		expect(second.state.summary).toBe(1);
+		expect(second.session.entries.filter((entry) => entry.type === "compaction"))
+			.toHaveLength(1);
+		const runEnd = second.session.entries
+			.filter((entry) => entry.type === "run_end").at(-1);
+		expect(runEnd).toMatchObject({ status: "error" });
+
+		// 普通 provider error：零摘要、零重试。
+		const providerError: StreamFn = () => {
+			const stream = createAssistantMessageEventStream();
+			stream.push({
+				type: "error", reason: "error",
+				error: {
+					role: "assistant", content: [], stopReason: "error",
+					errorKind: "provider", errorMessage: "overloaded",
+				},
+			});
+			stream.end();
+			return stream;
+		};
+		let providerCalls = 0;
+		const session = await AgentSession.create({
+			directory: await temporaryDirectory(), system: "base",
+			streamFn: (context) => {
+				providerCalls++;
+				return providerError(context);
+			},
+		});
+		await session.submit({ requestId: "r1", prompt: "go" });
+		expect(providerCalls).toBe(1);
+		expect(session.entries.some((entry) => entry.type === "compaction")).toBe(false);
+	});
+
+	it("does not retry when no eligible prefix exists or the summary fails", async () => {
+		// 无可摘要前缀（第一次请求就 overflow）：hook 返回 false，零事件零写入。
+		const fresh = await createOverflowSession({ overflowOn: [1] }, 0);
+		await fresh.session.submit({ requestId: "r1", prompt: "go" });
+		expect(fresh.state.formal).toBe(1);
+		expect(fresh.state.summary).toBe(0);
+		expect(
+			fresh.events.filter((event) => event.type.startsWith("compaction")),
+		).toEqual([]);
+		expect(fresh.session.entries.some((entry) => entry.type === "compaction"))
+			.toBe(false);
+
+		// 摘要失败：start/end(error) 成对，原错误传播，无 retry。
+		const failing = await createOverflowSession(
+			{ overflowOn: [6], summaryError: true },
+			5,
+		);
+		await expect(
+			failing.session.submit({ requestId: "r6", prompt: "too big" }),
+		).rejects.toThrow(/summary/i);
+		expect(failing.state.formal).toBe(6);
+		expect(failing.state.summary).toBe(1);
+		const compactionEvents = failing.events
+			.filter((event) => event.type.startsWith("compaction"));
+		expect(compactionEvents).toEqual([
+			{
+				type: "compaction_start", reason: "overflow",
+				contextTokens: expect.any(Number),
+			},
+			{
+				type: "compaction_end", reason: "overflow", status: "error",
+				errorMessage: expect.stringMatching(/summary provider exploded/),
+			},
+		]);
+		expect(failing.session.entries.some((entry) => entry.type === "compaction"))
+			.toBe(false);
+	});
+});

@@ -323,9 +323,17 @@ export class AgentSession {
 			messages,
 			commitToolIntent: (context) => this.commitToolIntent(context),
 			prepareRequest: (input) => this.prepareRequest(input),
+			recoverContextOverflow: () => this.recoverContextOverflow(),
 		});
 		agent.subscribe((event) => this.deliverEvent(event));
 		return agent;
+	}
+
+	// overflow 路径：provider 报结构化超窗后压缩一次并让 loop 重试。
+	// enabled:false 不阻止这条路径（它只关 threshold 自动压缩）。
+	// 只有成功 append entry 才返回 true；无 eligible prefix 返回 false，不重试。
+	private async recoverContextOverflow(): Promise<boolean> {
+		return (await this.compactInternal("overflow")) !== undefined;
 	}
 
 	// 阈值路径：忽略传入的 raw conversation，从 journal 重新投影——

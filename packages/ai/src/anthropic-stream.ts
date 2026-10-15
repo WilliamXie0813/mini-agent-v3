@@ -1,5 +1,6 @@
 import type { AssistantMessageEventStream } from "./event-stream.ts";
-import type { AssistantMessage, ContentBlock, StopReason } from "./types.ts";
+import { classifyAnthropicError } from "./anthropic-error.ts";
+import type { AssistantErrorKind, AssistantMessage, ContentBlock, StopReason } from "./types.ts";
 import type { SseFrame } from "./sse.ts";
 
 function check(value: unknown, detail: string): asserts value {
@@ -29,12 +30,14 @@ export function createAnthropicStreamState(
 	let started = false, completed = false;
 	let stopReason: StopReason = "pending";
 	stream.push({ type: "start", partial });
-	const fail = (reason: "error" | "aborted", message: string) => {
+	// error 必带结构化 kind（缺省 provider）；abort 是本地行为，不带 provider kind。
+	const fail = (reason: "error" | "aborted", message: string, kind?: AssistantErrorKind) => {
 		if (completed) return;
 		completed = true;
 		stream.push({ type: "error", reason, error: {
 			role: "assistant", content: [], stopReason: reason,
 			errorMessage: formatError(message), usage: partial.usage,
+			...(reason === "error" ? { errorKind: kind ?? "provider" } : {}),
 		} });
 	};
 	return {
@@ -50,7 +53,11 @@ export function createAnthropicStreamState(
 			check(frame.event === "message" || frame.event === type, "event/type mismatch");
 			if (type === "error") {
 				const error = object(event.error);
-				fail("error", `${string(error.type, true)}: ${string(error.message)}`);
+				const classification = classifyAnthropicError(
+					string(error.type, true),
+					string(error.message),
+				);
+				fail("error", classification.diagnostic, classification.kind);
 				return;
 			}
 			if (type === "message_start") {
