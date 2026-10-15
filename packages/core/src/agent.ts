@@ -16,10 +16,10 @@ type ActiveRun = {
 	promise: Promise<void>; resolve: () => void; abortController: AbortController;
 };
 
-class AgentListenerFailure extends Error {
+class AgentInfrastructureFailure extends Error {
 	readonly original: unknown;
 	constructor(original: unknown) {
-		super("agent listener failed"); this.original = original;
+		super("agent infrastructure failed"); this.original = original;
 	}
 }
 
@@ -40,7 +40,16 @@ export class Agent {
 	constructor(options: AgentOptions) {
 		this.streamFn = options.streamFn ?? getDefaultStreamFn();
 		this.maxTurns = options.maxTurns;
-		this.commitToolIntent = options.commitToolIntent;
+		const commitToolIntent = options.commitToolIntent;
+		this.commitToolIntent = commitToolIntent
+			? async (context) => {
+				try {
+					await commitToolIntent(context);
+				} catch (error) {
+					throw new AgentInfrastructureFailure(error);
+				}
+			}
+			: undefined;
 		this.beforeToolCall = options.beforeToolCall;
 		this.toolExecution = options.toolExecution ?? "parallel";
 		this._state = createAgentState(
@@ -122,14 +131,14 @@ export class Agent {
 			try {
 				await executor(abortController.signal);
 			} catch (error) {
-				if (error instanceof AgentListenerFailure) throw error.original;
+				if (error instanceof AgentInfrastructureFailure) throw error.original;
 				try {
 					await this.handleRunFailure(
 						error,
 						abortController.signal.aborted,
 					);
 				} catch (fallbackError) {
-					if (fallbackError instanceof AgentListenerFailure)
+					if (fallbackError instanceof AgentInfrastructureFailure)
 						throw fallbackError.original;
 					throw fallbackError;
 				}
@@ -206,7 +215,7 @@ export class Agent {
 				await listener(event);
 			} catch (error) {
 				this.activeRun?.abortController.abort();
-				throw new AgentListenerFailure(error);
+				throw new AgentInfrastructureFailure(error);
 			}
 		}
 	}

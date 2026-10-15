@@ -90,6 +90,59 @@ afterEach(async () => {
 });
 
 describe("AgentSession", () => {
+	it.each(["parallel", "sequential"] as const)(
+		"propagates a failed second %s intent without sealing pending recovery",
+		async (toolExecution) => {
+			let executes = 0;
+			const first: ToolDef = {
+				...echoTool,
+				execute: async () => {
+					executes++;
+					return { content: [{ type: "text", text: "safe result" }] };
+				},
+			};
+			const second = { ...first, name: "second" };
+			const directory = await temporaryDirectory();
+			const session = await AgentSession.create({
+				directory, system: "base", tools: [first, second], toolExecution,
+				streamFn: createFakeStreamFn([[
+					{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "one" } },
+					{ type: "toolCall", id: "c2", name: "second", arguments: { text: "two" } },
+				]]),
+			});
+			const failure = new Error("second intent fsync failed");
+			const append = SessionJournal.prototype.append;
+			const spy = vi.spyOn(SessionJournal.prototype, "append").mockImplementation(
+				function <TData extends SessionEntryData>(
+					this: SessionJournal, data: TData,
+				): Promise<SessionEntryBase & TData> {
+					if (data.type === "tool_intent" && data.sourceIndex === 1)
+						return Promise.reject(failure);
+					return (append<TData>).call(this, data);
+				},
+			);
+			await expect(session.submit({ requestId: "failure", prompt: "go" }))
+				.rejects.toBe(failure);
+			expect(executes).toBe(toolExecution === "parallel" ? 0 : 1);
+			expect(session.entries.some(({ type }) => type === "run_end")).toBe(false);
+			spy.mockRestore();
+
+			const reopened = await AgentSession.open({
+				path: session.filePath, system: "base", tools: [first, second],
+				streamFn: createFakeStreamFn(["unused"]),
+			});
+			expect(executes).toBe(1);
+			expect(reopened.state.messages.filter(({ role }) => role === "toolResult"))
+				.toMatchObject([
+					{ toolCallId: "c1", content: [{ text: "safe result" }], isError: false },
+					{ toolCallId: "c2", isError: true },
+				]);
+			expect(reopened.entries.at(-1)).toMatchObject({
+				type: "run_end", status: "interrupted",
+			});
+		},
+	);
+
 	it.each(["submission", "sections", "tools"] as const)(
 		"owns the session and stays non-idle while %s persistence is pending",
 		async (operation) => {
