@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import * as readline from "node:readline/promises";
-import { Agent, createDefaultTools } from "@mini-agent/core";
+import { AgentSession, createDefaultTools } from "@mini-agent/core";
 import { createAnthropicStreamFn, setDefaultStreamFn } from "@mini-agent/ai";
 import type { ContentBlock } from "@mini-agent/ai";
 
@@ -10,6 +11,12 @@ try {
 } catch (error) {
 	if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 }
+
+const args = process.argv.slice(2);
+if (args.length > 1 || (args.length === 1 && args[0] !== "--continue")) {
+	throw new Error("Unknown CLI arguments; the only supported option is --continue");
+}
+const continueSession = args[0] === "--continue";
 
 // 组装根：cli 是唯一知道用哪个 provider 的地方（spec §3.2a）。
 setDefaultStreamFn(
@@ -29,16 +36,19 @@ function textOf(content: ContentBlock[]): string {
 }
 
 const system = "You are a minimal teaching agent.";
-const agent = new Agent({
+const sessionOptions = {
 	system,
 	tools: createDefaultTools(),
-});
+};
+const session = continueSession
+	? await AgentSession.openLatest(sessionOptions)
+	: await AgentSession.create(sessionOptions);
 
 let running = false;
 let streamed = false;
 let aborted = false;
 
-agent.subscribe((event) => {
+session.subscribe((event) => {
 	switch (event.type) {
 		case "agent_start":
 			running = true;
@@ -91,16 +101,20 @@ const rl = readline.createInterface({
 	output: process.stdout,
 });
 rl.on("SIGINT", () => {
-	if (running) agent.abort();
+	if (running) session.abort();
 	else rl.close();
 });
-console.log("mini-agent (stage 8) — type /exit to quit");
+console.log("mini-agent (stage 9) — type /exit to quit");
+console.log(`session: ${session.filePath} (${continueSession ? "resumed" : "created"})`);
 
 try {
 	process.stdout.write("> ");
 	for await (const line of rl) {
 		if (line.trim() === "/exit") break;
-		await agent.prompt(line);
+		await session.submit({
+			requestId: randomUUID(),
+			prompt: line,
+		});
 		if (aborted) console.log(`${streamed ? "\n" : ""}^C`);
 		else if (streamed) console.log();
 		process.stdout.write("> ");

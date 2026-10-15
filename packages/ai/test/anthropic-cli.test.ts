@@ -1,6 +1,12 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+	mkdtemp,
+	readFile,
+	readdir,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,8 +15,21 @@ import { describe, expect, it } from "vitest";
 const cli = fileURLToPath(new URL("../../cli/src/index.ts", import.meta.url));
 const fixture = (name: string) => readFile(new URL(`../fixtures/${name}.sse`, import.meta.url), "utf8");
 
-async function runCli(input: string, replies: { status?: number; body: string }[], authenticated = true) {
-	const cwd = await mkdtemp(join(tmpdir(), "mini-stage7-cli-"));
+interface RunCliOptions {
+	args?: string[];
+	authenticated?: boolean;
+	cwd?: string;
+	cleanup?: boolean;
+}
+
+async function runCli(
+	input: string,
+	replies: { status?: number; body: string }[],
+	options: RunCliOptions = {},
+) {
+	const cwd = options.cwd ??
+		await mkdtemp(join(tmpdir(), "mini-stage9-cli-"));
+	const cleanup = options.cleanup ?? options.cwd === undefined;
 	const requests: unknown[] = [];
 	let activeChild: ReturnType<typeof spawn> | undefined;
 	const server = createServer((req, res) => {
@@ -37,8 +56,12 @@ async function runCli(input: string, replies: { status?: number; body: string }[
 		if (!address || typeof address === "string") throw new Error("server missing port");
 		const env: NodeJS.ProcessEnv = { ...process.env, ANTHROPIC_API_KEY: "local-test-key",
 			ANTHROPIC_BASE_URL: `http://127.0.0.1:${address.port}/coding/`, ANTHROPIC_MODEL: "local-test" };
-		if (!authenticated) delete env.ANTHROPIC_API_KEY;
-		const child = activeChild = spawn(process.execPath, ["--experimental-strip-types", cli], { cwd, env });
+		if (options.authenticated === false) delete env.ANTHROPIC_API_KEY;
+		const child = activeChild = spawn(
+			process.execPath,
+			["--experimental-strip-types", cli, ...(options.args ?? [])],
+			{ cwd, env },
+		);
 		let stdout = "", stderr = "";
 		const chunks: string[] = [];
 		child.stdout.on("data", (data: Buffer) => { const value = String(data); stdout += value; chunks.push(value); });
@@ -49,13 +72,15 @@ async function runCli(input: string, replies: { status?: number; body: string }[
 		});
 		child.stdin.end(input);
 		const code = await exit;
-		return { code, stdout, stderr, requests, chunks };
+		return { code, stdout, stderr, requests, chunks, cwd };
 	} finally {
 		if (activeChild && activeChild.exitCode === null && activeChild.signalCode === null) activeChild.kill();
 		server.closeAllConnections();
 		await new Promise<void>((resolve) => server.close(() => resolve()));
-		await rm(join(cwd, "package.json"), { force: true });
-		await rm(cwd, { recursive: true, force: true });
+		if (cleanup) {
+			await rm(join(cwd, "package.json"), { force: true });
+			await rm(cwd, { recursive: true, force: true });
+		}
 	}
 }
 
@@ -65,7 +90,8 @@ describe("CLI composition root", () => {
 			{ body: await fixture("toolcall") }, { body: await fixture("text") },
 		]);
 		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("mini-agent (stage 8)");
+		expect(result.stdout).toContain("mini-agent (stage 9)");
+		expect(result.stdout).toContain("session:");
 		expect(result.stdout).toContain('→ read {"path":"package.json"}');
 		expect(result.stdout).toContain("你好，文件已读。");
 		expect(result.stdout).not.toContain("deterministic fake");
@@ -96,7 +122,7 @@ describe("CLI composition root", () => {
 	});
 
 	it("fails clearly when the API key is missing rather than falling back to fake", async () => {
-		const result = await runCli("/exit\n", [], false);
+		const result = await runCli("/exit\n", [], { authenticated: false });
 		expect(result.code).not.toBe(0);
 		expect(result.stderr).toContain("ANTHROPIC_API_KEY");
 		expect(result.stdout).not.toContain("deterministic fake");
@@ -113,5 +139,59 @@ describe("CLI composition root", () => {
 		expect(result.requests[1]).toMatchObject({ messages: [{ role: "user", content: [
 			{ type: "text", text: "one" }, { type: "text", text: "two" },
 		] }] });
+	});
+
+	it("continues the latest session in the same directory", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "mini-stage9-continue-"));
+		try {
+			const first = await runCli("prompt one\n/exit\n", [
+				{ body: await fixture("text") },
+			], { cwd, cleanup: false });
+			expect(first.code).toBe(0);
+			const sessionsDirectory = join(cwd, ".mini-agent", "sessions");
+			const files = await readdir(sessionsDirectory);
+			expect(files).toHaveLength(1);
+			const sessionPath = join(sessionsDirectory, files[0]!);
+			const before = await readFile(sessionPath, "utf8");
+
+			const second = await runCli("prompt two\n/exit\n", [
+				{ body: await fixture("text") },
+			], { cwd, cleanup: false, args: ["--continue"] });
+
+			expect(second.code).toBe(0);
+			expect(second.stdout).toContain("mini-agent (stage 9)");
+			expect(second.stdout).toContain("resumed");
+			expect(second.stdout).toContain(sessionPath);
+			expect(second.requests).toHaveLength(1);
+			expect(second.requests[0]).toMatchObject({
+				messages: [
+					{ role: "user", content: [{ type: "text", text: "prompt one" }] },
+					{ role: "assistant" },
+					{ role: "user", content: [{ type: "text", text: "prompt two" }] },
+				],
+			});
+			expect(await readdir(sessionsDirectory)).toHaveLength(1);
+			expect((await readFile(sessionPath, "utf8")).startsWith(before)).toBe(true);
+		} finally {
+			await rm(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("fails clearly when --continue has no session", async () => {
+		const result = await runCli("/exit\n", [], {
+			args: ["--continue"],
+		});
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toMatch(/no session/i);
+		expect(result.requests).toEqual([]);
+	});
+
+	it("rejects unknown CLI arguments", async () => {
+		const result = await runCli("/exit\n", [], {
+			args: ["--unknown"],
+		});
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("--continue");
+		expect(result.requests).toEqual([]);
 	});
 });
