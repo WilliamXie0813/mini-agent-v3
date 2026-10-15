@@ -5,7 +5,7 @@ import type {
 	StreamFn,
 	ToolResultMessage,
 } from "@mini-agent/ai";
-import { AgentInfrastructureFailure } from "./agent.ts";
+import { AgentInfrastructureFailure } from "./agent-infrastructure-failure.ts";
 import type { AgentEventSink } from "./agent-event.ts";
 import type { AfterToolCall, PrepareRequest, RecoverContextOverflow, TransformContext } from "./agent-options.ts";
 import {

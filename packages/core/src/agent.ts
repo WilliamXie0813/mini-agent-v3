@@ -1,6 +1,8 @@
 import { getDefaultStreamFn } from "@mini-agent/ai";
 import type { AssistantMessage, Message, StreamFn, SystemSection } from "@mini-agent/ai";
 import { agentLoop } from "./agent-loop.ts";
+import { AgentInfrastructureFailure } from "./agent-infrastructure-failure.ts";
+export { AgentInfrastructureFailure } from "./agent-infrastructure-failure.ts";
 import type { AgentOptions } from "./agent-options.ts";
 import type { AfterToolCall, PrepareRequest, RecoverContextOverflow, TransformContext } from "./agent-options.ts";
 import type { AgentEvent, AgentEventListener } from "./agent-event.ts";
@@ -16,13 +18,6 @@ import type {
 type ActiveRun = {
 	promise: Promise<void>; resolve: () => void; abortController: AbortController;
 };
-
-export class AgentInfrastructureFailure extends Error {
-	readonly original: unknown;
-	constructor(original: unknown) {
-		super("agent infrastructure failed"); this.original = original;
-	}
-}
 
 export class Agent {
 	private readonly streamFn: StreamFn;
