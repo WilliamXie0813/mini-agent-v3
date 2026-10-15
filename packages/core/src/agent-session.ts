@@ -38,6 +38,20 @@ export type OpenAgentSessionOptions = AgentSessionOptions & {
 	path: string;
 };
 
+function messagesFromPath(entries: readonly SessionEntry[]): Message[] {
+	const messages: Message[] = [];
+	for (const entry of entries) {
+		if (entry.type === "submission") {
+			messages.push({
+				role: "user",
+				content: [{ type: "text", text: entry.prompt }],
+			});
+		}
+		if (entry.type === "message") messages.push(entry.message);
+	}
+	return messages;
+}
+
 export class AgentSession {
 	private readonly journal: SessionJournal;
 	private readonly options: AgentSessionOptions;
@@ -64,7 +78,10 @@ export class AgentSession {
 		messages: Message[] = [],
 	) {
 		this.journal = journal;
-		this.options = options;
+		this.options = {
+			...options,
+			tools: options.tools?.slice(),
+		};
 		this.agent = this.createAgent(messages);
 		for (const entry of journal.entries) {
 			if (entry.type === "submission")
@@ -82,6 +99,27 @@ export class AgentSession {
 				await journal.append({ type: "message", message });
 		}
 		return session;
+	}
+
+	static async open(
+		options: OpenAgentSessionOptions,
+	): Promise<AgentSession> {
+		const { path, ...agentOptions } = options;
+		const journal = await SessionJournal.open(path);
+		return new AgentSession(
+			journal,
+			agentOptions,
+			messagesFromPath(journal.pathTo()),
+		);
+	}
+
+	static async openLatest(
+		options: AgentSessionOptions,
+	): Promise<AgentSession> {
+		const directory = options.directory ??
+			join(process.cwd(), ".mini-agent", "sessions");
+		const path = await SessionJournal.findLatest(directory);
+		return AgentSession.open({ ...options, directory, path });
 	}
 
 	get sessionId(): string {
@@ -107,6 +145,14 @@ export class AgentSession {
 	subscribe(listener: AgentEventListener): () => void {
 		this.listeners.add(listener);
 		return () => this.listeners.delete(listener);
+	}
+
+	branch(fromId: string): void {
+		this.assertIdle("branch");
+		this.journal.branch(fromId);
+		this.agent = this.createAgent(
+			messagesFromPath(this.journal.pathTo()),
+		);
 	}
 
 	submit(input: {
@@ -166,6 +212,7 @@ export class AgentSession {
 			await this.journal.append({ type: "message", message });
 		}
 		this.agent.setTools(tools);
+		this.options.tools = tools.slice();
 	}
 
 	abort(): void {

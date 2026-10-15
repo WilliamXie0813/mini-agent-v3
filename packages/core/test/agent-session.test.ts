@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createFakeStreamFn } from "@mini-agent/ai";
-import type { Message, StreamFn } from "@mini-agent/ai";
+import type { Message, StreamContext, StreamFn } from "@mini-agent/ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../src/agent-session.ts";
 import type { AgentEvent } from "../src/agent-event.ts";
@@ -46,6 +46,22 @@ function text(message: Message): string {
 		.filter((block) => block.type === "text")
 		.map((block) => block.text)
 		.join("");
+}
+
+function pathTo(
+	entries: readonly { id: string; parentId: string | null }[],
+	leafId: string,
+): string[] {
+	const byId = new Map(entries.map((entry) => [entry.id, entry]));
+	const path: string[] = [];
+	let current: string | null = leafId;
+	while (current !== null) {
+		const entry = byId.get(current);
+		if (!entry) throw new Error(`missing entry ${current}`);
+		path.push(entry.id);
+		current = entry.parentId;
+	}
+	return path.reverse();
 }
 
 const echoTool: ToolDef<{ text: string }> = {
@@ -428,5 +444,154 @@ describe("AgentSession", () => {
 			await rmdir(stable.filePath);
 			await rename(backup, stable.filePath);
 		}
+	});
+
+	it("reopens the leaf path and continues with full history", async () => {
+		const directory = await temporaryDirectory();
+		const session = await AgentSession.create({
+			directory,
+			system: "test",
+			streamFn: createFakeStreamFn(["first", "second"]),
+		});
+		await session.submit({ requestId: "one", prompt: "one" });
+		await session.submit({ requestId: "two", prompt: "two" });
+		const messagesBefore = structuredClone(session.state.messages);
+		const bytesBefore = await readFile(session.filePath, "utf8");
+		const contexts: StreamContext[] = [];
+		const inner = createFakeStreamFn(["third"]);
+		const resumed = await AgentSession.open({
+			path: session.filePath,
+			directory,
+			system: "ignored",
+			streamFn: (context, signal) => {
+				contexts.push(structuredClone(context));
+				return inner(context, signal);
+			},
+		});
+
+		expect(resumed.state.messages).toEqual(messagesBefore);
+		await resumed.submit({ requestId: "three", prompt: "three" });
+		expect(contexts).toHaveLength(1);
+		expect(contexts[0]!.messages
+			.filter((message) => message.role === "user")
+			.map(text)).toEqual(["one", "two", "three"]);
+		expect((await readFile(resumed.filePath, "utf8")).startsWith(bytesBefore))
+			.toBe(true);
+
+		const latest = await AgentSession.openLatest({
+			directory,
+			system: "ignored",
+			streamFn: createFakeStreamFn(["unused"]),
+		});
+		expect(latest.filePath).toBe(session.filePath);
+		const empty = await temporaryDirectory();
+		await expect(AgentSession.openLatest({
+			directory: empty,
+			system: "test",
+			streamFn: createFakeStreamFn(["unused"]),
+		})).rejects.toThrow(/no session/i);
+	});
+
+	it("branches from an earlier entry without erasing old descendants", async () => {
+		const directory = await temporaryDirectory();
+		const session = await AgentSession.create({
+			directory,
+			system: "test",
+			streamFn: createFakeStreamFn(["one", "old", "new"]),
+		});
+		await session.submit({ requestId: "one", prompt: "one" });
+		const firstLeaf = session.leafId!;
+		await session.submit({ requestId: "old", prompt: "old branch" });
+		const oldLeaf = session.leafId!;
+		const beforeBranch = await readFile(session.filePath, "utf8");
+
+		session.branch(firstLeaf);
+
+		expect(await readFile(session.filePath, "utf8")).toBe(beforeBranch);
+		expect(session.state.messages
+			.filter((message) => message.role === "user")
+			.map(text)).toEqual(["one"]);
+		const newSubmission = await session.submit({
+			requestId: "new",
+			prompt: "new branch",
+		});
+		const newLeaf = session.leafId!;
+		expect(newSubmission.parentId).toBe(firstLeaf);
+		expect(session.entries.some(({ id }) => id === oldLeaf)).toBe(true);
+		expect(session.entries.some(({ id }) => id === newLeaf)).toBe(true);
+		expect(session.state.messages
+			.filter((message) => message.role === "user")
+			.map(text)).toEqual(["one", "new branch"]);
+		expect(pathTo(session.entries, oldLeaf).slice(0, -1))
+			.not.toEqual(pathTo(session.entries, newLeaf).slice(0, -1));
+		expect(pathTo(session.entries, oldLeaf)).toContain(firstLeaf);
+		expect(pathTo(session.entries, newLeaf)).toContain(firstLeaf);
+
+		const reopened = await AgentSession.open({
+			path: session.filePath,
+			system: "ignored",
+			streamFn: createFakeStreamFn(["unused"]),
+		});
+		expect(reopened.state.messages
+			.filter((message) => message.role === "user")
+			.map(text)).toEqual(["one", "new branch"]);
+	});
+
+	it("guards branch changes and keeps request IDs global across branches", async () => {
+		const directory = await temporaryDirectory();
+		const inner = createFakeStreamFn(["one", "old", "new"]);
+		const provider = vi.fn<StreamFn>((context, signal) =>
+			inner(context, signal)
+		);
+		const session = await AgentSession.create({
+			directory,
+			system: "test",
+			streamFn: provider,
+		});
+		await session.submit({ requestId: "one", prompt: "one" });
+		const firstLeaf = session.leafId!;
+		const old = await session.submit({
+			requestId: "old",
+			prompt: "old branch",
+		});
+		const bytes = await readFile(session.filePath, "utf8");
+		const leaf = session.leafId;
+		expect(() => session.branch("missing")).toThrow(/unknown/i);
+		expect(session.leafId).toBe(leaf);
+		expect(await readFile(session.filePath, "utf8")).toBe(bytes);
+
+		const gate = deferred();
+		const endReached = deferred();
+		const unsubscribe = session.subscribe(async (event: AgentEvent) => {
+			if (event.type === "agent_end") {
+				endReached.resolve();
+				await gate.promise;
+			}
+		});
+		const running = session.submit({ requestId: "active", prompt: "active" });
+		await endReached.promise;
+		expect(() => session.branch(firstLeaf)).toThrow(/active run/i);
+		gate.resolve();
+		await running;
+		unsubscribe();
+
+		session.branch(firstLeaf);
+		const callsBefore = provider.mock.calls.length;
+		const duplicate = await session.submit({
+			requestId: "old",
+			prompt: "must not execute",
+		});
+		expect(duplicate.id).toBe(old.id);
+		expect(provider).toHaveBeenCalledTimes(callsBefore);
+
+		let starts = 0;
+		const stop = session.subscribe((event) => {
+			if (event.type === "agent_start") starts++;
+		});
+		await session.submit({ requestId: "new", prompt: "new" });
+		expect(starts).toBe(1);
+		stop();
+		await session.submit({ requestId: "newer", prompt: "newer" });
+		expect(starts).toBe(1);
 	});
 });
