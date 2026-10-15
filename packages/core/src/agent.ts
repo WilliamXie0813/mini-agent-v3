@@ -4,7 +4,7 @@ import { agentLoop } from "./agent-loop.ts";
 import { AgentInfrastructureFailure } from "./agent-infrastructure-failure.ts";
 export { AgentInfrastructureFailure } from "./agent-infrastructure-failure.ts";
 import type { AgentOptions } from "./agent-options.ts";
-import type { AfterToolCall, PrepareRequest, RecoverContextOverflow, TransformContext } from "./agent-options.ts";
+import type { AfterToolCall, FinishTurn, PrepareRequest, RecoverContextOverflow, TransformContext } from "./agent-options.ts";
 import type { AgentEvent, AgentEventListener } from "./agent-event.ts";
 import { appendSystemSections, createAgentState, reduceAgentState, replaceAgentTools } from "./agent-state.ts";
 import type { AgentState } from "./agent-state.ts";
@@ -32,6 +32,7 @@ export class Agent {
 	// 与 beforeToolCall 同为可替换 seam（阶段 10 的阈值压缩由 AgentSession 挂在这里）。
 	public prepareRequest?: PrepareRequest;
 	public transformContext?: TransformContext;
+	public finishTurn?: FinishTurn;
 	public toolExecution: ToolExecutionMode;
 	private activeRun?: ActiveRun;
 	private runMessages: Message[] = [];
@@ -56,6 +57,7 @@ export class Agent {
 		this.afterToolCall = options.afterToolCall;
 		this.prepareRequest = options.prepareRequest;
 		this.transformContext = options.transformContext;
+		this.finishTurn = options.finishTurn;
 		this.recoverContextOverflow = options.recoverContextOverflow;
 		this.toolExecution = options.toolExecution ?? "parallel";
 		this._state = createAgentState(
@@ -109,6 +111,7 @@ export class Agent {
 			const transformContext = this.transformContext;
 			const recoverContextOverflow = this.recoverContextOverflow;
 			const afterToolCall = this.afterToolCall;
+			const finishTurn = this.finishTurn;
 			await agentLoop({
 				prompt,
 				messages: this._state.messages.slice(),
@@ -150,6 +153,15 @@ export class Agent {
 					? async (input) => {
 						try {
 							return await recoverContextOverflow(input);
+						} catch (error) {
+							throw new AgentInfrastructureFailure(error);
+						}
+					}
+					: undefined,
+				finishTurn: finishTurn
+					? async (context, signal) => {
+						try {
+							return await finishTurn(context, signal);
 						} catch (error) {
 							throw new AgentInfrastructureFailure(error);
 						}

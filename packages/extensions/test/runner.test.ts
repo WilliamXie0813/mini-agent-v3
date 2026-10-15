@@ -254,3 +254,40 @@ describe("context decision hook", () => {
 		await expect(agent.prompt("go")).rejects.toThrowError("pruner crashed");
 	});
 });
+
+describe("turn_end decision hook", () => {
+	test("short-circuits on the first non-void result", async () => {
+		const runner = new ExtensionRunner();
+		const second = vi.fn(() => ({ action: "end" as const }));
+		// 首个 handler 第一次返回 continue（再要一轮），第二次返回 end——
+		// 若每次都 continue，maxTurns: 2 预算耗尽会让 prompt 以 hit maxTurns 熔断，
+		// 与「正常收敛」的测试意图相悖。
+		let calls = 0;
+		await runner.use({
+			name: "a",
+			factory: (api) => {
+				api.on("turn_end", () => (++calls === 1 ? { action: "continue" as const } : { action: "end" as const }));
+			},
+		});
+		await runner.use({ name: "b", factory: (api) => { api.on("turn_end", second); } });
+		const agent = new Agent({
+			system: "s", maxTurns: 2,
+			streamFn: createFakeStreamFn(["x", "y"]),
+			...runner.sessionHooks(),
+		});
+		agent.subscribe(() => {});
+		const turnEnds: number[] = [];
+		agent.subscribe((e) => { if (e.type === "turn_end") turnEnds.push(1); });
+		await agent.prompt("go");
+		expect(second).not.toHaveBeenCalled();
+		expect(turnEnds).toHaveLength(2);
+	});
+
+	test("a handler returning void lets the loop stop normally", async () => {
+		const runner = new ExtensionRunner();
+		await runner.use({ name: "observer-ish", factory: (api) => { api.on("turn_end", () => undefined); } });
+		const agent = new Agent({ system: "s", streamFn: createFakeStreamFn(["only"]), ...runner.sessionHooks() });
+		await agent.prompt("go");
+		expect(agent.state.messages.filter((m) => m.role === "assistant")).toHaveLength(1);
+	});
+});

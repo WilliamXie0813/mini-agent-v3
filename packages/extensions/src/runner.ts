@@ -108,12 +108,14 @@ export class ExtensionRunner implements ExtensionAPI {
 	// 决策 hook 逐个接上；未注册任何 handler 时返回空对象。
 	// tool_call 是短路语义：首个非 undefined 返回值生效，后续 handler 不再运行。
 	// tool_result 是 fold 语义：逐个传递，字段级最后一个生效，void 不动已累积字段。
+	// turn_end 是短路语义：首个非 undefined 返回值生效（与 tool_call 同构）。
 	// handler 抛错只记录后重抛——tool_call 由 prepareToolCall 转成 error result（fail-closed），
-	// tool_result 则由 agent.ts 包装为 AgentInfrastructureFailure 冒泡。
+	// tool_result / turn_end 则由 agent.ts 包装为 AgentInfrastructureFailure 冒泡。
 	sessionHooks(): SessionHooks {
 		const toolCallHandlers = this.handlersFor("tool_call");
 		const toolResultHandlers = this.handlersFor("tool_result");
 		const contextHandlers = this.handlersFor("context");
+		const turnEndHandlers = this.handlersFor("turn_end");
 		const hooks: SessionHooks = {};
 		if (toolCallHandlers.length > 0) {
 			hooks.beforeToolCall = async (context) => {
@@ -157,6 +159,20 @@ export class ExtensionRunner implements ExtensionAPI {
 					}
 				}
 				return current;
+			};
+		}
+		if (turnEndHandlers.length > 0) {
+			hooks.finishTurn = async (context) => {
+				for (const { name, handler } of turnEndHandlers) {
+					try {
+						const result = await handler(context);
+						if (result !== undefined) return result;
+					} catch (error) {
+						this.log(`extension "${name}" handler for "turn_end" failed: ${errorMessage(error)}`);
+						throw error;
+					}
+				}
+				return undefined;
 			};
 		}
 		return hooks;

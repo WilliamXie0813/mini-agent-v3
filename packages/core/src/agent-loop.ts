@@ -7,7 +7,7 @@ import type {
 } from "@mini-agent/ai";
 import { AgentInfrastructureFailure } from "./agent-infrastructure-failure.ts";
 import type { AgentEventSink } from "./agent-event.ts";
-import type { AfterToolCall, PrepareRequest, RecoverContextOverflow, TransformContext } from "./agent-options.ts";
+import type { AfterToolCall, FinishTurn, PrepareRequest, RecoverContextOverflow, TransformContext } from "./agent-options.ts";
 import {
 	executeToolCalls,
 	failTruncatedToolCalls,
@@ -35,6 +35,7 @@ export interface AgentLoopOptions {
 	prepareRequest?: PrepareRequest;
 	transformContext?: TransformContext;
 	recoverContextOverflow?: RecoverContextOverflow;
+	finishTurn?: FinishTurn;
 }
 
 // 提前返回都在构造 user 消息之前（阶段 1 的约定，不要动）：已中止的 signal 不产生半条消息；
@@ -159,6 +160,16 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 		const toolCalls = message.content.filter((c) => c.type === "toolCall");
 		if (toolCalls.length === 0) {
 			await emit({ type: "turn_end", message, toolResults: [] });
+			// finishTurn 只在模型正常收敛时被咨询（stopReason error/aborted 的轮次
+			// 在上面已返回，到不了这里）。continue 从同一个 maxTurns 预算再要一轮，
+			// 预算耗尽照旧抛 hit maxTurns——不为 continue 单开计数器。
+			const decision = options.finishTurn
+				? await options.finishTurn(
+						{ message, toolResults: [], messages: options.messages, turn },
+						options.signal,
+					)
+				: undefined;
+			if (decision?.action === "continue") continue;
 			await emit({ type: "agent_end", messages: newMessages });
 			return options.messages;
 		}
@@ -194,6 +205,20 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 			throw new Error("agent loop aborted");
 		}
 		if (terminate) {
+			await emit({ type: "agent_end", messages: newMessages });
+			return options.messages;
+		}
+		// 工具结果之后的第二条收敛分支：terminate 硬停已在上面优先返回，
+		// 扩展不得复活；finishTurn 在 turn_end 之后被咨询（订阅者先看到轮次关闭）。
+		// 这里 loop 的默认走向是继续下一轮，所以只有显式 "end" 提前收敛；
+		// "continue" 与 void 都维持原行为（void 不改变模型驱动的收敛）。
+		const decision = options.finishTurn
+			? await options.finishTurn(
+					{ message, toolResults, messages: options.messages, turn },
+					options.signal,
+				)
+			: undefined;
+		if (decision?.action === "end") {
 			await emit({ type: "agent_end", messages: newMessages });
 			return options.messages;
 		}
