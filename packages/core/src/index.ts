@@ -44,12 +44,19 @@ export type {
 export { createReadTool, createEditTool, createBashTool, createDefaultTools } from "./tools.ts";
 export { SessionJournal } from "./session-journal.ts";
 export { recoverInterruptedTools } from "./session-recovery.ts";
+export {
+	messagesFromSessionPath,
+	projectSessionContext,
+	streamContextFromSessionPath,
+} from "./session-context.ts";
+export { createCompactionSummaryMessage } from "./compaction.ts";
 export { AgentSession } from "./agent-session.ts";
 export type {
 	AgentSessionOptions,
 	OpenAgentSessionOptions,
 } from "./agent-session.ts";
 export type {
+	CompactionReason,
 	SessionEntry,
 	SessionEntryBase,
 	SessionEntryData,

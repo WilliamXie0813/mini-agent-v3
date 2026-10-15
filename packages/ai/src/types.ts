@@ -23,6 +23,9 @@ export interface SystemMessage {
 	toolsRemoved?: string[];
 }
 export interface UserMessage { role: "user"; content: ContentBlock[] }
+// 阶段 10：provider 用结构化 kind 报告失败类别，core 禁止匹配错误字符串。
+// context_overflow = 超窗（core 可压缩重试一次）；provider = 其他一切。
+export type AssistantErrorKind = "context_overflow" | "provider";
 export interface AssistantMessage {
 	role: "assistant";
 	content: ContentBlock[];
@@ -30,6 +33,7 @@ export interface AssistantMessage {
 	usage?: Usage;
 	durationMs?: number;
 	errorMessage?: string;
+	errorKind?: AssistantErrorKind;
 }
 export interface ToolResultMessage {
 	role: "toolResult";

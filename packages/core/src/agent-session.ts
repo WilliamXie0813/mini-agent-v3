@@ -17,6 +17,7 @@ import type {
 import type { AgentState } from "./agent-state.ts";
 import { SessionJournal } from "./session-journal.ts";
 import { recoverInterruptedTools } from "./session-recovery.ts";
+import { messagesFromSessionPath } from "./session-context.ts";
 import type {
 	SessionEntry,
 	SessionEntryOf,
@@ -38,20 +39,6 @@ export type AgentSessionOptions = Omit<
 export type OpenAgentSessionOptions = AgentSessionOptions & {
 	path: string;
 };
-
-function messagesFromPath(entries: readonly SessionEntry[]): Message[] {
-	const messages: Message[] = [];
-	for (const entry of entries) {
-		if (entry.type === "submission") {
-			messages.push({
-				role: "user",
-				content: [{ type: "text", text: entry.prompt }],
-			});
-		}
-		if (entry.type === "message") messages.push(entry.message);
-	}
-	return messages;
-}
 
 export class AgentSession {
 	private readonly journal: SessionJournal;
@@ -112,7 +99,7 @@ export class AgentSession {
 		return new AgentSession(
 			journal,
 			agentOptions,
-			messagesFromPath(journal.pathTo()),
+			messagesFromSessionPath(journal.pathTo()),
 		);
 	}
 
@@ -154,7 +141,7 @@ export class AgentSession {
 		this.assertIdle("branch");
 		this.journal.branch(fromId);
 		this.agent = this.createAgent(
-			messagesFromPath(this.journal.pathTo()),
+			messagesFromSessionPath(this.journal.pathTo()),
 		);
 	}
 
@@ -244,7 +231,7 @@ export class AgentSession {
 	}): Promise<SessionEntryOf<"submission">> {
 		return this.runExclusive("submit", async () => {
 			await recoverInterruptedTools(this.journal, this.options.tools ?? []);
-			this.agent = this.createAgent(messagesFromPath(this.journal.pathTo()));
+			this.agent = this.createAgent(messagesFromSessionPath(this.journal.pathTo()));
 			const submission = await this.journal.append({
 				type: "submission",
 				requestId: input.requestId,
