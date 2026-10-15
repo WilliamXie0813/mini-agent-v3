@@ -1,5 +1,20 @@
 export { Agent } from "./agent.ts";
-export type { AgentOptions, PrepareRequest, PrepareRequestContext } from "./agent-options.ts";
+export type {
+	AfterToolCall,
+	AfterToolCallContext,
+	AfterToolCallResult,
+	AgentOptions,
+	FinishTurn,
+	FinishTurnContext,
+	FinishTurnResult,
+	PrepareNextTurn,
+	PrepareNextTurnContext,
+	PrepareNextTurnResult,
+	PrepareRequest,
+	PrepareRequestContext,
+	SessionHooks,
+	TransformContext,
+} from "./agent-options.ts";
 export type { AgentState } from "./agent-state.ts";
 export { agentLoop } from "./agent-loop.ts";
 export type { AgentLoopOptions } from "./agent-loop.ts";
