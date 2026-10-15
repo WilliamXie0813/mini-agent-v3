@@ -153,6 +153,43 @@ describe("SessionJournal", () => {
 		expect(reopened.leafId).toBe(second.id);
 	});
 
+	it.each(['{"type":', '{"text":"残缺'])(
+		"removes only a torn tail and remains writable across repeated reopen: %s",
+		async (fragment) => {
+			const directory = await temporaryDirectory();
+			const journal = await SessionJournal.create(directory);
+			const first = await journal.append({
+				type: "submission", requestId: "one", prompt: "完整历史",
+			});
+			const committed = await readFile(journal.path);
+			await appendFile(journal.path, fragment);
+
+			const reopened = await SessionJournal.open(journal.path);
+			expect(await readFile(journal.path)).toEqual(committed);
+			const second = await reopened.append({
+				type: "run_end", submissionId: first.id, status: "completed",
+			});
+			const again = await SessionJournal.open(journal.path);
+			expect(again.entries).toEqual([first, second]);
+			expect((await readFile(journal.path)).subarray(0, committed.length))
+				.toEqual(committed);
+		},
+	);
+
+	it("separates a valid unterminated entry before the next append", async () => {
+		const directory = await temporaryDirectory();
+		const path = join(directory, "unterminated.jsonl");
+		await writeLines(path, [header(), entry("a", null)], false);
+		const before = await readFile(path, "utf8");
+		const reopened = await SessionJournal.open(path);
+		const next = await reopened.append({
+			type: "run_end", submissionId: "a", status: "completed",
+		});
+		expect((await readFile(path, "utf8")).startsWith(`${before}\n`)).toBe(true);
+		expect((await SessionJournal.open(path)).entries.map(({ id }) => id))
+			.toEqual(["a", next.id]);
+	});
+
 	it.each([
 		["complete bad final line", [header(), entry("a", null), '{"type":'], true],
 		["bad middle line", [header(), '{"type":', entry("a", null)], true],

@@ -124,12 +124,16 @@ export class SessionJournal {
 		const header = parseHeader(headerValue);
 		const entries: SessionEntry[] = [];
 		const seen = new Set<string>();
+		let tornTail = false;
 		for (let index = 1; index < lines.length; index++) {
 			let value: unknown;
 			try {
 				value = JSON.parse(lines[index]!);
 			} catch {
-				if (!hasFinalNewline && index === lines.length - 1) break;
+				if (!hasFinalNewline && index === lines.length - 1) {
+					tornTail = true;
+					break;
+				}
 				throw new Error(`Invalid session JSON at line ${index + 1}`);
 			}
 			const entry = parseEntry(value);
@@ -139,6 +143,18 @@ export class SessionJournal {
 				throw new Error(`Invalid session parent: ${entry.parentId}`);
 			seen.add(entry.id);
 			entries.push(entry);
+		}
+		if (tornTail) {
+			const handle = await open(path, "r+");
+			try {
+				const prefix = source.slice(0, source.lastIndexOf("\n") + 1);
+				await handle.truncate(Buffer.byteLength(prefix, "utf8"));
+				await handle.sync();
+			} finally {
+				await handle.close();
+			}
+		} else if (!hasFinalNewline) {
+			await durableWrite(path, "a", "\n");
 		}
 		return new SessionJournal(path, header, entries);
 	}
