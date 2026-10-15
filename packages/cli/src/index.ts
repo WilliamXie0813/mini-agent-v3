@@ -111,6 +111,10 @@ try {
 	process.stdout.write("> ");
 	for await (const line of rl) {
 		if (line.trim() === "/exit") break;
+		if (line.trim() === "") {
+			process.stdout.write("> ");
+			continue;
+		}
 		await session.submit({
 			requestId: randomUUID(),
 			prompt: line,

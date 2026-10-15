@@ -85,6 +85,27 @@ async function runCli(
 }
 
 describe("CLI composition root", () => {
+	it("ignores blank lines without journaling or requesting the provider", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "mini-stage9-blank-"));
+		try {
+			const result = await runCli("\n   \nhello\n\n/exit\n", [
+				{ body: await fixture("text") },
+			], { cwd, cleanup: false });
+			expect(result.code).toBe(0);
+			expect(result.requests).toHaveLength(1);
+			expect(result.stdout).toContain("你好，文件已读。");
+			const directory = join(cwd, ".mini-agent", "sessions");
+			const [file] = await readdir(directory);
+			const entries = (await readFile(join(directory, file!), "utf8"))
+				.trimEnd().split("\n")
+				.map((line) => JSON.parse(line) as { type: string; prompt?: string });
+			expect(entries.filter(({ type }) => type === "submission").map(({ prompt }) => prompt))
+				.toEqual(["hello"]);
+		} finally {
+			await rm(cwd, { recursive: true, force: true });
+		}
+	});
+
 	it("uses the real provider for text, read and the follow-up response", async () => {
 		const result = await runCli("读一下 package.json 然后总结\n/exit\n", [
 			{ body: await fixture("toolcall") }, { body: await fixture("text") },
