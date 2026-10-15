@@ -2,7 +2,9 @@
 
 ## Current status (supersedes the archived pause below)
 
-**Tasks 1–8 are complete and committed. A fresh whole-branch review and one regression-driven fix pass are complete. Integration into master is still the user's decision; nothing has been pushed.**
+**Tasks 1–8 are complete and committed. A fresh whole-branch review and one regression-driven fix pass are complete. At the user's request, Stage 9 was fast-forwarded into local master; nothing has been pushed.**
+
+Integration: local master was first advanced from `6eda1e4` to the previously fetched `origin/master` at `dca4381`, then to Stage 9 completion commit `cce0b0f`. Two attempts to refresh GitHub failed (TLS/connectivity), so this does **not** claim the remote reference is current. Tests/check were rerun successfully on merged master: 360 tests, AI/Core/CLI type checks pass. The merged feature branch is removed after this integration record is committed.
 
 Learning deliverables:
 
