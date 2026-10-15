@@ -72,6 +72,7 @@ export class AgentSession {
 	>();
 	private activeSubmission?: SessionEntryOf<"submission">;
 	private currentAssistantEntryId?: string;
+	private operation?: Promise<void>;
 
 	private constructor(
 		journal: SessionJournal,
@@ -166,9 +167,9 @@ export class AgentSession {
 		if (input.prompt.trim() === "")
 			return Promise.reject(new Error("prompt must not be empty"));
 		const existing = this.submissions.get(input.requestId);
-		if (existing) return Promise.resolve(existing);
 		const pending = this.inFlight.get(input.requestId);
 		if (pending) return pending;
+		if (existing) return Promise.resolve(existing);
 		const running = this.runSubmission(input);
 		this.inFlight.set(input.requestId, running);
 		running.finally(() => {
@@ -181,40 +182,42 @@ export class AgentSession {
 	async appendSystemSections(
 		sections: readonly SystemSection[],
 	): Promise<void> {
-		this.assertIdle("appendSystemSections");
-		if (sections.length === 0) return;
-		const message: SystemMessage = {
-			role: "system",
-			sections: sections.map((section) => ({ ...section })),
-		};
-		await this.journal.append({ type: "message", message });
-		this.agent.appendSystemSections(message.sections);
+		return this.runExclusive("appendSystemSections", async () => {
+			if (sections.length === 0) return;
+			const message: SystemMessage = {
+				role: "system",
+				sections: sections.map((section) => ({ ...section })),
+			};
+			await this.journal.append({ type: "message", message });
+			this.agent.appendSystemSections(message.sections);
+		});
 	}
 
 	async setTools(tools: ToolDef<any>[]): Promise<void> {
-		this.assertIdle("setTools");
-		const changes = getToolStateChanges(
-			getCurrentTools(this.agent.state.messages),
-			toToolDeclarations(tools),
-		);
-		if (
-			changes.toolsAdded.length > 0 ||
-			changes.toolsRemoved.length > 0
-		) {
-			const message: SystemMessage = {
-				role: "system",
-				sections: [],
-				...(changes.toolsRemoved.length > 0
-					? { toolsRemoved: changes.toolsRemoved }
-					: {}),
-				...(changes.toolsAdded.length > 0
-					? { toolsAdded: changes.toolsAdded }
-					: {}),
-			};
-			await this.journal.append({ type: "message", message });
-		}
-		this.agent.setTools(tools);
-		this.options.tools = tools.slice();
+		return this.runExclusive("setTools", async () => {
+			const changes = getToolStateChanges(
+				getCurrentTools(this.agent.state.messages),
+				toToolDeclarations(tools),
+			);
+			if (
+				changes.toolsAdded.length > 0 ||
+				changes.toolsRemoved.length > 0
+			) {
+				const message: SystemMessage = {
+					role: "system",
+					sections: [],
+					...(changes.toolsRemoved.length > 0
+						? { toolsRemoved: changes.toolsRemoved }
+						: {}),
+					...(changes.toolsAdded.length > 0
+						? { toolsAdded: changes.toolsAdded }
+						: {}),
+				};
+				await this.journal.append({ type: "message", message });
+			}
+			this.agent.setTools(tools);
+			this.options.tools = tools.slice();
+		});
 	}
 
 	abort(): void {
@@ -222,7 +225,7 @@ export class AgentSession {
 	}
 
 	waitForIdle(): Promise<void> {
-		return this.agent.waitForIdle();
+		return this.operation ?? this.agent.waitForIdle();
 	}
 
 	private createAgent(messages: Message[]): Agent {
@@ -239,21 +242,23 @@ export class AgentSession {
 		requestId: string;
 		prompt: string;
 	}): Promise<SessionEntryOf<"submission">> {
-		const submission = await this.journal.append({
-			type: "submission",
-			requestId: input.requestId,
-			prompt: input.prompt,
+		return this.runExclusive("submit", async () => {
+			const submission = await this.journal.append({
+				type: "submission",
+				requestId: input.requestId,
+				prompt: input.prompt,
+			});
+			this.submissions.set(input.requestId, submission);
+			this.activeSubmission = submission;
+			try {
+				await this.agent.prompt(input.prompt);
+				return submission;
+			} finally {
+				this.activeSubmission = undefined;
+				this.currentAssistantEntryId = undefined;
+				this.intents.clear();
+			}
 		});
-		this.submissions.set(input.requestId, submission);
-		this.activeSubmission = submission;
-		try {
-			await this.agent.prompt(input.prompt);
-			return submission;
-		} finally {
-			this.activeSubmission = undefined;
-			this.currentAssistantEntryId = undefined;
-			this.intents.clear();
-		}
 	}
 
 	private async commitToolIntent(
@@ -344,7 +349,22 @@ export class AgentSession {
 	}
 
 	private assertIdle(operation: string): void {
-		if (this.agent.state.isStreaming)
+		if (this.operation || this.agent.state.isStreaming)
 			throw new Error(`Cannot ${operation} while the agent has an active run`);
+	}
+
+	private async runExclusive<T>(
+		name: string,
+		execute: () => Promise<T>,
+	): Promise<T> {
+		this.assertIdle(name);
+		let resolve = () => {};
+		this.operation = new Promise<void>((done) => { resolve = done; });
+		try {
+			return await execute();
+		} finally {
+			this.operation = undefined;
+			resolve();
+		}
 	}
 }

@@ -14,6 +14,8 @@ import type { Message, StreamContext, StreamFn } from "@mini-agent/ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../src/agent-session.ts";
 import type { AgentEvent } from "../src/agent-event.ts";
+import { SessionJournal } from "../src/session-journal.ts";
+import type { SessionEntryBase, SessionEntryData } from "../src/session-types.ts";
 import type { ToolDef, ToolResult } from "../src/tool.ts";
 
 const directories: string[] = [];
@@ -79,6 +81,7 @@ const echoTool: ToolDef<{ text: string }> = {
 };
 
 afterEach(async () => {
+	vi.restoreAllMocks();
 	await Promise.all(
 		directories.splice(0).map((directory) =>
 			rm(directory, { recursive: true, force: true })
@@ -87,6 +90,100 @@ afterEach(async () => {
 });
 
 describe("AgentSession", () => {
+	it.each(["submission", "sections", "tools"] as const)(
+		"owns the session and stays non-idle while %s persistence is pending",
+		async (operation) => {
+			const session = await AgentSession.create({
+				directory: await temporaryDirectory(),
+				system: "base",
+				tools: [echoTool],
+				streamFn: createFakeStreamFn(["answer"]),
+			});
+			const gate = deferred();
+			const reached = deferred();
+			const append = SessionJournal.prototype.append;
+			let gated = false;
+			vi.spyOn(SessionJournal.prototype, "append").mockImplementation(
+				async function <TData extends SessionEntryData>(
+					this: SessionJournal, data: TData,
+				): Promise<SessionEntryBase & TData> {
+					if (!gated) {
+						gated = true;
+						reached.resolve();
+						await gate.promise;
+					}
+					return (append<TData>).call(this, data);
+				},
+			);
+			const pending = operation === "submission"
+				? session.submit({ requestId: "owner", prompt: "go" })
+				: operation === "sections"
+					? session.appendSystemSections([{ text: "policy" }])
+					: session.setTools([]);
+			await reached.promise;
+			let idle = false;
+			const waiting = session.waitForIdle().then(() => { idle = true; });
+			try {
+				await Promise.resolve();
+				expect(idle).toBe(false);
+				const bytes = await readFile(session.filePath, "utf8");
+				await expect(session.submit({ requestId: "other", prompt: "no" }))
+					.rejects.toThrow(/active run|operation/i);
+				await expect(session.appendSystemSections([{ text: "no" }]))
+					.rejects.toThrow(/active run|operation/i);
+				await expect(session.setTools([])).rejects.toThrow(/active run|operation/i);
+				expect(() => session.branch(session.entries[0]!.id))
+					.toThrow(/active run|operation/i);
+				expect(await readFile(session.filePath, "utf8")).toBe(bytes);
+			} finally {
+				gate.resolve();
+				await pending;
+				await waiting;
+			}
+			expect(idle).toBe(true);
+		},
+	);
+
+	it("rejects a different active request before writing without damaging the owner", async () => {
+		let executes = 0;
+		const session = await AgentSession.create({
+			directory: await temporaryDirectory(),
+			system: "base",
+			tools: [{ ...echoTool, execute: async (args) => {
+				executes++;
+				return echoTool.execute(args);
+			} }],
+			streamFn: createFakeStreamFn([
+				[{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "owner" } }],
+				"done",
+			]),
+		});
+		const gate = deferred();
+		const reached = deferred();
+		session.subscribe(async (event) => {
+			if (event.type === "message_end" && event.message.role === "assistant") {
+				reached.resolve();
+				await gate.promise;
+			}
+		});
+		const owner = session.submit({ requestId: "owner", prompt: "go" });
+		await reached.promise;
+		try {
+			await expect(session.submit({ requestId: "other", prompt: "no" }))
+				.rejects.toThrow(/active run|operation/i);
+			expect(session.entries.some((entry) =>
+				entry.type === "submission" && entry.requestId === "other"
+			)).toBe(false);
+		} finally {
+			gate.resolve();
+			await owner;
+		}
+		expect(executes).toBe(1);
+		expect(session.entries.at(-1)).toMatchObject({
+			type: "run_end", status: "completed",
+		});
+	});
+
 	it("persists a complete run in reconstructable order", async () => {
 		const directory = await temporaryDirectory();
 		const session = await AgentSession.create({
