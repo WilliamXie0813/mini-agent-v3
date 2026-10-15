@@ -20,6 +20,7 @@ interface RunCliOptions {
 	authenticated?: boolean;
 	cwd?: string;
 	cleanup?: boolean;
+	env?: Record<string, string>;
 }
 
 async function runCli(
@@ -55,7 +56,8 @@ async function runCli(
 		const address = server.address();
 		if (!address || typeof address === "string") throw new Error("server missing port");
 		const env: NodeJS.ProcessEnv = { ...process.env, ANTHROPIC_API_KEY: "local-test-key",
-			ANTHROPIC_BASE_URL: `http://127.0.0.1:${address.port}/coding/`, ANTHROPIC_MODEL: "local-test" };
+			ANTHROPIC_BASE_URL: `http://127.0.0.1:${address.port}/coding/`, ANTHROPIC_MODEL: "local-test",
+			...options.env };
 		if (options.authenticated === false) delete env.ANTHROPIC_API_KEY;
 		const child = activeChild = spawn(
 			process.execPath,
@@ -111,7 +113,7 @@ describe("CLI composition root", () => {
 			{ body: await fixture("toolcall") }, { body: await fixture("text") },
 		]);
 		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("mini-agent (stage 9)");
+		expect(result.stdout).toContain("mini-agent (stage 10)");
 		expect(result.stdout).toContain("session:");
 		expect(result.stdout).toContain('→ read {"path":"package.json"}');
 		expect(result.stdout).toContain("你好，文件已读。");
@@ -180,7 +182,7 @@ describe("CLI composition root", () => {
 			], { cwd, cleanup: false, args: ["--continue"] });
 
 			expect(second.code).toBe(0);
-			expect(second.stdout).toContain("mini-agent (stage 9)");
+			expect(second.stdout).toContain("mini-agent (stage 10)");
 			expect(second.stdout).toContain("resumed");
 			expect(second.stdout).toContain(sessionPath);
 			expect(second.requests).toHaveLength(1);
@@ -215,4 +217,46 @@ describe("CLI composition root", () => {
 		expect(result.stderr).toContain("--continue");
 		expect(result.requests).toEqual([]);
 	});
+
+	// 阶段 10：/compact 是命令不是 submission；ANTHROPIC_CONTEXT_WINDOW 可覆盖窗口。
+	it("treats /compact as a command, not a submission", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "mini-stage10-compact-"));
+		try {
+			const result = await runCli("/compact\n/exit\n", [], { cwd, cleanup: false });
+			expect(result.code).toBe(0);
+			expect(result.requests).toHaveLength(0);
+			expect(result.stdout).toContain("mini-agent (stage 10)");
+			expect(result.stdout).toContain("nothing to compact");
+			const directory = join(cwd, ".mini-agent", "sessions");
+			const [file] = await readdir(directory);
+			const entries = (await readFile(join(directory, file!), "utf8"))
+				.trimEnd().split("\n").slice(1)
+				.map((line) => JSON.parse(line) as { type: string });
+			expect(entries.some(({ type }) =>
+				type === "submission" || type === "compaction"
+			)).toBe(false);
+		} finally {
+			await rm(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("accepts a valid ANTHROPIC_CONTEXT_WINDOW", async () => {
+		const result = await runCli("hello\n/exit\n", [
+			{ body: await fixture("text") },
+		], { env: { ANTHROPIC_CONTEXT_WINDOW: "256000" } });
+		expect(result.code).toBe(0);
+		expect(result.requests).toHaveLength(1);
+	});
+
+	it.each(["0", "-5", "1.5", "abc"])(
+		"rejects ANTHROPIC_CONTEXT_WINDOW=%s before starting",
+		async (value) => {
+			const result = await runCli("/exit\n", [], {
+				env: { ANTHROPIC_CONTEXT_WINDOW: value },
+			});
+			expect(result.code).not.toBe(0);
+			expect(result.stderr).toContain("ANTHROPIC_CONTEXT_WINDOW");
+			expect(result.requests).toEqual([]);
+		},
+	);
 });
