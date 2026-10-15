@@ -1,203 +1,295 @@
-# 交接文档 —— 2026-10-10 收工
+# Stage 9 Execution Handoff — 2026-10-15
 
-> 给明天（以及任何 fresh context）的自己读。**不需要读这个会话的历史。**
-> 仓库：`D:\project\harness\mini-agent-v3`（对标 `D:\project\harness\pi`）
-> spec：`docs/specs/2026-10-09-mini-agent-v3-design.md`（905 行，13 阶段严格线性）
-> 当前分支 `stage-3-streaming`（`master` 与 `stage-2-tools-and-loop` 都停在 `569b72c`，阶段 1/2 的提交在这条线上）；工作树干净
+> Repository: `WilliamXie0813/mini-agent-v3`  
+> Branch: `stage-9-session-persistence`  
+> Base: `dca4381` (`origin/master` when Stage 9 started)  
+> Plan: `docs/plans/2026-10-14-stage-9-session-persistence.md`  
+> SDD ledger: `.superpowers/sdd/2026-10-14-stage-9-session-persistence/progress.md`
 
----
+## 1. Current status
 
-## 1. 一句话状态
+Execution was paused at the user's request because the session quota was nearly exhausted.
 
-**阶段 3「流式」已完成并提交（5 个 commit），全绿；它的回测答案还没写，另外留了一个已知 latent bug 要在阶段 4 之前修。**
+**Tasks 1–6 are implemented and committed. Task 7 was started but no Stage 9 learning document or verification commit has been created.**
 
-下一步不是阶段 4 的代码，是**回测阶段 3**（spec §7.4 第 2 项是学习的主载体，`docs/stages/03-streaming.md` 已经写好四问，答案要你自己先答）。
+The branch was clean at `9e3c493` before this handoff file was updated. No runtime or test changes are currently uncommitted.
 
----
+Remaining work:
 
-## 2. 怎么在 30 秒内确认状态没坏
+1. Task 7 — write `docs/stages/09-session-persistence.md`, run full acceptance and structural checks, commit.
+2. Task 8 — create the user-requested tested interactive Stage 9 teaching HTML.
+3. Run one fresh whole-branch code review and one Critical/Important fix pass.
+4. Run final verification and finish the development branch.
 
-```bash
-cd /d/project/harness/mini-agent-v3
-pnpm test      # 期望：ai 26 passed / core 40 passed，0 failed
-pnpm check     # 期望：无输出（3 个包的 tsc --noEmit 都过）
-pnpm dev       # 期望：看到 banner "mini-agent (stage 3)"，输入 hello 后逐字打印
-```
+## 2. Completed commits
 
-若 `pnpm dev` 里 `Hello from the deterministic fake model.` 是**一次跳出**而不是逐字，检查 `packages/cli/src/index.ts:12` 的 `{ delayMs: 25 }` 是否还在。
-
-**注意 `pnpm dev` 是 TTY 交互的**——想非交互验证用管道：
-
-```bash
-printf 'hello\n/exit\n' | pnpm dev
-```
-
----
-
-## 3. 阶段 3 交付了什么（8 个 commit）
-
-| commit | 内容 |
+| Commit | Deliverable |
 |---|---|
-| `c15de4f` | `feat(stage-3): EventStream with push/end/result` |
-| `f36af37` | `feat(stage-3): push-based StreamFn and the delta/partial event shape` |
-| `403d1a3` | `feat(stage-3): fake model streams text deltas` |
-| `dbc9ac2` | `feat(stage-3): loop consumes deltas, only done enters history` |
-| `4bae545` | `feat(stage-3): CLI prints deltas as they arrive` |
-| `ecf3e8b` | `docs(stage-3): why deltas never enter the message history` |
-| `073d35d` | `fix(stage-3): contain pump failures with a catch-all end()` |
-| `c5bc912` | `fix(stage-3): treat a mid-stream abort as a stop, not a broken provider` |
-| `b8b46a5` | `style(stage-3): reflow long signatures and error construction` |
+| `6674290` | `docs(stage-9): add session persistence plan` |
+| `c00f211` | `feat(stage-9): add durable append-only session journal` |
+| `92e5497` | `feat(stage-9): commit tool intents before execution` |
+| `b860ede` | `feat(stage-9): persist agent runs with idempotent submissions` |
+| `590cea8` | `feat(stage-9): reopen and branch session history` |
+| `3112062` | `feat(stage-9): recover interrupted tool executions` |
+| `9e3c493` | `feat(stage-9): resume the latest session from the CLI` |
 
-### 本阶段唯一的结构性改动
+Do not redo Tasks 1–6. Trust the commits and the SDD ledger.
 
-`StreamFn` 的返回值从 `AsyncGenerator<AssistantMessageEvent>` 换成了 `AssistantMessageEventStream`（推模型）。
+## 3. What is implemented
 
-**为什么**（这是回测第 2 问，先自己答再看这里）：`AsyncGenerator` 是拉模型，消费者不 `next()` 生产者就停——阶段 7 的 Anthropic SSE socket 按网络节奏吐字节，字节没地方放。且最终消息要从迭代的 `return` 值里抠，而 `for await` 会吃掉 `return` 值。`EventStream` 的 `result()` 是与迭代**并行**的第二个出口。
+### 3.1 Durable append-only journal
 
-Pi 的两处证据：`pi/packages/ai/src/providers/faux.ts:523`（`queueMicrotask` 推送泵，生产者跑在自己的任务里）、`pi/packages/agent/src/agent-loop.ts:403-414`（先拿 `response`、定义 `result()`、**然后**才 `for await`——同时持有两个句柄）。
+New files:
 
-### 当前接口（`packages/ai/src/`）
+- `packages/core/src/session-types.ts`
+- `packages/core/src/session-journal.ts`
+- `packages/core/test/session-journal.test.ts`
+
+Behavior:
+
+- Sessions live at `.mini-agent/sessions/<epochMs>_<uuid>.jsonl`.
+- First line is `SessionHeader { type:"session", version:1, id, createdAt }`.
+- Every append writes one JSON line, calls `FileHandle.sync()`, then updates in-memory state.
+- Entries use `id` / `parentId`; `branch(fromId)` only moves the in-memory leaf.
+- Old bytes are never rewritten.
+- Loader tolerates one malformed, non-newline-terminated tail fragment.
+- Loader rejects complete bad JSON, middle corruption, bad version, duplicate IDs and missing parents.
+- Concurrent appends are serialized.
+
+### 3.2 Commit-before-execute seam
+
+Modified files:
+
+- `packages/core/src/tool.ts`
+- `packages/core/src/execute-tool-calls.ts`
+- `packages/core/src/execute-tool-calls-parallel.ts`
+- Agent/loop/options/index wiring and related tests
+
+New interface:
 
 ```ts
-// types.ts:50-54 —— 3 个变体（Pi 有 12 个，其余是阶段 7 的）
-export type AssistantMessageEvent =
-	| { type: "start"; partial: AssistantMessage }
-	| { type: "text_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
-	| { type: "done"; message: AssistantMessage };
-
-// stream-fn.ts:7 —— 注意返回类型
-export type StreamFn = (context: StreamContext, signal?: AbortSignal) => AssistantMessageEventStream;
-export type StreamDeltaHandler = (delta: string) => void;
-
-// stream-fn.ts:28 —— 事件消费的唯一实现，放在 ai 不放在 core
-export async function consumeAssistantMessage(
-	stream: AssistantMessageEventStream,
-	onDelta?: StreamDeltaHandler,
-): Promise<AssistantMessage>;
-
-// event-stream.ts:29 / :107
-export class EventStream<T, R = T> implements AsyncIterable<T> {
-	constructor(isComplete: (event: T) => boolean, extractResult: (event: T) => R);
-	push(event: T): void;
-	end(result?: R): void;
-	result(): Promise<R>;
-	[Symbol.asyncIterator](): AsyncIterator<T>;
+interface CommitToolIntentContext {
+	assistantMessage: AssistantMessage;
+	toolCall: ToolCall;
+	tool: ToolDef<any>;
+	args: Record<string, unknown>;
+	sourceIndex: number;
 }
-export class AssistantMessageEventStream extends EventStream<AssistantMessageEvent, AssistantMessage>;
-
-// core/src/agent-loop.ts:20 —— 新增的唯一字段
-onDelta?: StreamDeltaHandler; // 流式增量只给 UI 看；入历史的永远是 done 携带的那条消息
 ```
 
-### 三条贯穿全阶段的不变式
+Rules:
 
-1. **delta 只给 UI，只有 `done` 携带的消息进历史。** 40 个 delta 描述的是 1 条 assistant 消息。
-2. **字段名分两种**：delta 类变体用 `partial`（还在长的那份，不是快照），`done` 用 `message`。
-3. **`consumeAssistantMessage` 用 `done` 事件而不是 `result()`**——`done` 里那条就是权威消息，多一次 `await` 不带来信息。`result()` 留给宿主代码与测试。
+- Hook runs only after prepare succeeds.
+- Sequential: prepare → durable intent hook → execute.
+- Parallel: all prepare + intent hooks finish in source order before any execute begins.
+- Hook failure is infrastructure failure; it is not converted into a model-visible tool error.
 
----
+### 3.3 AgentSession
 
-## 4. ✅ 已修：中途 abort 挂死（2026-10-11 修完，第二步未提交）
+New file:
 
-**原先的状态**：signal 在流式过程中被 abort 时 `agentLoop` 永久不 resolve（探针 5000ms 超时 + unhandled `AbortError`）。
+- `packages/core/src/agent-session.ts`
 
-**根因**：`node:timers/promises` 的 `setTimeout(delayMs, undefined, { signal })` 在 abort 时 **reject** `AbortError`。它跑在 detach 的 `queueMicrotask(async () => {...})` 泵里，没人 await——异常变成 unhandled rejection 飘走，`stream.end()` 永不执行，消费者的 `for await` 停在等待者 promise 上。（顺带：泵里那个 `if (signal?.aborted)` 检查在 `delayMs > 0` 与 `=== 0` 两个分支**都是死代码**，前者被 await 先抛，后者整段同步跑完没有插入时机。）
+Behavior:
 
-修的过程分两步，**第一步不是我修的**：
+- Wraps `Agent`; callers cannot bypass persistence with direct `prompt()`.
+- Submission is durable before `Agent.prompt()`.
+- Same `requestId` is idempotent in memory and across the full journal.
+- Internal awaited listener persists assistant/toolResult messages, tool updates/outcomes and run end before external subscribers see the corresponding events.
+- Initial and incremental SystemMessages are journaled.
+- Model-visible tool changes are journaled before Agent state changes.
+- `open()`, `openLatest()` and `branch()` rebuild Agent state from the active ancestor path.
+- External subscriptions survive branch-driven Agent replacement.
 
-### 第一步：`fake.ts` 的 catch-all（commit `073d35d`，已提交）
+### 3.4 Crash recovery
 
-整个泵体包进 `try { … } catch { stream.end() }`。挂死当场消失：`end()` 让消费者正常收尾，unhandled rejection 也没了。**实测 `agentLoop` 45ms 内 settle。**
+New files:
 
-### 第二步：`agentLoop` 把中止当故障报（本次修，未提交）
+- `packages/core/src/session-recovery.ts`
+- `packages/core/test/session-recovery.test.ts`
+- `packages/core/test/session-process.test.ts`
+- `packages/core/test/fixtures/session-process.ts`
 
-第一步之后不挂了，但**收尾方式是错的**——`agentLoop` 会 reject：
+Behavior:
 
-```
-Error: assistant stream ended without a done event
-  at consumeAssistantMessage (../ai/src/stream-fn.ts:48:9)
-  at agentLoop (src/agent-loop.ts:54:19)
-```
+- `AgentSession.open()` runs recovery before constructing the resumed Agent.
+- Safe pending intent replays only when current tool declaration still matches and remains `replay:"safe"`.
+- Unsafe/missing/changed tools do not rerun; committed partial outputs are retained and an interrupted error is appended.
+- Durable outcome without durable toolResult message only restores the message; execute is not repeated.
+- Tool results are restored in assistant source order even when outcomes completed in a different order.
+- ToolCall IDs reused by an earlier turn do not mask the latest turn.
+- Assistant toolCall without durable intent gets an explicit “did not reach durable execute boundary” result.
+- Missing run end after a final assistant is restored from its stop reason.
+- Recovery stops at a complete turn boundary and does not automatically call the model.
+- Real subprocess tests use `SIGKILL` for completed sessions and safe/unsafe tool execution.
 
-两个问题，其实是同一个：
+### 3.5 CLI `--continue`
 
-1. **Ctrl+C 被打成 provider 故障。** 那条错误是留给「provider 没发 done 就结束」的契约违反用的。中止是用户意图，不是契约违反——用户按停却看到一句像 bug 的报错。
-2. **用户那一轮被整个丢掉。** 探针实测：abort 后 `messages` 只剩 `[{role:"user", text:"hi"}]`，assistant 回复蒸发。而 `agent-loop.ts:28` 和 `:45` 两处 abort 检查点都是 `return options.messages`——**abort 在本项目里是 return，不是 throw**，只有流内这一处例外。
+Modified:
 
-修法（`packages/core/src/agent-loop.ts:54-68`）：把 `consumeAssistantMessage` 包进 try，catch 里查 `options.signal?.aborted`，是中止就 `return options.messages`，否则原样 `throw`。三处检查点语义就此统一。
+- `packages/cli/src/index.ts`
+- `packages/ai/test/anthropic-cli.test.ts`
 
-半截消息**不进历史**（它不满足「只有 done 进历史」），所以终端上留着半句、历史里没有对应的半条——这个不一致是有意的，中止时那半句本来就不是一个完整的模型输出。
+Behavior:
 
-新测试：`core/test/agent-loop.test.ts` 的 `"returns instead of rejecting when aborted mid-stream, keeping the user turn and no half message"`。**已验证它在没有这个修复时会失败**（`git stash` 掉 src 改动实跑过），不是摆设。
+- CLI now uses `AgentSession`.
+- Default invocation creates a session.
+- `--continue` opens the newest session under the current cwd.
+- Each input gets `crypto.randomUUID()` as requestId.
+- Banner is Stage 9 and prints created/resumed session path.
+- Unknown arguments and `--continue` without a session fail explicitly.
+- Existing real-provider text/tool/error subprocess tests remain.
 
-### 留下的语义尾巴（阶段 4 结算）
+## 4. Verification evidence already obtained
 
-中止现在表现为「静默 return」。阶段 4 有了 `AgentEvent` 之后，UI 需要知道「这轮以 aborted 结束」才能把终端那半句收个尾（补换行、打 `^C` 标记）。那时该走 `error` / `aborted` 事件变体（Pi 的 `ai/src/types.ts:817`），而不是让 `agentLoop` 的返回值兼职表达这件事。**本次没动它，是刻意的。**
+Per-task completion is recorded in the SDD ledger.
 
----
+Latest relevant runs before pause:
 
-## 5. 下一个阶段要读什么（阶段 4「事件分层与生命周期」）
+- Task 1: Core journal selector passed, 159 Core tests in that run.
+- Task 2: intent-hook selectors passed, 163 Core tests in that run.
+- Task 3: AgentSession selector passed, 173 Core tests in that run.
+- Task 4: AgentSession selector passed, 176 Core tests in that run.
+- Task 5: full Core suite passed: **190 tests, 0 failures**; Core `tsc --noEmit` passed.
+- Task 6: full AI suite invoked by the selector passed: **150 tests, 0 failures**; CLI `tsc --noEmit` passed.
+- Real child-process tests passed:
+  - two completed rounds → SIGKILL → resume → third round;
+  - safe tool execution count `1 → 2`;
+  - unsafe tool execution count remains `1`, with partial + interrupted result.
 
-spec §5 的阶段 4 块 + §4.5（`AgentEvent` 联合类型在 spec 第 183-187 行附近）。阶段 4 的范围从 spec 抄：
+**Not yet run after Task 6:**
 
-- 新概念：**`AgentEvent` 分层 + `Agent` 类**
-- 决策点：为什么 `AgentEvent` 要分这么多层，而不是直接复用 `AssistantMessageEvent`？
-- 已验证的相关事实：Pi 的 `AgentEvent` 联合在 `pi/packages/agent/src/types.ts:516-539`；Pi 的循环里 `start` 会把 partial **推进 `context.messages`**、9 个 delta 变体逐个 `emit({type:"message_update", assistantMessageEvent: event, message: {...partialMessage}})`（`pi/packages/agent/src/agent-loop.ts:414-441`）。
-
-**字段名问题已在 2026-10-11 结清（spec 已改）**：`message_update` 的顶层字段是 **`message`**（快照，`{ ...partialMessage }`），内层是 **`assistantMessageEvent`**。原先 spec 内部三处不一致——第 183 行写 `{ message; event }`，阶段 3 验收 #4 却写「`message_update` 的 `partial`」。两处都改了：
-
-- 第 183 行 `event` → `assistantMessageEvent`（对齐 Pi 与类型名）。
-- 顶层保持 `message`：`message_start`/`message_update`/`message_end` 必须同名字段，否则 UI reduce 与持久化要写特判分支（与 spec 第 196 行「工具结果不给 UI 特判」同一意图）。`partial` 在 v3 里是**阶段 3 `AssistantMessageEvent` 自己**的字段名，指的是「还在长、被就地变更」的那一份——与 agent 层的快照是两种东西。
-- 原阶段 3 验收 #4 **移到阶段 4**（现在是阶段 4 验收 #5），改写为断言 `message_update` 的 `message` 与 `message_end` 的 `message` 一致。**理由：`message_update` 在阶段 3 根本不存在**（阶段 3 的出口只有 `onDelta`），那条断言在阶段 3 任何字段名下都验不了。
-
-> ⚠️ 交班时我在这一节写错了一句：「对齐 Pi 的 `{partial, assistantMessageEvent}`」。**Pi 顶层是 `message` 不是 `partial`**，我把阶段 3 验收 #4 的错字段名反向安到了 Pi 头上。以本文档现在这段为准。
-
----
-
-## 6. 待办清单（明天按顺序）
-
-- [ ] **提交未跟踪的计划文档**：`docs/plans/2026-10-10-stage-3-streaming.md`（唯一未跟踪文件）。建议 `git add` 后一次 `docs(stage-3): implementation plan`。
-- [ ] **回测阶段 3**（学习主载体）：读 `docs/stages/03-streaming.md`，先自己答四问，再写 `docs/stages/03-回测答案.md`。格式照抄 `docs/stages/01-回测答案.md`（每题：一句话 + 拆开几层 + Pi 行号 + 反面情形 + 小结表）。四问：
-  1. 为什么 delta 事件不进消息历史，只有 `done` 携带的消息进？
-  2. 为什么 `StreamFn` 必须从 `AsyncGenerator` 换成 `EventStream`？
-  3. 为什么 delta 的字段叫 `partial` 而不是 `message`？（提示：最后一刻两者内容相同，为什么仍是两个名字）
-  4. 为什么 provider 没发 `done` 就结束时要抛具名错误，而不是返回空消息兜底？
-- [x] ~~**修 §4 的 abort 挂死 bug**~~ —— 2026-10-11 已修完（`073d35d` 的 catch-all + 本次 `agentLoop` 的 abort 语义修正），未提交。
-- [ ] **阶段 4 计划生成**（用户会主动说「开始阶段 4 的计划」）。
-- [ ] 可选：`docs/stages/02-tools-and-loop.md` 存在但**没有**对应的 `02-回测答案.md`（阶段 1 有、阶段 3 引用了但还没写）。若想补齐学习闭环，阶段 2 的回测也还没做。
-
----
-
-## 7. 工作方式约定（这个项目的学习契约）
-
-- **Claude 实现（或写计划），用户学设计思路，阶段之间做回测（苏格拉底式问答）。** 每个阶段交付：可运行的程序 + `docs/stages/NN-<name>.md` + 一次 commit。
-- **计划文档放 `docs/plans/YYYY-MM-DD-stage-N-<slug>.md`**（不是 superpowers 默认的 `docs/superpowers/plans/`——spec §7.1 只列 `docs/specs/` 和 `docs/stages/`）。
-- **阶段文档四段结构**：这个阶段解决了什么问题 / Pi 的哪条决策是答案（带行号） / 替代方案为什么更差 / 决策点（供回测）+ 已知代价 + 实施中发现的偏差留档。
-- **commit 前缀**`feat(stage-NN):` / `docs(stage-NN):` / `fix(stage-NN):`，结尾带 `Co-Authored-By: Claude Code <noreply@anthropic.com>`。
-- 用户的完整实现历史：阶段 1 的 6 个 commit（`274521c`..`d471ec5`）、阶段 2 的 11 个（`cc5f635`..`f9a6c0b`）、阶段 3 的 6 个（`c15de4f`..`ecf3e8b`）。
-
-## 8. 硬约束（写代码前必看）
-
-- **零运行时依赖**：所有包 `dependencies` 为空（`cli` 只有两个 workspace 依赖）。
-- **`erasableSyntaxOnly: true`**：禁 `enum`、**构造函数参数属性**（`constructor(private x: number)` → `TS1294`）、`namespace`；类型导入必须 `import type`。**已实测合法**：`protected` 字段、`readonly #私有` 字段、`override` 方法。
-- **跨包导入用包名，包内相对导入带 `.ts` 后缀**；tab 缩进；每个 `src` 文件 < 200 行（当前最大 `event-stream.ts` 138 行）。
-- **`grep -rn "fake\|anthropic" packages/core/src/` 必须为空**——core 不认识任何 provider 实现，这是可机器验证的边界，不是口头承诺。
-- **`pnpm dev` 走 `node --experimental-strip-types`，不走 vitest**（阶段 4 需要真实 TTY 与 Ctrl+C，阶段 9 需要 kill 进程）。
-- **注释解释「为什么」，不解释「是什么」。**
-
-## 9. 当前代码规模
-
-```
-packages/ai/src/event-stream.ts    138   ← 本阶段新增，最大文件
-packages/core/src/tools.ts         130
-packages/core/src/agent-loop.ts    113   ← 本阶段 −3 行（消费逻辑抽去了 ai）
-packages/ai/src/fake.ts            103   ← 本阶段 +58，含 §4 的 bug
-packages/core/src/execute-tool-calls.ts  89
-packages/cli/src/index.ts           71
-packages/ai/src/types.ts            54
-packages/ai/src/stream-fn.ts        44
-packages/core/src/tool.ts           24
-源码合计约 638 行；测试 6 个文件 66 个用例（ai 26 / core 40）
+```bash
+pnpm test
+pnpm check
 ```
 
-阶段 3 源码增量约 250 行，与 spec 的预算一致。
+Do not claim whole-workspace final green until those commands are rerun.
+
+## 5. Important unresolved finding
+
+The Stage 9 plan targeted roughly 400 new source lines. Current Stage 9 source growth is substantially larger:
+
+```text
+packages/core/src/session-journal.ts   206 lines
+packages/core/src/session-recovery.ts  210 lines
+packages/core/src/session-types.ts      49 lines
+packages/core/src/agent-session.ts     350 lines
+session-related total                  815 lines
+```
+
+This was discovered at the start of Task 7 and has **not been ruled on or refactored**.
+
+Next session must make and record one explicit decision:
+
+1. Refactor duplicated responsibilities and bring the implementation closer to the Stage 9 budget; or
+2. Accept the larger implementation because fsync validation, crash-window recovery and real process tests require it, documenting the cost in the ledger and Stage 9 learning document.
+
+Do not silently ignore this deviation.
+
+## 6. Other review-sensitive areas
+
+- `agent-session.ts` is 350 lines and owns several responsibilities. A reviewer may recommend splitting event persistence, submission state or Agent rebuilding.
+- `session-journal.ts` validates base structure but intentionally does not deeply validate every payload shape at load time. Later consumers and TypeScript own payload semantics; review whether stronger runtime validation is needed.
+- A crash after submission but before any assistant message currently leaves a user-only unfinished run; recovery focuses on tool ambiguity and final-assistant/run-end gaps.
+- Session creation can leave a header-only file if the process dies before the initial SystemMessage append.
+- `branch()` defaults reopen to the physically latest appended leaf, which matches the plan.
+- No `/fork`, interactive branch selector, compaction or provider auto-resume is implemented.
+
+These are review targets, not confirmed bugs.
+
+## 7. Exact resume procedure
+
+1. Confirm branch and worktree:
+
+```bash
+git branch --show-current
+git status --short --branch
+git --no-pager log --oneline -8
+```
+
+Expected branch: `stage-9-session-persistence`.
+
+2. Read:
+
+```text
+docs/HANDOFF.md
+docs/plans/2026-10-14-stage-9-session-persistence.md
+.superpowers/sdd/2026-10-14-stage-9-session-persistence/progress.md
+.superpowers/sdd/2026-10-14-stage-9-session-persistence/task-7-brief.md
+```
+
+3. Resolve and ledger the source-budget finding before marking Task 7 complete.
+
+4. Write `docs/stages/09-session-persistence.md` with:
+
+- problem solved;
+- Pi decision;
+- alternatives and costs;
+- append-only/tree/commit-before-execute explanation;
+- level-2 recovery boundary;
+- torn-tail behavior;
+- partial output behavior;
+- `/fork` non-goal;
+- five review questions.
+
+5. Run:
+
+```bash
+pnpm test
+pnpm check
+pnpm list -r --depth 0 --prod
+git grep -n 'writeFile\|truncate\|rename' -- packages/core/src/session-*.ts
+git grep -n 'ANTHROPIC_API_KEY\|x-api-key' -- packages/core/src/session-*.ts || true
+git grep -n 'replay:' -- packages/core/src/tools.ts
+wc -l packages/core/src/session-*.ts packages/core/src/agent-session.ts
+git diff --numstat dca4381 -- 'packages/*/src/*.ts'
+```
+
+6. Commit Task 7:
+
+```bash
+git add docs/stages/09-session-persistence.md
+git commit -m $'docs(stage-9): explain append-only recovery semantics\n\nCo-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>'
+```
+
+Then run the Task 7 `task-done` command with base:
+
+```text
+9e3c4939868ffd9649b7b3aca2299a8699290287
+```
+
+7. Task 8: create a tested interactive HTML under `docs/stages/` explaining:
+
+- what Stage 9 added;
+- why append-only and commit-before-execute matter;
+- how id/parentId branching works;
+- safe vs unsafe crash recovery;
+- an interactive journal/recovery simulator.
+
+Add a behavior test that executes the simulator JavaScript, following the Stage 7/8 teaching tests.
+
+8. Run fresh whole-branch review, fix Critical/Important findings with RED→GREEN tests, run full suite, then finish the branch.
+
+## 8. Todo state at pause
+
+| Item | State |
+|---|---|
+| Tasks 1–6 | Done |
+| Task 7 | Paused during structural checks; no doc written |
+| Task 8 teaching HTML | Pending |
+| Whole-branch review | Pending |
+| Final branch finish | Pending |
+
+## 9. Git state
+
+At pause:
+
+```text
+branch: stage-9-session-persistence
+implementation HEAD before handoff commit: 9e3c493
+base:   dca4381
+remote push: not performed
+```
+
+The handoff commit itself may be newer than `9e3c493`; no runtime or test implementation follows that commit.
