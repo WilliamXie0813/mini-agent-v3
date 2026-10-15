@@ -29,6 +29,8 @@ class Element {
 	textContent = "";
 	value = "";
 	disabled = false;
+	hidden = false;
+	open = false;
 	className = "";
 	children: Element[] = [];
 	private handlers = new Map<string, () => void>();
@@ -132,7 +134,7 @@ describe("Stage 9 journal and recovery teaching simulator", () => {
 
 	it("navigates panels and resets scenario state through real event handlers", async () => {
 		const { get, select } = await page();
-		expect(get("step-title").textContent).toBe("起点");
+		expect(get("position").textContent).toBe("1 / 7");
 		expect(get("prev").disabled).toBe(true);
 		get("next").click();
 		expect(get("journal-output").textContent).toContain('"type": "submission"');
@@ -140,7 +142,7 @@ describe("Stage 9 journal and recovery teaching simulator", () => {
 		expect(get("execution-output").textContent).toContain('"executeCalls": 2');
 		expect(get("next").disabled).toBe(true);
 		select("unsafe");
-		expect(get("step-title").textContent).toBe("起点");
+		expect(get("position").textContent).toBe("1 / 8");
 		get("timeline").children.at(-1)!.click();
 		expect(get("transcript-output").textContent).toContain("partial output");
 		expect(get("transcript-output").textContent).toContain("interrupted");
@@ -154,5 +156,92 @@ describe("Stage 9 journal and recovery teaching simulator", () => {
 		select("branch");
 		get("jump-end").click();
 		expect(get("path-output").textContent).toContain('A → D → E');
+	});
+
+	it("hides answers until revealed and asks again after any navigation", async () => {
+		const { get, select } = await page();
+		expect(get("prediction").textContent.trim()).not.toBe("");
+		expect(get("step-answer").hidden).toBe(true);
+		get("reveal").click();
+		expect(get("step-answer").hidden).toBe(false);
+		for (const id of ["next", "prev", "jump-end", "reset"]) {
+			get(id).click();
+			expect(get("step-answer").hidden).toBe(true);
+			get("reveal").click();
+			expect(get("step-answer").hidden).toBe(false);
+		}
+		select("unsafe");
+		expect(get("step-answer").hidden).toBe(true);
+	});
+
+	it("highlights only new records, including all records added during recovery", async () => {
+		const { get } = await page();
+		get("next").click();
+		get("reveal").click();
+		expect(get("delta-output").textContent).toContain('"id": "B"');
+		expect(get("delta-output").textContent).not.toContain('"id": "A"');
+		get("jump-end").click();
+		get("reveal").click();
+		for (const id of ["O", "M", "R"]) {
+			expect(get("delta-output").textContent).toContain(`"id": "${id}"`);
+		}
+		expect(get("delta-output").textContent).not.toContain('"id": "D"');
+		expect(get("journal-output").textContent).toContain('"id": "D"');
+		expect(get("history-details").open).toBe(false);
+	});
+
+	it("explains execution without a new record and recovery without another execution", async () => {
+		const { get, select } = await page();
+		for (let index = 0; index < 4; index++) get("next").click();
+		get("reveal").click();
+		expect(get("change-summary").textContent).toContain("没有新增");
+		expect(get("change-summary").textContent).toContain("工具执行次数：0 → 1");
+		expect(get("delta-output").textContent).not.toContain('"id"');
+		select("outcome");
+		get("jump-end").click();
+		get("reveal").click();
+		expect(get("delta-output").textContent).not.toContain('"type": "tool_outcome"');
+		expect(get("delta-output").textContent).toContain('"id": "M"');
+		expect(get("delta-output").textContent).toContain('"id": "R"');
+		expect(JSON.parse(get("execution-output").textContent)).toEqual({
+			executeCalls: 1,
+			modelRequests: 1,
+		});
+	});
+
+	it("explains branch and duplicate request steps without inventing records", async () => {
+		const { get, select } = await page();
+		select("dedupe");
+		get("jump-end").click();
+		get("reveal").click();
+		expect(get("delta-output").textContent).not.toContain('"id"');
+		expect(get("change-summary").textContent).toContain("没有新增");
+		expect(get("change-summary").textContent).toContain("不再请求模型");
+		select("branch");
+		for (let index = 0; index < 3; index++) get("next").click();
+		get("reveal").click();
+		expect(get("delta-output").textContent).not.toContain('"id"');
+		expect(get("change-summary").textContent).toContain("C → A");
+	});
+
+	it("guides readers through six experiments with a question on every step", async () => {
+		const { get } = await page();
+		for (const name of ["safe", "unsafe", "outcome", "branch", "dedupe", "barrier"]) {
+			expect(get("scenario").value).toBe(name);
+			expect(get("step-answer").hidden).toBe(true);
+			expect(get("history-details").open).toBe(false);
+			for (;;) {
+				expect(get("prediction").textContent.trim()).not.toBe("");
+				get("reveal").click();
+				expect(get("change-summary").textContent.trim()).not.toBe("");
+				expect(get("step-answer").hidden).toBe(false);
+				if (get("next").disabled) break;
+				get("next").click();
+				expect(get("step-answer").hidden).toBe(true);
+			}
+			get("history-details").open = true;
+			get("next-scenario").click();
+		}
+		expect(get("next-scenario").disabled).toBe(true);
 	});
 });

@@ -25,7 +25,7 @@
 	button { cursor: pointer; }
 	button:hover:not(:disabled), button.active { background: var(--ink); color: var(--paper); }
 	button:disabled { opacity: .4; cursor: not-allowed; }
-	button:focus-visible, select:focus-visible, a:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
+	button:focus-visible, select:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
 	.controls { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; margin: 15px 0; }
 	select { max-width: 100%; }
 	#timeline { display: flex; flex-wrap: wrap; gap: 7px; margin: 15px 0; }
@@ -36,6 +36,14 @@
 	table { width: 100%; border-collapse: collapse; font-size: 15px; }
 	th, td { text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); padding: 12px 8px; }
 	.note { border-left: 4px solid var(--blue); padding: 12px 18px; background: var(--panel); }
+	[hidden] { display: none !important; }
+	.question { font-size: 21px; color: var(--ink); }
+	#delta-output { border-left: 5px solid #6fce99; }
+	#change-summary { color: var(--ink); white-space: pre-line; }
+	details { margin-top: 18px; border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+	summary { cursor: pointer; font-family: system-ui, sans-serif; }
+	.reading-order { padding-left: 24px; }
+	.reading-order li { margin: 7px 0; }
 	footer { margin-top: 38px; border-top: 1px solid var(--line); font-size: 14px; }
 	@media (max-width: 760px) { .grid { grid-template-columns: 1fr; } main { padding: 25px 16px 50px; } }
 </style>
@@ -45,31 +53,57 @@
 	<header>
 		<div class="kicker">MINI-AGENT / STAGE 09 / DURABLE HISTORY</div>
 		<h1>让历史活过进程</h1>
-		<p>保存对话不难。难的是重启后知道：工具是没做，还是做了但来不及记？</p>
+		<p class="question">工具正在改文件时进程被杀，重启后你怎么知道文件改了没有？</p>
+		<p>如果没有保存结果，可能是“还没执行”，也可能是“已经改完，只是来不及记”。这页先让你遇到这个问题，再一步步看日志能证明什么、不能证明什么。</p>
 		<p><a href="09-session-persistence.md">阶段文档</a> · <a href="08-system-prompt-history-explained.html">上一阶段：System prompt 即历史</a></p>
 	</header>
 
-	<h2>01 / 从内存历史，到可恢复的事实</h2>
-	<div class="grid">
-		<article class="card"><h3>SessionJournal：完整历史只追加</h3><p>首行是 version=1 的 session header。其后每行一个 entry，带 id / parentId。先 write，再 fsync，再改变内存；完整旧记录不改、不删。残缺尾片的修复是明确批准的例外。</p><code>.mini-agent/sessions/&lt;epochMs&gt;_&lt;uuid&gt;.jsonl</code></article>
-		<article class="card"><h3>AgentSession：包住执行入口</h3><p>submission 先持久化，再 prompt。内部 awaited listener 先存 assistant、工具结果和 run_end，再让外部订阅者观察。CLI 默认新建，<code>--continue</code> 恢复当前目录最新文件。</p></article>
-	</div>
-	<pre class="flow">submission + fsync → assistant + fsync → prepare
-→ tool_intent + fsync → execute → tool_outcome + fsync
-→ toolResult message + fsync → run_end + fsync</pre>
-	<p class="note">“没有 outcome”不等于“没有副作用”。intent 是执行可能发生的证据，不是执行已经成功的证据。parallel 必须先提交全批 intent，才能启动任一 execute。</p>
+	<h2>01 / 先试几个直觉方案：哪里会出事？</h2>
+	<table>
+		<thead><tr><th>直觉方案</th><th>崩溃时会怎样</th><th>因此需要什么</th></tr></thead>
+		<tbody>
+			<tr><td>只把对话放在内存</td><td>一退出，输入、回复和工具执行线索全丢了。</td><td>把事实写进磁盘日志。</td></tr>
+			<tr><td>每次覆盖 session.json</td><td>写到一半崩溃，可能连旧历史都损坏。</td><td>只在末尾追加，完整旧记录不动。</td></tr>
+			<tr><td>工具做完再记“开始执行”</td><td>文件已改，记录却没写；看上去像从未执行。</td><td>执行前先留下“接下来可能动手”的记录。</td></tr>
+			<tr><td>没结果就全部重跑</td><td>可能把文件再改一次，把命令再执行一次。</td><td>先区分哪些工具允许重跑。</td></tr>
+		</tbody>
+	</table>
+	<p>关键不是“把所有步骤存下来就好了”，而是：<strong>先保存证据，再跨过执行边界；重启后只做证据允许的事。</strong></p>
 
-	<h2>02 / 自己走一遍崩溃窗口</h2>
-	<p>选择场景，逐步观察 durable journal、祖先路径和模型历史。此模拟器不执行真实文件 I/O、fsync、模型请求或工具；执行计数展示真实实现的语义边界。</p>
+	<h2>02 / 两张收据，回答两个不同的问题</h2>
+	<div class="grid">
+		<article class="card"><h3>intent：动手前的记录</h3><p>大白话：“参数和权限已检查，我接下来可能执行这个工具。”必须先保存它，才能真正动手。它不证明工具已经执行，更不证明执行成功。</p></article>
+		<article class="card"><h3>outcome：执行结果的记录</h3><p>大白话：“这次执行返回了什么，是成功还是报错。”保存了它，重启后就能沿用这个结果，不需要再次执行工具。</p></article>
+	</div>
+	<pre class="flow">检查参数和权限 → 保存 intent → 执行工具 → 保存 outcome</pre>
+	<p><strong>“保存”不是只写进内存。</strong>这里写入日志后还要等待 <code>fsync</code>，即要求系统把写入同步到磁盘。完成这一步，才称为 durable（已持久化）。日志 journal 就是这本逐条追加的记录簿。</p>
+	<p>如果停在 intent 和 outcome 之间，我们只知道“可能动过手”。这时看工具作者的 <code>replay</code>（重跑策略）声明：</p>
+	<div class="grid">
+		<article class="card"><h3>safe：作者允许再执行一次</h3><p>例如 read 读取文件。当前工具仍声明 safe、且声明与日志中一致时才重跑。但文件可能已经变了，因此第二次读出的内容不一定相同。</p></article>
+		<article class="card"><h3>unsafe：不能冒险自动再执行</h3><p>例如 edit 改文件、bash 跑命令。不知道第一次是否完成，就不再动手；保留已有输出，并明确报告中断。未声明策略时也按 unsafe 处理。</p></article>
+	</div>
+	<p class="note">safe 不是“只执行一次”的保证。第一次可能执行了，恢复时又执行一次；所谓 exactly-once，指副作用恰好发生一次，这份本地日志不能对外部工具作出这个承诺。</p>
+
+	<h2>03 / 先猜，再看这一步留下什么</h2>
+	<p>每步先回答一个小问题，再点“揭示答案与变化”。优先看本步变化；完整日志和模型历史在折叠区，需要时再展开。这里不执行真实文件 I/O、fsync、模型请求或工具。</p>
+	<ol class="reading-order">
+		<li><strong>safe：</strong>有 intent、无 outcome，且允许重跑。</li>
+		<li><strong>unsafe：</strong>同样没有 outcome，换成不能冒险重跑的工具。</li>
+		<li><strong>outcome：</strong>如果崩溃晚一点，结果已经保存，还用重跑吗？</li>
+		<li><strong>branch：</strong>理解恢复后，再看同一份日志如何保留两条对话。</li>
+		<li><strong>dedupe：</strong>换分支或重启后，重复请求会不会再执行？</li>
+		<li><strong>barrier：</strong>最后把一个工具推广到并行的一批工具。</li>
+	</ol>
+	<p>前三项比较的是同一条“intent → 执行 → outcome”时间线的三种恢复情况；工具和崩溃时机不同，不是要把同一个工具的策略中途改掉。</p>
 	<div class="controls">
 		<label for="scenario">实验场景</label>
 		<select id="scenario">
-			<option value="safe">safe：执行中崩溃，允许重跑</option>
-			<option value="unsafe">unsafe：保留 partial，不重跑</option>
-			<option value="outcome">outcome 已写：只补 message</option>
-			<option value="branch">branch：同文件的两条历史</option>
-			<option value="barrier">parallel：第二条 intent fsync 失败</option>
-			<option value="dedupe">requestId：重启／分支后仍去重</option>
+			<option value="safe">1 / safe：执行中崩溃，允许重跑</option>
+			<option value="unsafe">2 / unsafe：保留已有输出，不重跑</option>
+			<option value="outcome">3 / outcome 已写：只补结果消息</option>
+			<option value="branch">4 / branch：同文件的两条历史</option>
+			<option value="dedupe">5 / requestId：重启／分支后仍去重</option>
+			<option value="barrier">6 / parallel：第二条 intent 保存失败</option>
 		</select>
 	</div>
 	<div class="controls">
@@ -79,17 +113,48 @@
 	</div>
 	<nav id="timeline" aria-label="实验时间线"></nav>
 	<article class="card" aria-live="polite">
-		<h3 id="step-title"></h3><p id="explanation"></p><strong id="decision"></strong>
-		<p id="error-output" role="status"></p>
+		<h3 id="step-title"></h3>
+		<p id="scenario-context"></p>
+		<p class="question"><strong>猜一猜：</strong><span id="prediction"></span></p>
+		<button id="reveal" aria-controls="step-answer" aria-expanded="false">揭示答案与变化</button>
+		<div id="step-answer" hidden>
+			<p id="explanation"></p>
+			<h3>这一步改变了什么？</h3>
+			<p id="change-summary"></p>
+			<pre id="delta-output" aria-label="本步新增的日志记录"></pre>
+			<p><strong id="decision"></strong></p>
+			<p id="error-output" role="status"></p>
+			<details id="history-details">
+				<summary>辅助细节：完整日志、当前路径与模型历史</summary>
+				<div class="grid" style="margin-top:18px">
+					<article class="card"><h3>完整 journal / 已保存的记录</h3><p>header 是文件开头的会话说明；下方按追加顺序排列。</p><pre id="journal-output"></pre></article>
+					<article class="card"><h3>当前对话路径</h3><p>leaf 是当前末端记录；parentId 指向上一条记录。沿这些指针往回找，才是当前对话，不是简单读文件末尾。</p><pre id="path-output"></pre><h3 style="margin-top:18px">累计调用次数</h3><pre id="execution-output"></pre></article>
+					<article class="card"><h3>模型 transcript / 模型看到的对话</h3><p>submission（用户提交记录）还原成 user；intent/update/outcome 是恢复证据，不直接进入模型。工具结果以 toolResult 消息交给模型。</p><pre id="transcript-output"></pre></article>
+					<article class="card"><h3>恢复后会继续问模型吗？</h3><p>不会。恢复只补齐这一轮已有工具调用的结果和结束记录，然后等新的用户输入。执行次数不是已保存结果的数量。</p></article>
+				</div>
+			</details>
+		</div>
 	</article>
-	<div class="grid" style="margin-top:18px">
-		<article class="card"><h3>物理 journal / durable entries</h3><p>header 单列展示；下方记录按追加顺序排列。</p><pre id="journal-output"></pre></article>
-		<article class="card"><h3>当前祖先路径 / active leaf</h3><pre id="path-output"></pre><h3 style="margin-top:18px">执行与模型请求</h3><pre id="execution-output"></pre></article>
-		<article class="card"><h3>模型 transcript</h3><p>submission 变成 user；intent/update/outcome 不直接进入模型。</p><pre id="transcript-output"></pre></article>
-		<article class="card"><h3>现在最值得区分什么？</h3><p>执行次数与 durable 结果不是同一个量。safe 可以 execute 两次；unsafe 一次后状态未知；有 outcome 时没有理由再次 execute。</p><p>恢复不自动调模型，补齐 turn 后等待新的用户输入。</p></article>
+	<div class="controls">
+		<button id="next-scenario">继续下一个实验</button>
+		<span id="scenario-position"></span>
 	</div>
 
-	<h2>03 / 树不是文件最后几行</h2>
+	<h2>04 / 从实验归纳恢复规则</h2>
+	<p>恢复不是猜工具“应该做完了”，而是根据磁盘上最后保存的证据决定下一步。partial 是执行中已观察并保存的部分输出，不是完成证明。</p>
+	<table>
+		<thead><tr><th>日志证据</th><th>恢复动作</th><th>为什么</th></tr></thead>
+		<tbody>
+			<tr><td>assistant 请求工具，但没有 intent</td><td>补“未到执行边界”的错误结果</td><td>检查通过且 intent 保存成功前，不允许执行</td></tr>
+			<tr><td>safe intent，没有 outcome</td><td>声明匹配且当前仍 safe 才重跑</td><td>作者允许重跑，但不保证数据不变</td></tr>
+			<tr><td>unsafe／工具缺失／声明变化</td><td>保留 partial，补明确的 interrupted（中断）错误</td><td>不能把未知副作用放大成重复执行</td></tr>
+			<tr><td>outcome 已保存，没有结果消息</td><td>只补 toolResult 消息</td><td>结果已经存在，不应再执行</td></tr>
+			<tr><td>最终 assistant 已保存，没有 run_end</td><td>按 stopReason（结束原因）补这一轮的结束记录</td><td>无需再生成一次模型回复</td></tr>
+		</tbody>
+	</table>
+
+	<h2>05 / 为什么日志的最后几行不等于当前对话？</h2>
+	<p>想从旧输入之前重新尝试，不必删掉旧回复。每条记录用 <code>parentId</code> 指向它接续的上一条记录，<code>leaf</code> 则是当前对话走到的末端。branch（分支）只是把这个末端移回旧记录。</p>
 	<pre>A → B → C    旧分支仍在文件
 └→ D → E    当前 leaf = E
 
@@ -98,58 +163,54 @@
 	<p><code>branch(A)</code> 只移动内存 leaf；下一条 D 的 parentId 指向 A。reopen 默认选择物理最后一条有效 entry，再走 parent 链。全 session 的 requestId 去重读所有 entry，不只读当前路径。</p>
 	<p>若 branch 落在未完成工具的节点，新的 submit 先恢复这个 turn，再写新输入。不同请求或策略变更在持久化等待期间也互斥；不能趁 fsync 未完成偷偷改 live state。</p>
 
-	<h2>04 / 恢复规则，不是猜测</h2>
-	<table>
-		<thead><tr><th>日志证据</th><th>恢复动作</th><th>为什么</th></tr></thead>
-		<tbody>
-			<tr><td>toolCall，没 intent</td><td>补未到执行边界的 error</td><td>只有 prepare 成功后才允许提交 intent</td></tr>
-			<tr><td>safe intent，没 outcome</td><td>声明匹配且当前仍 safe 才重跑</td><td>工具作者允许重跑；不保证数据不变</td></tr>
-			<tr><td>unsafe／工具缺失／声明变化</td><td>partial + interrupted error</td><td>不能把未知副作用放大成重复执行</td></tr>
-			<tr><td>outcome，没有 message</td><td>只补 toolResult</td><td>durable 结果已经存在</td></tr>
-			<tr><td>最终 assistant，没有 run_end</td><td>按 stopReason 补 run_end</td><td>无需再生成一次模型回复</td></tr>
-		</tbody>
-	</table>
-	<p>内置 read = safe；edit / bash = unsafe；默认 unsafe。unsafe 的 partial content 是已记录的观察，不是副作用完成证明。replay 声明不能产生跨外部系统的 exactly-once。</p>
-	<p class="note">级别 2：修复到完整 turn 边界。不做任意 step checkpoint、provider 自动生成恢复、task graph、compaction、<code>/fork</code> 或 CLI 树选择器。只有 submission 的崩溃保留 user-only 历史，不自动重发。</p>
-	<p>torn tail：仅容忍末尾无换行且无法解析的一条 fragment。经用户批准，open 校验完整前缀后只截掉这个残片并 fsync；完整 JSON 仅缺最后换行时补换行。否则下一次 append 会拼进残片，导致日志无法再打开。中间坏 JSON、换行结束的坏 JSON、重复 id、缺 parent、未知版本仍必须报错。</p>
+	<p><code>requestId</code> 是一次用户请求的唯一标识。同一个标识重复提交时，返回原来的 submission，不追加、不再请求模型。即使原请求中断了，也不会靠同一个 id 自动重试；新的用户操作要用新的 id。</p>
+	<p>如果只在内存记住 requestId，重启就会忘；如果只查当前分支，切走旧分支就会漏。必须查整个 session 文件，才能避免同一个请求再次触发执行。</p>
 
-	<h2>05 / 换个设计，会失去什么？</h2>
+	<h2>06 / 看懂之后，再对照实现</h2>
 	<div class="grid">
-		<article class="card"><h3>覆盖 session.json？</h3><p>旧历史被反复触碰，写一半可能毁掉快照；branch 和审计也失去共同事实。</p></article>
-		<article class="card"><h3>execute 后再记 intent？</h3><p>最需要日志的窗口恰好没有日志：命令已跑，进程死了，重启只能猜。</p></article>
-		<article class="card"><h3>pending 全部重跑？</h3><p>可能把文件改两次，把命令执行两次。safe / unsafe 是副作用决策，不是性能选项。</p></article>
-		<article class="card"><h3>幂等键只放内存？</h3><p>一重启就忘了。同一个请求可能再次调模型和工具；按 active branch 去重也会漏掉旧分支。</p></article>
+		<article class="card"><h3>SessionJournal：保存记录</h3><p>首行是 version=1 的 session header。其后每行一个 entry（日志记录），带 id / parentId。先写入，再 fsync，再改变内存；完整旧记录不改、不删。</p><code>.mini-agent/sessions/&lt;epochMs&gt;_&lt;uuid&gt;.jsonl</code></article>
+		<article class="card"><h3>AgentSession：包住执行入口</h3><p>submission 先保存，再请求模型。内部监听器先保存 assistant、工具结果和 run_end，再通知外部订阅者。CLI 默认新建，<code>--continue</code> 恢复当前目录最新文件。</p></article>
 	</div>
+	<p>现在再看完整顺序：prepare 是执行前的参数、权限与中断检查；toolResult 是提供给模型的工具结果；run_end 标记这一轮结束。每个“保存”都要等 fsync 完成。</p>
+	<pre class="flow">保存 submission → 请求模型 → 保存 assistant → prepare
+→ 保存 tool_intent → execute → 保存 tool_outcome
+→ 保存 toolResult message → 保存 run_end</pre>
+	<p class="note">parallel（并行）多了一道全批屏障：先完成本批所有 prepare 和 intent 保存，再启动任一个 execute。第二条 intent 保存失败时，本批执行次数为 0；第一条已保存的 intent 仍留在日志里，供以后恢复判断。</p>
+	<details>
+		<summary>进阶边界：恢复到哪里，以及日志尾部损坏怎么办</summary>
+		<p>级别 2 指修复到完整 turn（这一轮输入及已有响应）的边界。不做任意 step checkpoint、provider 自动生成恢复、task graph、compaction、<code>/fork</code> 或 CLI 树选择器。只有 submission 的崩溃保留 user-only 历史，不自动重发。</p>
+		<p>torn tail（写到一半的末尾残片）：仅容忍末尾无换行且无法解析的一条 fragment。经用户批准，open 校验完整前缀后只截掉这个残片并 fsync；完整 JSON 仅缺最后换行时补换行。否则下一次 append 会拼进残片，导致日志无法再打开。中间坏 JSON、换行结束的坏 JSON、重复 id、缺 parent、未知版本仍必须报错。</p>
+	</details>
 	<footer><p>源码入口：<code>session-journal.ts</code> / <code>agent-session.ts</code> / <code>session-recovery.ts</code>。为保留 durability 与崩溃窗口规则，Task 7 明确接受 815 行会话实现；审查修复后为 859 行，超出约 400 行教学预算。</p></footer>
 </main>
 <script>
 	const systemText = "You are a minimal coding agent.";
 	const header = { type: "session", version: 1, id: "demo-session", createdAt: "2026-10-15T00:00:00.000Z" };
 	const action = (kind, title, explanation, data = {}) => ({ kind, title, explanation, ...data });
-	const submit = action("submit", "submission + fsync", "先写入 req-1，再启动模型。", { id: "B", requestId: "req-1", prompt: "Run the tool" });
-	const assistant = action("append", "assistant + fsync", "工具调用已进入历史，execute 还没有开始。", { entry: { id: "C", type: "message", role: "assistant", content: "toolCall" } });
-	const intent = (replay) => action("append", "intent + fsync", "prepare 成功后持久化 intent。", { entry: { id: "D", type: "tool_intent", assistantEntryId: "C", sourceIndex: 0, toolCallId: "call-1", tool: { name: replay === "safe" ? "read" : "bash" }, replay, args: {} } });
-	const execute = action("execute", "execute 开始", "副作用可能已经发生，尚无 durable outcome。");
-	const crash = action("crash", "SIGKILL / reopen", "内存丢失；从最后的 durable entry 重建路径。恢复不自动请求模型。");
-	const recover = (policy, content) => action("recover", "恢复 turn 边界", policy === "safe" ? "声明匹配且仍 safe：重跑并追加 outcome / message。" : policy === "outcome" ? "已有 durable outcome：只补 message，不执行。" : "unsafe：保留 partial，再追加明确的 interrupted error。", { policy, content });
+	const submit = action("submit", "保存用户输入，再请求模型", "先把用户请求 req-1 写进日志并等 fsync 完成，再启动模型。", { id: "B", requestId: "req-1", prompt: "Run the tool" });
+	const assistant = action("append", "保存模型提出的工具调用", "模型说要调用工具。这条回复已保存，但工具还没有开始执行。", { entry: { id: "C", type: "message", role: "assistant", content: "toolCall" } });
+	const intent = (replay) => action("append", "保存 intent：留下动手前的证据", "参数和权限检查通过，先保存 intent。现在有了“可能执行”的证据，仍不能据此断定已经执行。", { entry: { id: "D", type: "tool_intent", assistantEntryId: "C", sourceIndex: 0, toolCallId: "call-1", tool: { name: replay === "safe" ? "read" : "bash" }, replay, args: {} } });
+	const execute = action("execute", "工具开始执行，结果尚未保存", "此时工具可能已经读了文件或产生了副作用，但磁盘日志仍停在 intent。执行过，不代表结果已经保存。");
+	const crash = action("crash", "进程被杀，再打开日志", "内存丢失，只能从最后一条已保存记录重建当前对话路径。仅重新打开，不会自动请求模型；下一步演示恢复判断。");
+	const recover = (policy, content) => action("recover", "恢复：补齐这一轮并停下", policy === "safe" ? "当前工具仍允许重跑且声明匹配，因此再执行一次；保存结果、补工具结果消息，并标记这一轮中断。不再请求模型。" : policy === "outcome" ? "执行结果已经保存。只补交给模型的工具结果消息和这一轮结束记录，不再次执行，也不请求模型。" : "不能冒险再执行。保留已保存的部分输出，加上明确的中断错误，补齐工具结果和这一轮结束记录。文件到底改完没有仍未知。", { policy, content });
 	const scenarios = {
-		safe: { decision: "safe 允许重跑，不等于 exactly-once。", actions: [submit, assistant, intent("safe"), execute, crash, recover("safe", "read complete")] },
-		unsafe: { decision: "未知副作用不能被伪装成未执行或成功。", actions: [submit, assistant, intent("unsafe"), execute,
-			action("append", "partial + fsync", "已观察到的输出必须先存住。", { entry: { id: "U", type: "tool_update", intentId: "D", content: "partial output" } }),
+		safe: { context: "实验 1：read 读取文件时被杀。作者允许重跑，先看看为什么一次请求可能执行两次。", decision: "记住：允许重跑，不代表只执行一次，也不保证读到相同内容。", actions: [submit, assistant, intent("safe"), execute, crash, recover("safe", "read complete")] },
+		unsafe: { context: "实验 2：把读取换成 bash 命令。它可能已经修改文件，不能因为没有结果就再跑一遍。", decision: "记住：不知道副作用是否完成，就明确报告未知，而不是猜成功或重复执行。", actions: [submit, assistant, intent("unsafe"), execute,
+			action("append", "保存一段执行中的输出", "partial output 是已观察到的部分输出。保存它能保留线索，但不能证明命令已完成。", { entry: { id: "U", type: "tool_update", intentId: "D", content: "partial output" } }),
 			crash, recover("unsafe", "")] },
-		outcome: { decision: "恢复缺失的消息，不重复已经有结果的工具。", actions: [submit, assistant, intent("unsafe"), execute,
-			action("append", "outcome + fsync", "结果 durable，但 toolResult message 尚未写入。", { entry: { id: "O", type: "tool_outcome", intentId: "D", content: "durable result", isError: false } }),
+		outcome: { context: "实验 3：仍是 unsafe 工具，但这次崩溃晚一点，outcome 已经保存。", decision: "记住：已有结果时只补消息，不重复执行。", actions: [submit, assistant, intent("unsafe"), execute,
+			action("append", "保存 outcome：执行结果已有证据", "结果已写入日志并完成 fsync，但交给模型的 toolResult 消息尚未写入。", { entry: { id: "O", type: "tool_outcome", intentId: "D", content: "durable result", isError: false } }),
 			crash, recover("outcome", "")] },
-		branch: { decision: "移动 leaf，不复制文件，不删除旧后代。", actions: [
+		branch: { context: "实验 4：branch 是从旧记录另起一条对话；leaf 是当前末端，parentId 指向它接续的上一条记录。", decision: "记住：分支只移动当前末端，不复制文件，也不删除旧对话。", actions: [
 			action("submit", "旧分支输入", "先追加旧分支。", { id: "B", requestId: "old", prompt: "old branch" }),
 			action("append", "旧分支回复", "C 的 parent 是 B。", { entry: { id: "C", type: "message", role: "assistant", content: "old answer" } }),
 			action("branch", "branch(A)", "文件没变化；只有内存 leaf 回到 A。", { id: "A" }),
 			action("submit", "新分支输入", "D 追加在 C 后面，但 parent 指向 A。", { id: "D", requestId: "new", prompt: "new branch" }),
 			action("append", "新分支回复", "E 的 parent 是 D，B/C 仍存在。", { entry: { id: "E", type: "message", role: "assistant", content: "new answer" } }),
 			crash] },
-		barrier: { decision: "parallel：全部 prepare + intent commit 完成后才允许 execute。", actions: [submit, assistant, intent("safe"),
+		barrier: { context: "实验 6：parallel 是并行执行一批工具。本例关注两条 intent 的保存屏障，工具调用内容用简写表示。", decision: "记住：本批所有检查和 intent 保存都完成后，才能执行任意工具。", actions: [submit, assistant, intent("safe"),
 			action("failure", "第二条 intent fsync 失败", "第一条 intent 已 durable，第二条失败；本批 prepared tools 的 execute 次数为 0。")] },
-		dedupe: { decision: "requestId 查整个文件，重复提交只返回原 submission。", actions: [
+		dedupe: { context: "实验 5：requestId 是一次用户请求的唯一标识。即使切走旧分支，这个请求仍然存在于整份日志中。", decision: "记住：重复请求查整份文件，不只查当前对话路径。", actions: [
 			submit,
 			action("append", "完成回复", "req-1 已经请求过模型。", { entry: { id: "C", type: "message", role: "assistant", content: "answer" } }),
 			action("append", "run_end", "持久化原请求完成。", { entry: { id: "R", type: "run_end", submissionId: "B", status: "completed" } }),
@@ -178,11 +239,54 @@
 		});
 		return structuredClone({ ...state, path: ancestors.map((entry) => entry.id), transcript });
 	}
+	function predictionFor(step) {
+		if (step.kind === "submit") return "这个 requestId 是否已经存在？这次会新增输入、再次请求模型吗？";
+		if (step.kind === "execute") return "执行次数增加了，日志也一定会新增结果吗？";
+		if (step.kind === "crash") return "内存丢了以后，哪些事实还能找回来？会自动再请求模型吗？";
+		if (step.kind === "branch") return "回到 A 会删除旧记录吗？当前对话的末端会变成哪里？";
+		if (step.kind === "failure") return "第二条 intent 保存失败，第一条工具可以先执行吗？";
+		if (step.kind === "recover") return step.policy === "outcome"
+			? "结果已保存、消息没保存：应该重跑工具，还是只补消息？"
+			: step.policy === "safe"
+				? "只有 intent 没有结果，但工具仍允许重跑：执行计数最终是多少？"
+				: "工具不能冒险重跑：已有部分输出能证明完成吗？恢复时该保留什么？";
+		if (step.kind === "append") {
+			if (step.entry.type === "tool_intent") return "写下“可能动手”能证明已经动手吗？现在执行次数是多少？";
+			if (step.entry.type === "tool_update") return "看到一段输出，就能认定工具的副作用已完成吗？";
+			if (step.entry.type === "tool_outcome") return "结果已经保存后崩溃，恢复还有理由再次执行工具吗？";
+			if (step.entry.type === "run_end") return "标记这一轮结束，需要再请求模型或执行工具吗？";
+			return step.entry.content === "toolCall"
+				? "模型提出工具调用后，工具是否已经执行？"
+				: "这条回复接在哪条记录后面？旧分支还会留在文件里吗？";
+		}
+		throw new Error("Unknown prediction action: " + step.kind);
+	}
+	function describeEntry(entry) {
+		const descriptions = {
+			submission: "用户请求已保存",
+			tool_intent: "执行前的证据已保存，不是成功证明",
+			tool_update: "部分输出已保存，不是完成证明",
+			tool_outcome: "工具结果已保存",
+			run_end: "这一轮的结束状态已保存",
+			message: entry.role === "system" ? "初始系统提示已保存"
+				: entry.role === "toolResult" ? "工具结果已补成模型可读的消息"
+					: entry.content === "toolCall" ? "模型提出的工具调用已保存" : "模型回复已保存",
+		};
+		return entry.id + " / " + entry.type + "：" + descriptions[entry.type];
+	}
 	function buildTrace(scenario) {
 		const state = { entries: [], leafId: null, executions: 0, modelRequests: 0, error: "" };
 		append(state, { id: "A", type: "message", role: "system", content: systemText });
-		const trace = [{ title: "起点", explanation: "header 与初始 system message 已 durable。", after: snapshot(state) }];
+		const trace = [{
+			title: "起点：只保存了会话说明和系统提示",
+			question: "尚未输入请求，工具执行次数和模型请求次数各是多少？",
+			explanation: "都是 0。header 说明这是哪个会话；A 是初始系统提示，还没有用户请求或工具执行。",
+			added: [...state.entries],
+			changes: ["初始化会话 header；新增 1 条日志记录。", describeEntry(state.entries[0]), "工具执行 0 次；模型请求 0 次。"],
+			after: snapshot(state),
+		}];
 		for (const step of scenario.actions) {
+			const before = snapshot(state);
 			if (step.kind === "submit") {
 				if (!state.entries.some((entry) => entry.type === "submission" && entry.requestId === step.requestId)) {
 					append(state, { id: step.id, type: "submission", requestId: step.requestId, prompt: step.prompt });
@@ -217,19 +321,52 @@
 			} else {
 				throw new Error("Unknown demo action: " + step.kind);
 			}
-			trace.push({ title: step.title, explanation: step.explanation, after: snapshot(state) });
+			const added = state.entries.slice(before.entries.length);
+			const changes = [added.length ? "新增 " + added.length + " 条日志记录：" : "没有新增日志记录。"];
+			changes.push(...added.map(describeEntry));
+			if (state.leafId !== before.leafId) changes.push("当前末端：" + before.leafId + " → " + state.leafId + "。");
+			if (state.executions !== before.executions) changes.push("工具执行次数：" + before.executions + " → " + state.executions + "。");
+			if (state.modelRequests !== before.modelRequests) changes.push("模型请求次数：" + before.modelRequests + " → " + state.modelRequests + "。");
+			if (step.kind === "submit" && added.length === 0) changes.push("返回原请求，不再请求模型；执行次数不变。");
+			if (step.kind === "crash") changes.push("重新打开已保存的日志，未自动请求模型或执行工具。");
+			if (step.kind === "failure") changes.push("保存失败，本批工具执行次数仍为 0。");
+			trace.push({ title: step.title, question: predictionFor(step), explanation: step.explanation, added, changes, after: snapshot(state) });
 		}
 		return trace;
 	}
 
 	const get = (id) => document.getElementById(id);
+	const scenarioOrder = ["safe", "unsafe", "outcome", "branch", "dedupe", "barrier"];
 	let selected = "safe";
 	let trace = buildTrace(scenarios[selected]);
 	let cursor = 0;
+	let revealed = false;
+	function navigate(index) {
+		cursor = index;
+		revealed = false;
+		render();
+	}
+	function selectScenario(name) {
+		if (!scenarios[name]) throw new Error("Unknown scenario: " + name);
+		selected = name;
+		get("scenario").value = selected;
+		trace = buildTrace(scenarios[selected]);
+		get("history-details").open = false;
+		navigate(0);
+	}
 	function render() {
 		const step = trace[cursor];
 		get("step-title").textContent = step.title;
+		get("scenario-context").textContent = scenarios[selected].context;
+		get("prediction").textContent = step.question;
+		get("step-answer").hidden = !revealed;
+		get("reveal").hidden = revealed;
+		get("reveal").setAttribute("aria-expanded", String(revealed));
 		get("explanation").textContent = step.explanation;
+		get("change-summary").textContent = step.changes.join("\n");
+		get("delta-output").textContent = step.added.length
+			? step.added.map((entry) => JSON.stringify(entry, null, 2)).join("\n\n")
+			: "本步没有新增日志；变化见上方说明。";
 		get("decision").textContent = scenarios[selected].decision;
 		get("journal-output").textContent = JSON.stringify(header, null, 2) + "\n\n" + step.after.entries.map((entry) => JSON.stringify(entry, null, 2)).join("\n");
 		get("path-output").textContent = "leaf = " + step.after.leafId + "\n" + step.after.path.join(" → ");
@@ -240,27 +377,32 @@
 		get("prev").disabled = cursor === 0;
 		get("next").disabled = cursor === trace.length - 1;
 		get("jump-end").disabled = cursor === trace.length - 1;
+		const scenarioIndex = scenarioOrder.indexOf(selected);
+		get("next-scenario").disabled = scenarioIndex === scenarioOrder.length - 1;
+		get("scenario-position").textContent = "推荐顺序 " + (scenarioIndex + 1) + " / " + scenarioOrder.length;
 		get("timeline").replaceChildren(...trace.map((item, index) => {
 			const button = document.createElement("button");
 			button.textContent = (index + 1) + ". " + item.title;
 			button.className = index === cursor ? "active" : "";
 			button.setAttribute("aria-current", index === cursor ? "step" : "false");
-			button.addEventListener("click", () => { cursor = index; render(); });
+			button.addEventListener("click", () => navigate(index));
 			return button;
 		}));
 	}
 	get("scenario").value = selected;
-	get("scenario").addEventListener("change", () => {
-		selected = get("scenario").value;
-		if (!scenarios[selected]) throw new Error("Unknown scenario");
-		trace = buildTrace(scenarios[selected]);
-		cursor = 0;
+	get("scenario").addEventListener("change", () => selectScenario(get("scenario").value));
+	get("reveal").addEventListener("click", () => {
+		revealed = true;
 		render();
 	});
-	get("prev").addEventListener("click", () => { cursor = Math.max(0, cursor - 1); render(); });
-	get("next").addEventListener("click", () => { cursor = Math.min(trace.length - 1, cursor + 1); render(); });
-	get("jump-end").addEventListener("click", () => { cursor = trace.length - 1; render(); });
-	get("reset").addEventListener("click", () => { cursor = 0; render(); });
+	get("prev").addEventListener("click", () => navigate(Math.max(0, cursor - 1)));
+	get("next").addEventListener("click", () => navigate(Math.min(trace.length - 1, cursor + 1)));
+	get("jump-end").addEventListener("click", () => navigate(trace.length - 1));
+	get("reset").addEventListener("click", () => navigate(0));
+	get("next-scenario").addEventListener("click", () => {
+		const index = scenarioOrder.indexOf(selected);
+		if (index < scenarioOrder.length - 1) selectScenario(scenarioOrder[index + 1]);
+	});
 	render();
 </script>
 </body>

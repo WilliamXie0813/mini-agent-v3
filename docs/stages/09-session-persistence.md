@@ -2,7 +2,7 @@
 
 > spec：`docs/specs/2026-10-09-mini-agent-v3-design.md` §3.2(b–c)、§5 阶段 9  
 > 计划：`docs/plans/2026-10-14-stage-9-session-persistence.md`  
-> 交互图解：[`09-session-persistence-explained.html`](09-session-persistence-explained.html)
+> 交互图解：[`09-session-persistence-explained.html`](09-session-persistence-explained.html) — 从崩溃痛点与直觉方案入手，按 safe → unsafe → outcome → branch → dedupe → barrier 逐步“先猜再揭示”；主面板突出本步新增记录，完整日志与模型历史可按需展开。
 
 ## 这个阶段解决了什么问题
 
