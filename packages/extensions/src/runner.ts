@@ -105,9 +105,26 @@ export class ExtensionRunner implements ExtensionAPI {
 		}
 	}
 
-	// 决策 hook 在 Task 3–7 逐个接上；本任务未注册任何 handler 时返回空对象。
+	// 决策 hook 逐个接上；未注册任何 handler 时返回空对象。
+	// tool_call 是短路语义：首个非 undefined 返回值生效，后续 handler 不再运行。
+	// handler 抛错只记录后重抛——prepareToolCall 会把异常转成 error result（fail-closed）。
 	sessionHooks(): SessionHooks {
-		return {};
+		const handlers = this.handlersFor("tool_call");
+		if (handlers.length === 0) return {};
+		return {
+			beforeToolCall: async (context) => {
+				for (const { name, handler } of handlers) {
+					try {
+						const result = await handler(context);
+						if (result !== undefined) return result;
+					} catch (error) {
+						this.log(`extension "${name}" handler for "tool_call" failed: ${errorMessage(error)}`);
+						throw error;
+					}
+				}
+				return undefined;
+			},
+		};
 	}
 
 	// 传给 factory 的绑定视图：私有对象字面量，方法体只做箭头函数转发。
@@ -125,5 +142,14 @@ export class ExtensionRunner implements ExtensionAPI {
 		list.push(handler);
 		this.handlers.set(event, list);
 		this.handlerOwners.set(handler, owner);
+	}
+
+	// handler 表按 Function 存储，组合决策 hook 时按注册序还原 owner 名，供错误消息使用。
+	private handlersFor(event: string): { name: string; handler: DecisionEventHandlers["tool_call"] }[] {
+		const list = this.handlers.get(event) ?? [];
+		return list.map((handler) => ({
+			name: this.handlerOwners.get(handler) ?? "unknown",
+			handler: handler as DecisionEventHandlers["tool_call"],
+		}));
 	}
 }

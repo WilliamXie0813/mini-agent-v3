@@ -1,4 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
+import { Agent } from "@mini-agent/core";
+import { createFakeStreamFn } from "@mini-agent/ai";
 import { ExtensionRunner } from "../src/runner.ts";
 
 const tool = (name: string) => ({
@@ -102,5 +104,92 @@ describe("ExtensionRunner.notify", () => {
 	test("notify before any handler is registered is a no-op", async () => {
 		const runner = new ExtensionRunner();
 		await expect(runner.notify({ type: "agent_start" })).resolves.toBeUndefined();
+	});
+});
+
+function callRead() {
+	return [{ type: "toolCall" as const, id: "c1", name: "read", arguments: { path: "a.txt" } }];
+}
+
+describe("tool_call decision hook", () => {
+	test("blocks execution and surfaces the reason as an error result", async () => {
+		const runner = new ExtensionRunner();
+		const executed = vi.fn(async () => ({ content: [{ type: "text" as const, text: "file" }] }));
+		await runner.use({
+			name: "guard",
+			factory: (api) => {
+				api.on("tool_call", () => ({ block: true, reason: "read is disabled in this demo" }));
+			},
+		});
+		const agent = new Agent({
+			system: "s",
+			tools: [{ name: "read", description: "read", parameters: {}, execute: executed }],
+			streamFn: createFakeStreamFn([callRead(), "done"]),
+			...runner.sessionHooks(),
+		});
+		await agent.prompt("go");
+		expect(executed).not.toHaveBeenCalled();
+		const result = agent.state.messages.find((m) => m.role === "toolResult");
+		expect(result).toMatchObject({ isError: true, toolName: "read" });
+		expect(result?.role === "toolResult" && result.content[0]).toEqual({
+			type: "text", text: "read is disabled in this demo",
+		});
+	});
+
+	test("handlers short-circuit on the first non-undefined result", async () => {
+		const runner = new ExtensionRunner();
+		const second = vi.fn(() => undefined);
+		await runner.use({
+			name: "first",
+			factory: (api) => { api.on("tool_call", () => ({ block: true, reason: "no" })); },
+		});
+		await runner.use({ name: "second", factory: (api) => { api.on("tool_call", second); } });
+		const agent = new Agent({
+			system: "s",
+			tools: [{ name: "read", description: "read", parameters: {}, execute: async () => ({ content: [] }) }],
+			streamFn: createFakeStreamFn([callRead(), "done"]),
+			...runner.sessionHooks(),
+		});
+		await agent.prompt("go");
+		expect(second).not.toHaveBeenCalled();
+	});
+
+	test("a handler returning undefined lets the call through to the next handler", async () => {
+		const runner = new ExtensionRunner();
+		const executed = vi.fn(async () => ({ content: [{ type: "text" as const, text: "file" }] }));
+		const seen: string[] = [];
+		await runner.use({ name: "a", factory: (api) => { api.on("tool_call", (e) => { seen.push(e.toolCall.name); }); } });
+		await runner.use({ name: "b", factory: (api) => { api.on("tool_call", () => { seen.push("b"); }); } });
+		const agent = new Agent({
+			system: "s",
+			tools: [{ name: "read", description: "read", parameters: {}, execute: executed }],
+			streamFn: createFakeStreamFn([callRead(), "done"]),
+			...runner.sessionHooks(),
+		});
+		await agent.prompt("go");
+		expect(seen).toEqual(["read", "b"]);
+		expect(executed).toHaveBeenCalledTimes(1);
+	});
+
+	test("a throwing guard fails closed: tool does not run, run continues", async () => {
+		const runner = new ExtensionRunner({ log: () => {} });
+		const executed = vi.fn(async () => ({ content: [] }));
+		await runner.use({
+			name: "broken-guard",
+			factory: (api) => { api.on("tool_call", () => { throw new Error("rule engine offline"); }); },
+		});
+		const agent = new Agent({
+			system: "s",
+			tools: [{ name: "read", description: "read", parameters: {}, execute: executed }],
+			streamFn: createFakeStreamFn([callRead(), "done"]),
+			...runner.sessionHooks(),
+		});
+		await agent.prompt("go");
+		expect(executed).not.toHaveBeenCalled();
+		const result = agent.state.messages.find((m) => m.role === "toolResult");
+		expect(result?.role === "toolResult" && result.content[0]).toEqual({
+			type: "text", text: "rule engine offline",
+		});
+		expect(agent.state.messages.at(-1)?.role).toBe("assistant");
 	});
 });
