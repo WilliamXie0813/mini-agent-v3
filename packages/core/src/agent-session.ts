@@ -507,10 +507,12 @@ export class AgentSession {
 		if (event.type === "tool_execution_end") {
 			let intent = this.intents.get(event.toolCallId);
 			// 执行层只在真正越过 execute 边界前提交 intent（阶段 5 语义）。
-			// 被权限规则 block / 校验失败 / 中止的已知工具调用没有 intent，
-			// 但调用已了结：补上 intent 再记 tool_outcome，journal 不留死角，
-			// 中断恢复也不会把这类调用当成「未到 durable 边界」去重放。
-			if (!intent) intent = await this.commitUnexecutedToolIntent(event);
+			// 被权限规则 block / 校验失败 / 中止的已知工具调用没有 intent。
+			// 仅当会话经 hooks 接入了扩展系统时才补 intent + tool_outcome：
+			// 不传 hooks 必须与阶段 10 逐字节一致（这类调用什么都不记），
+			// 有 hooks 时 journal 不留死角，中断恢复也不会重放已了结的调用。
+			if (!intent && this.options.hooks)
+				intent = await this.commitUnexecutedToolIntent(event);
 			if (!intent) return;
 			await this.journal.append({
 				type: "tool_outcome",
