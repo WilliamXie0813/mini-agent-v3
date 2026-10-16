@@ -115,6 +115,7 @@ export class ExtensionRunner implements ExtensionAPI {
 		const toolCallHandlers = this.handlersFor("tool_call");
 		const toolResultHandlers = this.handlersFor("tool_result");
 		const contextHandlers = this.handlersFor("context");
+		const beforeProviderRequestHandlers = this.handlersFor("before_provider_request");
 		const turnEndHandlers = this.handlersFor("turn_end");
 		const nextTurnHandlers = this.handlersFor("next_turn");
 		const hooks: SessionHooks = {};
@@ -160,6 +161,26 @@ export class ExtensionRunner implements ExtensionAPI {
 					}
 				}
 				return current;
+			};
+		}
+		if (beforeProviderRequestHandlers.length > 0) {
+			// fold 语义：逐个 handler 装饰同一个 StreamContext。顺序刻意——
+			// AgentSession 的 createAgent() 保证它拿到的是会话编排已定稿的请求
+			// （session 内部 prepareRequest 的 journal 重投影 + 阈值压缩结果），
+			// 这里只做最后一道请求装饰；与 context 事件（loop 原始 context 的
+			// 剪枝/重排）分工不同。
+			hooks.prepareRequest = async (input) => {
+				let context = input.context;
+				for (const { name, handler } of beforeProviderRequestHandlers) {
+					try {
+						const next = await handler({ context, signal: input.signal });
+						if (next !== undefined) context = next;
+					} catch (error) {
+						this.log(`extension "${name}" handler for "before_provider_request" failed: ${errorMessage(error)}`);
+						throw error;
+					}
+				}
+				return context;
 			};
 		}
 		if (turnEndHandlers.length > 0) {

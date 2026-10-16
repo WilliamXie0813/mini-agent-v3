@@ -28,6 +28,9 @@ importers:
       '@mini-agent/core':
         specifier: workspace:*
         version: link:../core
+      '@mini-agent/extensions':
+        specifier: workspace:*
+        version: link:../extensions
     devDependencies:
       '@types/node':
         specifier: 22.19.19

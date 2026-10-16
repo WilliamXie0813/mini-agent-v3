@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as readline from "node:readline/promises";
 import { AgentSession, createDefaultTools } from "@mini-agent/core";
 import { createAnthropicStreamFn, setDefaultStreamFn } from "@mini-agent/ai";
+import { bootstrapExtensions, createDemoExtension } from "@mini-agent/extensions";
 import type { ContentBlock } from "@mini-agent/ai";
 
 // 本地开发的默认配置来自 cwd 的 .env（pnpm dev 时即 packages/cli/.env）。
@@ -27,6 +28,13 @@ setDefaultStreamFn(
 	}),
 );
 
+// 阶段 11：扩展系统挂在默认 StreamFn 之上——不碰上面的密钥处理，
+// 只把当前默认实现包进第二个 StreamFn（装饰/观测链路）。
+const bootstrapped = await bootstrapExtensions({
+	extensions: [createDemoExtension()],
+});
+bootstrapped.installStreamFn();
+
 // content 是块数组；错误分支需要可读文本，只提 text 块拼起来（渲染 text 走 block.text，不经这里）。
 function textOf(content: ContentBlock[]): string {
 	return content
@@ -49,7 +57,8 @@ function parseContextWindow(value: string | undefined): number | undefined {
 }
 const sessionOptions = {
 	system,
-	tools: createDefaultTools(),
+	tools: bootstrapped.tools(createDefaultTools()),
+	hooks: bootstrapped.hooks,
 	contextWindow: parseContextWindow(process.env.ANTHROPIC_CONTEXT_WINDOW),
 };
 const session = continueSession
@@ -108,6 +117,19 @@ session.subscribe((event) => {
 	}
 });
 
+// 扩展的观察类 hook 复用同一条事件流。用 void 显式忽略 promise：
+// 观察者失败永远不会冒泡到 CLI 的事件循环（runner 内部已隔离 + 记录）。
+session.subscribe((event) => {
+	void bootstrapped.notify(event);
+});
+
+// 扩展命令的上下文：日志打到终端；StreamFn 槽在组装根已全局安装，这里不留引用。
+const extensionContext = {
+	log: (message: string) => console.log(message),
+	getStreamFn: () => undefined,
+	setStreamFn: () => {},
+};
+
 const rl = readline.createInterface({
 	input: process.stdin,
 	output: process.stdout,
@@ -116,7 +138,7 @@ rl.on("SIGINT", () => {
 	if (running) session.abort();
 	else rl.close();
 });
-console.log("mini-agent (stage 10) — type /exit to quit, /compact to compact");
+console.log("mini-agent (stage 11) — type /exit to quit, /compact to compact, /ext to list extensions");
 console.log(`session: ${session.filePath} (${continueSession ? "resumed" : "created"})`);
 
 try {
@@ -139,6 +161,27 @@ try {
 			}
 			process.stdout.write("> ");
 			continue;
+		}
+		// /ext 列出扩展注册的工具与命令。
+		if (line.trim() === "/ext") {
+			const tools = bootstrapped.runner.tools.map((tool) => tool.name);
+			const commands = bootstrapped.runner.commands.map((command) => command.name);
+			console.log(`extension tools: ${tools.join(", ") || "(none)"}`);
+			console.log(`extension commands: ${commands.join(", ") || "(none)"}`);
+			process.stdout.write("> ");
+			continue;
+		}
+		// 扩展注册的斜杠命令（如 /demo）：匹配名字后把剩余文本作为 args 传入。
+		const slash = /^\/(\S+)\s*(.*)$/.exec(line.trim());
+		if (slash) {
+			const command = bootstrapped.runner.commands.find(
+				(candidate) => candidate.name === slash[1],
+			);
+			if (command) {
+				await command.run({ args: slash[2] ?? "", context: extensionContext });
+				process.stdout.write("> ");
+				continue;
+			}
 		}
 		if (line.trim() === "") {
 			process.stdout.write("> ");

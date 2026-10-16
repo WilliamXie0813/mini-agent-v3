@@ -5,6 +5,7 @@ import {
 	getToolStateChanges,
 } from "@mini-agent/ai";
 import type {
+	AssistantMessage,
 	Message,
 	StreamContext,
 	StreamFn,
@@ -12,7 +13,7 @@ import type {
 	SystemSection,
 } from "@mini-agent/ai";
 import { Agent } from "./agent.ts";
-import type { AgentOptions, PrepareRequestContext } from "./agent-options.ts";
+import type { AgentOptions, PrepareRequestContext, SessionHooks } from "./agent-options.ts";
 import type {
 	AgentEvent,
 	AgentEventListener,
@@ -41,19 +42,31 @@ import type {
 import { toToolDeclarations } from "./tool.ts";
 import type {
 	CommitToolIntentContext,
+	ToolCall,
 	ToolDef,
 	ToolResult,
 } from "./tool.ts";
 
 export type AgentSessionOptions = Omit<
 	AgentOptions,
-	// prepareRequest / recoverContextOverflow 是内部所有权 hook：
-	// 绕过它们就绕过了 journal 编排，调用方不得注入。
-	"messages" | "commitToolIntent" | "prepareRequest" | "recoverContextOverflow"
+	// 编排所有权：这八个 hook（含 session 内部的 journal 重投影/阈值压缩两个 seam）
+	// 只能经 hooks 注入——调用方直接传入会绕过 journal 编排，这里全部 Omit 掉。
+	// prepareRequest 的合并在 createAgent()：session 内部版本先跑，扩展装饰其后。
+	| "messages"
+	| "commitToolIntent"
+	| "prepareRequest"
+	| "recoverContextOverflow"
+	| "beforeToolCall"
+	| "afterToolCall"
+	| "transformContext"
+	| "finishTurn"
+	| "prepareNextTurnWithContext"
 > & {
 	directory?: string;
 	contextWindow?: number;
 	compaction?: Partial<CompactionSettings>;
+	// 扩展系统的全部接入面（阶段 11）：六个 hook 字段打包在此。
+	hooks?: SessionHooks;
 };
 
 export type OpenAgentSessionOptions = AgentSessionOptions & {
@@ -318,13 +331,31 @@ export class AgentSession {
 	}
 
 	private createAgent(messages: Message[]): Agent {
+		const hooks = this.options.hooks ?? {};
 		const agent = new Agent({
 			...this.options,
 			messages,
 			commitToolIntent: (context) => this.commitToolIntent(context),
-			prepareRequest: (input) => this.prepareRequest(input),
+			// 编排所有权规则：session 内部的 prepareRequest（journal 重投影 +
+			// 阈值压缩）先跑，hooks 里的扩展 prepareRequest 只拿到定稿请求、
+			// 在其后做最后一道装饰——扩展版本绝不覆盖 session 的版本。
+			prepareRequest: async (input) => {
+				const finalized = await this.prepareRequest(input);
+				return hooks.prepareRequest
+					? hooks.prepareRequest({
+							context: finalized,
+							signal: input.signal,
+						})
+					: finalized;
+			},
 			recoverContextOverflow: (input) =>
 				this.recoverContextOverflow(input.signal),
+			// 其余五个决策 hook 原样透传，未注册时保持 undefined（与阶段 10 一致）。
+			beforeToolCall: hooks.beforeToolCall,
+			afterToolCall: hooks.afterToolCall,
+			transformContext: hooks.transformContext,
+			finishTurn: hooks.finishTurn,
+			prepareNextTurnWithContext: hooks.prepareNextTurnWithContext,
 		});
 		agent.subscribe((event) => this.deliverEvent(event));
 		return agent;
@@ -410,6 +441,39 @@ export class AgentSession {
 		this.intents.set(context.toolCall.id, intent);
 	}
 
+	// 为没有 intent 的已了结调用（blocked / 校验失败 / 中止）补 journal 事实。
+	// 工具未注册（找不到 ToolDef）时无法构造 intent 条目，保持阶段 5 行为不动。
+	private async commitUnexecutedToolIntent(
+		event: Extract<AgentEvent, { type: "tool_execution_end" }>,
+	): Promise<SessionEntryOf<"tool_intent"> | undefined> {
+		const tool = this.options.tools?.find(({ name }) => name === event.toolName);
+		if (!tool || !this.activeSubmission || !this.currentAssistantEntryId)
+			return undefined;
+		const assistant = this.agent.state.messages.findLast(
+			(message): message is AssistantMessage => message.role === "assistant",
+		);
+		const block = assistant?.content.find(
+			(content): content is ToolCall =>
+				content.type === "toolCall" && content.id === event.toolCallId,
+		);
+		const intent = await this.journal.append({
+			type: "tool_intent",
+			submissionId: this.activeSubmission.id,
+			assistantEntryId: this.currentAssistantEntryId,
+			toolCallId: event.toolCallId,
+			tool: toToolDeclarations([tool])[0]!,
+			args: structuredClone(block?.arguments ?? {}),
+			replay: tool.replay ?? "unsafe",
+			sourceIndex: assistant
+				? assistant.content.findIndex(
+						(content) => content.type === "toolCall" && content.id === event.toolCallId,
+					)
+				: -1,
+		});
+		this.intents.set(event.toolCallId, intent);
+		return intent;
+	}
+
 	private async deliverEvent(event: AgentEvent): Promise<void> {
 		await this.persistEvent(event);
 		for (const listener of this.listeners) await listener(event);
@@ -441,7 +505,12 @@ export class AgentSession {
 			return;
 		}
 		if (event.type === "tool_execution_end") {
-			const intent = this.intents.get(event.toolCallId);
+			let intent = this.intents.get(event.toolCallId);
+			// 执行层只在真正越过 execute 边界前提交 intent（阶段 5 语义）。
+			// 被权限规则 block / 校验失败 / 中止的已知工具调用没有 intent，
+			// 但调用已了结：补上 intent 再记 tool_outcome，journal 不留死角，
+			// 中断恢复也不会把这类调用当成「未到 durable 边界」去重放。
+			if (!intent) intent = await this.commitUnexecutedToolIntent(event);
 			if (!intent) return;
 			await this.journal.append({
 				type: "tool_outcome",
