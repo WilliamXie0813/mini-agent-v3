@@ -202,13 +202,16 @@ export class Agent {
 			try {
 				await executor(abortController.signal);
 			} catch (error) {
+				// 基础设施故障（hook/listener 自身抛错）不是"运行失败"，不合成错误消息，解包后原样上抛。
 				if (error instanceof AgentInfrastructureFailure) throw error.original;
+				// 其余视为正常的 run 失败（模型报错、被 abort 等），补齐事件生命周期并合成一条可见的错误消息。
 				try {
 					await this.handleRunFailure(
 						error,
 						abortController.signal.aborted,
 					);
 				} catch (fallbackError) {
+					// handleRunFailure 内部也会触发 listener，若在这里才暴露基础设施故障，同样解包后原样上抛。
 					if (fallbackError instanceof AgentInfrastructureFailure)
 						throw fallbackError.original;
 					throw fallbackError;
