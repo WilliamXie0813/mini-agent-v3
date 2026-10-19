@@ -1,8 +1,10 @@
 import { getDefaultStreamFn } from "@mini-agent/ai";
 import type { AssistantMessage, Message, StreamFn, SystemSection } from "@mini-agent/ai";
 import { agentLoop } from "./agent-loop.ts";
+import { AgentInfrastructureFailure } from "./agent-infrastructure-failure.ts";
+export { AgentInfrastructureFailure } from "./agent-infrastructure-failure.ts";
 import type { AgentOptions } from "./agent-options.ts";
-import type { PrepareRequest, RecoverContextOverflow } from "./agent-options.ts";
+import type { AfterToolCall, FinishTurn, PrepareNextTurn, PrepareRequest, RecoverContextOverflow, TransformContext } from "./agent-options.ts";
 import type { AgentEvent, AgentEventListener } from "./agent-event.ts";
 import { appendSystemSections, createAgentState, reduceAgentState, replaceAgentTools } from "./agent-state.ts";
 import type { AgentState } from "./agent-state.ts";
@@ -17,13 +19,6 @@ type ActiveRun = {
 	promise: Promise<void>; resolve: () => void; abortController: AbortController;
 };
 
-class AgentInfrastructureFailure extends Error {
-	readonly original: unknown;
-	constructor(original: unknown) {
-		super("agent infrastructure failed"); this.original = original;
-	}
-}
-
 export class Agent {
 	private readonly streamFn: StreamFn;
 	private readonly maxTurns?: number;
@@ -33,8 +28,12 @@ export class Agent {
 	private readonly listeners = new Set<AgentEventListener>();
 	private readonly _state: AgentState;
 	public beforeToolCall?: BeforeToolCall;
+	public afterToolCall?: AfterToolCall;
 	// 与 beforeToolCall 同为可替换 seam（阶段 10 的阈值压缩由 AgentSession 挂在这里）。
 	public prepareRequest?: PrepareRequest;
+	public transformContext?: TransformContext;
+	public finishTurn?: FinishTurn;
+	public prepareNextTurnWithContext?: PrepareNextTurn;
 	public toolExecution: ToolExecutionMode;
 	private activeRun?: ActiveRun;
 	private runMessages: Message[] = [];
@@ -56,7 +55,11 @@ export class Agent {
 			}
 			: undefined;
 		this.beforeToolCall = options.beforeToolCall;
+		this.afterToolCall = options.afterToolCall;
 		this.prepareRequest = options.prepareRequest;
+		this.transformContext = options.transformContext;
+		this.finishTurn = options.finishTurn;
+		this.prepareNextTurnWithContext = options.prepareNextTurnWithContext;
 		this.recoverContextOverflow = options.recoverContextOverflow;
 		this.toolExecution = options.toolExecution ?? "parallel";
 		this._state = createAgentState(
@@ -107,7 +110,11 @@ export class Agent {
 		await this.runWithLifecycle(async (signal) => {
 			// hook failure 与 listener failure 同为基础设施失败：原样冒泡，不合成 error 消息。
 			const prepareRequest = this.prepareRequest;
+			const transformContext = this.transformContext;
 			const recoverContextOverflow = this.recoverContextOverflow;
+			const afterToolCall = this.afterToolCall;
+			const finishTurn = this.finishTurn;
+			const prepareNextTurnWithContext = this.prepareNextTurnWithContext;
 			await agentLoop({
 				prompt,
 				messages: this._state.messages.slice(),
@@ -116,6 +123,15 @@ export class Agent {
 				tools: this._state.tools.slice(),
 				maxTurns: this.maxTurns,
 				beforeToolCall: this.beforeToolCall,
+				afterToolCall: afterToolCall
+					? async (context, hookSignal) => {
+						try {
+							return await afterToolCall(context, hookSignal);
+						} catch (error) {
+							throw new AgentInfrastructureFailure(error);
+						}
+					}
+					: undefined,
 				toolExecution: this.toolExecution,
 				commitToolIntent: this.commitToolIntent,
 				prepareRequest: prepareRequest
@@ -127,10 +143,37 @@ export class Agent {
 						}
 					}
 					: undefined,
+				transformContext: transformContext
+					? async (messages, signal) => {
+						try {
+							return await transformContext(messages, signal);
+						} catch (error) {
+							throw new AgentInfrastructureFailure(error);
+						}
+					}
+					: undefined,
 				recoverContextOverflow: recoverContextOverflow
 					? async (input) => {
 						try {
 							return await recoverContextOverflow(input);
+						} catch (error) {
+							throw new AgentInfrastructureFailure(error);
+						}
+					}
+					: undefined,
+				finishTurn: finishTurn
+					? async (context, signal) => {
+						try {
+							return await finishTurn(context, signal);
+						} catch (error) {
+							throw new AgentInfrastructureFailure(error);
+						}
+					}
+					: undefined,
+				prepareNextTurnWithContext: prepareNextTurnWithContext
+					? async (context) => {
+						try {
+							return await prepareNextTurnWithContext(context);
 						} catch (error) {
 							throw new AgentInfrastructureFailure(error);
 						}
@@ -159,13 +202,16 @@ export class Agent {
 			try {
 				await executor(abortController.signal);
 			} catch (error) {
+				// 基础设施故障（hook/listener 自身抛错）不是"运行失败"，不合成错误消息，解包后原样上抛。
 				if (error instanceof AgentInfrastructureFailure) throw error.original;
+				// 其余视为正常的 run 失败（模型报错、被 abort 等），补齐事件生命周期并合成一条可见的错误消息。
 				try {
 					await this.handleRunFailure(
 						error,
 						abortController.signal.aborted,
 					);
 				} catch (fallbackError) {
+					// handleRunFailure 内部也会触发 listener，若在这里才暴露基础设施故障，同样解包后原样上抛。
 					if (fallbackError instanceof AgentInfrastructureFailure)
 						throw fallbackError.original;
 					throw fallbackError;

@@ -464,6 +464,34 @@ describe("AgentSession", () => {
 		expect(durableAtExternalDelivery.every(Boolean)).toBe(true);
 	});
 
+	it("keeps stage-10 journaling for intent-less tool failures when created without hooks", async () => {
+		const directory = await temporaryDirectory();
+		const session = await AgentSession.create({
+			directory,
+			system: "test",
+			tools: [echoTool],
+			// 参数缺 required 字段 → 校验失败：执行层不提交 intent，直接 error result。
+			streamFn: createFakeStreamFn([
+				[{ type: "toolCall", id: "c1", name: "echo", arguments: {} }],
+				"done",
+			]),
+		});
+		await session.submit({ requestId: "r1", prompt: "go" });
+		// 阶段 10 语义：这类调用什么都不记——journal 里没有 intent/outcome，
+		// error result 只作为普通 toolResult message 回喂模型。
+		const types = session.entries.map(({ type }) => type);
+		expect(types).not.toContain("tool_intent");
+		expect(types).not.toContain("tool_outcome");
+		const result = session.state.messages.find((m) => m.role === "toolResult");
+		expect(result?.role).toBe("toolResult");
+		expect(
+			result?.role === "toolResult" && result.content.some((block) =>
+				block.type === "text" &&
+				block.text.includes("failed validation")
+			),
+		).toBe(true);
+	});
+
 	it("propagates external listener failures after internal persistence", async () => {
 		const directory = await temporaryDirectory();
 		const session = await AgentSession.create({

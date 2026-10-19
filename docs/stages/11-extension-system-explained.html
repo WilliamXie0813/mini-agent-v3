@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>不用改发动机，也能加规则 — 阶段 11 扩展系统交互教学</title>
+<style>
+	:root { --paper: #f4efe3; --card: #fffaf0; --ink: #172033; --muted: #50596a; --line: #d8cfbe; --blue: #2457b8; --rust: #a33f24; }
+	* { box-sizing: border-box; }
+	body { margin: 0; color: var(--ink); background: var(--paper); font: 17px/1.85 Georgia, "Songti SC", serif; }
+	main { max-width: 1040px; margin: auto; padding: 40px 24px 72px; }
+	header { border-bottom: 4px double var(--ink); padding-bottom: 24px; }
+	h1 { font-size: clamp(34px, 6vw, 62px); line-height: 1.2; margin: 16px 0; }
+	h2 { font-size: 28px; line-height: 1.4; margin: 38px 0 16px; }
+	h3 { font-size: 20px; margin: 0 0 10px; }
+	p { color: var(--muted); margin: 12px 0; }
+	a { color: var(--blue); text-underline-offset: 3px; }
+	.kicker { color: var(--rust); font: 13px/1.6 monospace; letter-spacing: .12em; }
+	.notice { border: 2px solid var(--blue); background: var(--card); padding: 16px 20px; }
+	.notice strong { color: var(--blue); }
+	.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+	.card { padding: 20px; border: 1px solid var(--line); border-radius: 9px; background: var(--card); min-width: 0; }
+	.question { font-size: 21px; color: var(--ink); }
+	.note { border-left: 4px solid var(--blue); padding: 10px 18px; background: var(--card); }
+	.warning { border-left-color: var(--rust); }
+	.controls, #timeline { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 18px 0; }
+	button, select { font: 15px/1.5 system-ui, sans-serif; padding: 10px 14px; min-height: 44px; border: 1px solid #958a78; border-radius: 6px; background: var(--card); color: var(--ink); max-width: 100%; }
+	button { cursor: pointer; }
+	button:hover:not(:disabled), button.active { color: var(--paper); background: var(--ink); }
+	button:disabled { opacity: .5; cursor: not-allowed; }
+	a:focus-visible, button:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid var(--blue); outline-offset: 4px; }
+	code { background: #e8e1d2; border-radius: 3px; padding: 2px 4px; font: .88em monospace; overflow-wrap: anywhere; }
+	pre { background: #182233; color: #f2f2e9; padding: 16px; border-radius: 6px; font: 14px/1.75 monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 520px; overflow: auto; }
+	details { border: 1px solid var(--line); border-radius: 7px; padding: 15px; margin-top: 18px; }
+	summary { cursor: pointer; font-family: system-ui, sans-serif; }
+	#change { white-space: pre-line; color: var(--ink); border-left: 4px solid var(--rust); padding-left: 16px; }
+	#cards { display: grid; gap: 10px; margin: 15px 0; }
+	#cards .card { padding: 12px 16px; }
+	#step-title { color: var(--rust); }
+	table { border-collapse: collapse; width: 100%; font-size: 15px; }
+	th, td { padding: 12px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+	.table-scroll { overflow-x: auto; }
+	li { margin: 7px 0; }
+	[hidden] { display: none !important; }
+	footer { border-top: 1px solid var(--line); margin-top: 32px; padding-top: 18px; font-size: 15px; }
+	.skip { position: absolute; left: 16px; top: -80px; background: var(--card); padding: 8px; }
+	.skip:focus { top: 10px; }
+	@media (max-width: 700px) { main { padding: 26px 16px 50px; } .grid { grid-template-columns: 1fr; } h2 { font-size: 24px; } }
+</style>
+</head>
+<body>
+<a class="skip" href="#lesson-area">跳到互动教学</a>
+<main>
+	<header>
+		<div class="kicker">MINI-AGENT / STAGE 11 / EXTENSION SYSTEM</div>
+		<h1>不用改发动机，<br>也能加规则</h1>
+		<p class="question">你只想给购物车加优惠券折扣，为什么还得修改 agent 的内部循环？</p>
+		<p>贯穿任务：让编程助手修改 <code>src/cart.ts</code>，再运行团队自己的 <code>lint_cart</code> 检查。团队要求禁止 shell 工具、少发重复读取、保留检查记录，还想在模型调用外面加观测。这些规则属于团队，不应该每次都塞进发动机。</p>
+		<p><strong>core</strong> 就是“问模型、执行工具、继续下一轮”的核心发动机；<strong>工具</strong>就是助手能调用的具体动作，例如读文件。<code>src/cart.ts</code> 与 <code>lint_cart</code> 是本页虚构练习，不声称本仓库有购物车产品。</p>
+		<div class="notice" role="note">
+			<strong>实现已落地；本页是离线教学模拟，不是真实执行界面。</strong>
+			<p>2026-10-16 重新核对 <code>stage-11-extensions</code> 分支、提交 <code>ad4cded</code> 的生产代码和测试：内联扩展、六个决策钩子、第二个 StreamFn 包装器与 CLI 接线已实现。旧版“仅设计”的判断已纠正。下方互动不调用模型、不执行工具、不写日志、不安装包；配套测试会另用真实 runner/core 与本页示例核对关键行为。</p>
+		</div>
+		<nav aria-label="阅读导航"><a href="#pain">先看痛点</a> · <a href="#mechanism">解决办法</a> · <a href="#lesson-area">一步一问</a> · <a href="#mapping">真实 API</a> · <a href="#example">可运行示例</a> · <a href="#recovery">持久化与边界</a> · <a href="#sources">出处</a></nav>
+	</header>
+
+	<section id="pain" aria-labelledby="pain-title">
+		<h2 id="pain-title">01 / 最直觉的方案：哪里需要，就往哪里塞</h2>
+		<ol>
+			<li>在核心工具执行器里加 <code>if</code>：遇到 <code>lint_cart</code> 就检查优惠券。</li>
+			<li>再塞一段团队规则：遇到 <code>bash</code> 就拒绝。</li>
+			<li>到模型请求代码里删重复读取，再加调用计时。</li>
+		</ol>
+		<p>任务能跑了，但项目规则散落在发动机各处。换一个项目要不要再维护一份 core？升级循环时，谁保证这些分支没有被漏掉？更糟的是，事后监听到危险命令才报警，已经来不及阻止它。</p>
+		<p class="note">要留的是<strong>“继续之前允许规则插话的位置”</strong>，而不是让扩展任意读写内部状态。<strong>hook（钩子）</strong>就是这种决策插口；<strong>扩展</strong>就是通过受控入口登记工具、命令和规则的一段代码。</p>
+	</section>
+
+	<section id="mechanism" aria-labelledby="mechanism-title">
+		<h2 id="mechanism-title">02 / 先只认三个角色，不急着背完整流程</h2>
+		<div class="grid">
+			<article class="card">
+				<h3>扩展：说明“我要加什么”</h3>
+				<p><strong>ExtensionFactory</strong> 就是一个接收入口对象的函数。拿到的 <strong>ExtensionAPI</strong> 只有 <code>on</code>、<code>registerTool</code>、<code>registerCommand</code>：分别登记事件规则、工具、命令。不导入 core 的运行时代码；允许导入类型。</p>
+			</article>
+			<article class="card">
+				<h3>组装方：把规则接到发动机</h3>
+				<p><strong>ExtensionRunner</strong> 收集登记项。<code>bootstrapExtensions</code> 顺序初始化扩展，返回 <code>hooks</code>、<code>tools(base)</code>、<code>notify</code> 等接线入口。core 照原有协议工作；新增团队规则不用再改 core。</p>
+			</article>
+		</div>
+		<p><strong>内联</strong>不是“从目录自动找到插件”，而是组装代码直接传入 <code>{ name, factory }</code>。当前 CLI 在 <code>packages/cli/src/index.ts</code> 装入 <code>createDemoExtension()</code>：真实示例工具是 <code>word_count</code>，真实规则拒绝<strong>所有 bash</strong>，不是会识别所有危险命令的安全引擎。</p>
+		<p><strong>观察事件</strong>是“看见发生了什么”；<strong>决策事件</strong>是“返回什么会改变下一步”。当前 <code>on("tool_call", ...)</code> 是决策，<code>on("tool_execution_end", ...)</code> 是观察。它们不能互换。</p>
+	</section>
+
+	<section id="lesson-area" aria-labelledby="lesson-title">
+		<h2 id="lesson-title">03 / 同一个任务，八小课逐步拆开</h2>
+		<p>每课三步：<strong>先猜 → 点击揭示 → 看本步卡片 → 下一步</strong>。未揭示不能前进。回看或切课会重新藏起答案；JSON 只放在折叠区。</p>
+		<ol>
+			<li>硬改 core 的代价。</li>
+			<li>登记 <code>lint_cart</code>，与内置工具共存。</li>
+			<li>执行前拒绝，以及多条规则何时停止。</li>
+			<li>按真实顺序准备请求、剪枝，保留原始历史。</li>
+			<li>检查完成后整理结果，不倒转已经发生的执行。</li>
+			<li>继续一轮，把下一轮说明写成真实历史。</li>
+			<li>包装模型函数，认识优先级与创建时机。</li>
+			<li>规则出错、观察者出错：为什么后果不同。</li>
+		</ol>
+		<p class="note"><strong>教学模拟，不连接运行中的会话。</strong>“虚拟执行”只是卡片计数，每课从独立快照开始，不累加真实任务进度。上下文卡片把一次读取的调用与结果画成一组，不是原始协议消息。</p>
+		<noscript><p class="notice">互动需要浏览器启用 JavaScript，但不需要网络或服务器。未启用时，仍可阅读痛点、真实 API、完整示例及恢复边界。</p></noscript>
+		<div class="controls">
+			<label for="lesson">选择小课</label>
+			<select id="lesson">
+				<option value="naive">1 / 先试硬改 core</option>
+				<option value="inline">2 / 登记工具与共存</option>
+				<option value="permission">3 / 权限与短路</option>
+				<option value="context">4 / 请求顺序与剪枝</option>
+				<option value="result">5 / 整理工具结果</option>
+				<option value="turns">6 / 续轮与真实历史</option>
+				<option value="provider">7 / 模型包装与生命周期</option>
+				<option value="failure">8 / 失败分别流向哪里</option>
+			</select>
+		</div>
+		<div class="controls">
+			<button id="prev" type="button">上一步</button>
+			<button id="next" type="button">下一步（先揭示）</button>
+			<button id="reset" type="button">重置本小课</button>
+			<span id="position" role="status"></span>
+		</div>
+		<nav id="timeline" aria-label="本课时间线，未来步骤需要逐步解锁"></nav>
+		<article class="card" aria-live="polite" aria-atomic="false">
+			<p id="lesson-context"></p>
+			<h3 id="step-title"></h3>
+			<p class="question"><strong>猜一猜：</strong><span id="prediction"></span></p>
+			<button id="reveal" type="button" aria-controls="answer" aria-expanded="false">揭示答案与本步变化</button>
+			<div id="answer" hidden>
+				<p id="explanation"></p>
+				<h3>这一步具体变了什么？</h3>
+				<p id="change"></p>
+				<div id="cards" aria-label="本步可读观察卡片"></div>
+				<p id="state-summary"></p>
+				<details id="advanced">
+					<summary>高级细节：真实接口映射与教学快照</summary>
+					<p>这里的代码片段用于对照真实 API，不会在本页运行；状态快照是卡片模型，不是 Agent 内部状态。</p>
+					<pre id="technical-output"></pre>
+					<pre id="snapshot-output" aria-label="教学模拟状态"></pre>
+				</details>
+			</div>
+		</article>
+		<div class="controls">
+			<button id="next-lesson" type="button">完成本课后，继续下一小课</button>
+			<span id="lesson-position"></span>
+		</div>
+	</section>
+
+	<section id="mapping" aria-labelledby="mapping-title">
+		<h2 id="mapping-title">04 / 再对照真实名字：事件如何接到六个钩子</h2>
+		<p><strong>上下文</strong>就是这次交给模型的材料；<strong>turn</strong>就是一轮模型往返与这批工具处理。<code>runner.sessionHooks()</code> 把事件处理器变成下表六个 core 钩子。没有对应处理器，就不生成那个钩子；零处理器返回 <code>{}</code>。</p>
+		<div class="table-scroll">
+			<table>
+				<caption>当前代码的精确返回值与组合方式，不以总设计替代实现</caption>
+				<thead><tr><th scope="col">扩展事件 → core 钩子</th><th scope="col">允许做什么</th><th scope="col">多处理器与边界</th></tr></thead>
+				<tbody>
+					<tr><th scope="row"><code>tool_call</code> → <code>beforeToolCall</code></th><td>返回 <code>{ block: true, reason?, terminate? }</code> 拒绝，<code>reason</code> 成为错误结果文本；抛错也不执行工具。</td><td>按注册顺序，第一个非 <code>undefined</code> 返回值生效并停止后续处理器。<code>{}</code> 与 <code>{ block: false }</code> 也会短路，但不拒绝；“不关我事”必须返回 undefined。</td></tr>
+					<tr><th scope="row"><code>tool_result</code> → <code>afterToolCall</code></th><td>只覆盖 <code>content</code> 与 <code>isError</code>。不能覆盖 details、durationMs、terminate；不能让被拒工具重新执行。</td><td>全部运行，按字段合并返回值，后者同字段覆盖前者；void 不擦掉已累积字段。<strong>每个处理器收到同一份原始 context</strong>，不是上个处理器改写后的结果。</td></tr>
+					<tr><th scope="row"><code>context</code> → <code>transformContext</code></th><td>过滤、重排请求消息；最终数组必须非空，且元素必须是入参里已有的同一对象。克隆、注入新对象会抛 TypeError。</td><td>依次传递上一次的数组，undefined 保持当前数组。core 最后检查引用；没有深度冻结，规则作者仍不得就地改消息。系统不自动验证剪枝后语义/工具配对是否合理。</td></tr>
+					<tr><th scope="row"><code>before_provider_request</code> → <code>prepareRequest</code></th><td>返回整个 <code>StreamContext</code>，替换当次请求材料。可以加请求专用资料，不写入历史。</td><td>依次传递上一个 context；undefined 不变。AgentSession 内部日志投影与阈值压缩<strong>先执行</strong>，扩展只装饰其后，不能覆盖会话编排。</td></tr>
+					<tr><th scope="row"><code>turn_end</code> → <code>finishTurn</code></th><td>返回 <code>{ action: "end" | "continue" }</code>。没有工具时默认结束；有工具时默认继续。</td><td>第一个非 undefined 返回值短路。正常轮次先发 core 的 turn_end 事件，再咨询它；error/aborted、工具批次硬停时不咨询。continue 共用 maxTurns，不是无限续轮。</td></tr>
+					<tr><th scope="row"><code>next_turn</code> → <code>prepareNextTurnWithContext</code></th><td>从第二轮起，可返回 <code>sections</code>、<code>toolsAdded</code>、<code>toolsRemoved</code>。</td><td>全部运行：前两项按注册序拼接，移除名去重。非空时追加一条真实 SystemMessage；全空/void 是 no-op。工具增删是<strong>声明</strong>，不凭空创建 execute 函数。</td></tr>
+				</tbody>
+			</table>
+		</div>
+		<details>
+			<summary>读完实验后，再看一次真实调用顺序</summary>
+			<pre>turn_start
+→ next_turn（仅 turn ≥ 1；非空结果形成 system 历史消息）
+→ 从历史重放 system / 工具声明
+→ AgentSession 内部 prepareRequest（重投影、必要时压缩）
+→ before_provider_request（扩展请求装饰）
+→ 按 prepared.tools 筛选可执行工具
+→ context（过滤/重排消息，随后校验引用）
+→ StreamFn → 完整 assistant 消息
+→ 若有工具：查找/校验 → tool_call → 执行前 intent → execute
+   → finalize → tool_result → tool_execution_end → toolResult 消息
+→ core turn_end 事件
+→ 非错误且未硬停时，扩展 turn_end 决策 → 结束或下一轮</pre>
+			<p>上面工具线是单个调用的逻辑顺序。并行批次保持既有规则：准备与 intent 提交屏障之后才运行获准工具；工具 end 按完成顺序，结果消息按模型原调用顺序。截断参数路径直接产生错误，<strong>跳过 afterToolCall</strong>，不能让扩展抹掉截断诊断。</p>
+			<p>“工具硬停”指整个批次聚合出的 terminate：当前实现是这批所有结果都带 <code>terminate: true</code>；不是任意一个工具说停就无条件停全批。</p>
+		</details>
+	</section>
+
+	<section id="example" aria-labelledby="example-title">
+		<h2 id="example-title">05 / 从卡片落到一份真 API 示例</h2>
+		<p>这是可在仓库现有依赖环境运行的<strong>纯内存示例</strong>：工具只返回示范文本，不读写 <code>src/cart.ts</code>，也不真正验证优惠券。模型使用 <code>createFakeStreamFn</code> 预设回复，不联网。下面代码块与仓库里的真实文件逐字节一致（测试会核对这一点），本页不自动执行它。</p>
+		<details>
+			<summary>展开完整示例：registerTool → hooks → 统一工具执行</summary>
+			<p>真实文件在 <code>packages/examples/src/stage11-cart.ts</code>（新增的 <code>@mini-agent/examples</code> workspace 包）。先在仓库根目录 <code>pnpm install</code> 链接 workspace，再用 <code>node --experimental-strip-types packages/examples/src/stage11-cart.ts</code> 运行（沿用仓库 Node 22+ 环境，无需额外新增依赖）。示例用 Agent 不写日志；要持久化，换成 AgentSession 并经 <code>hooks: boot.hooks</code> 注入。</p>
+			<pre id="runnable-example">import { Agent } from "@mini-agent/core";
+import { createFakeStreamFn } from "@mini-agent/ai";
+import { bootstrapExtensions } from "@mini-agent/extensions";
+
+const boot = await bootstrapExtensions({
+	extensions: [{
+		name: "cart",
+		factory(api) {
+			api.registerTool({
+				name: "lint_cart",
+				description: "Memory-only coupon teaching check",
+				parameters: { type: "object", properties: {} },
+				replay: "safe",
+				execute: async () =&gt; ({
+					content: [{ type: "text", text: "coupon checked" }],
+				}),
+			});
+			api.on("tool_call", ({ toolCall }) =&gt; {
+				if (toolCall.name === "bash") {
+					return { block: true, reason: "cart: bash disabled" };
+				}
+				return undefined;
+			});
+		},
+	}],
+});
+const agent = new Agent({
+	system: "You are a coupon teaching agent.",
+	tools: boot.tools([]),
+	...boot.hooks,
+	streamFn: createFakeStreamFn([
+		[{ type: "toolCall", id: "check-1", name: "lint_cart", arguments: {} }],
+		"优惠券检查示例完成",
+	]),
+});
+agent.subscribe((event) =&gt; boot.notify(event));
+await agent.prompt("给 src/cart.ts 加优惠券折扣，然后检查");
+console.log(agent.state.messages);
+</pre>
+			<p><code>boot.tools([])</code> 是无内置工具的最小演示。真实 CLI 使用 <code>boot.tools(createDefaultTools())</code> 合并内置工具，先内置后扩展；登记重复扩展工具、合并时撞上内置工具、重复命令名都会抛具名错误，不是后者偷偷覆盖前者。</p>
+		</details>
+		<details>
+			<summary>模型插口的真实用法：这是包装，不是 ai-sdk / 第二个 HTTP 客户端</summary>
+			<p><strong>StreamFn</strong> 是把请求材料与中止信号变成统一模型事件流的普通函数。当前第二实现 <code>createSecondStreamFn(inner, { decorate?, onCall? })</code> 包装已有函数：可装饰请求、转发全部事件、报告调用前材料与耗时。底层仍是原服务接入；CLI 实际调用的 <code>installStreamFn()</code> 未传 decorate/onCall，只安装转发包装。</p>
+			<pre>setDefaultStreamFn(base);
+const boot = await bootstrapExtensions({ extensions: [...] });
+boot.installStreamFn();
+// 内部等价：setDefaultStreamFn(createSecondStreamFn(getDefaultStreamFn()))
+// 必须先有 base；没有默认实现时，getDefaultStreamFn 会抛错。
+
+// 新建 Agent / AgentSession：
+// options.streamFn 非空 → 用显式函数
+// 否则 → 读取此刻的默认函数；构造时捕获，之后不会跟着全局槽变化</pre>
+			<p>总设计写过 ai-sdk，<strong>实施计划和当前代码选择零新增运行时依赖的自写包装器</strong>。本页不再把 ai-sdk 当作已安装或即将由此分支自动提供的能力。AgentSession 的任务请求与摘要请求持有同一个已捕获的函数。</p>
+			<p><code>ExtensionContext</code> 虽有 getStreamFn/setStreamFn 类型，但 factory 没有拿到这个 context；runner 的私有槽也不负责全局安装。当前 CLI 传给斜杠命令的实现是 getter 返回 undefined、setter 空操作，<strong>不能靠命令热切换模型</strong>。安装默认包装器的入口是组装方的 <code>boot.installStreamFn()</code>。</p>
+			<p>包装器的异步 decorate/转发错误被编码为流上的 error 事件与错误 assistant 消息，不等于扩展决策钩子的原错 reject；正常转发结束时 onCall 的 ok 仅按最终 stopReason 是否为 error 判定，不应解读成业务校验成功。</p>
+		</details>
+	</section>
+
+	<section id="recovery" aria-labelledby="recovery-title">
+		<h2 id="recovery-title">06 / 哪些会留下来，重启后又不会自动发生什么？</h2>
+		<div class="grid">
+			<article class="card">
+				<h3>请求视图，不进历史</h3>
+				<p><code>before_provider_request</code> 的装饰与 <code>context</code> 的过滤只作用于本次请求。历史不会因此删除。要保留下一轮说明，应通过 <code>next_turn</code> 生成真实 system 消息，而不是把一个临时请求当事实源。</p>
+			</article>
+			<article class="card">
+				<h3>实际结果与系统更新，会进日志</h3>
+				<p>AgentSession 先持久化再通知订阅者。afterToolCall 改写后的内容进入工具 end、toolResult 消息与 outcome。next_turn 的非空结果经 message_start/message_end 进入 journal（逐条追加的日志），重开时可重放。</p>
+			</article>
+		</div>
+		<p>当前会话传了 <code>hooks</code> 对象（即使 <code>{}</code>）时，已知工具被 block、校验失败或中止，也会在结束事件补记 <code>tool_intent</code> 与 <code>tool_outcome</code>，留下“已经了结、未执行”的结果；<strong>日志里有 intent 不证明执行过</strong>。未知工具找不到定义，无法补该 intent；完全不传 hooks 保持阶段 10 原路径。</p>
+		<p class="note warning"><strong>恢复不会重新跑整条扩展链。</strong><code>AgentSession.open</code> 先按既有 journal 规则恢复工具，再创建 Agent。已有 outcome 可复用；缺结果而允许 safe 重跑时，恢复函数直接运行匹配的工具，不重新咨询扩展 before/after 钩子，也不自动再问模型。扩展函数与规则本身不序列化到日志；重启需由组装方重新登记工具、hooks 与 provider。不能承诺恢复时会重新做最新权限审批。</p>
+		<p>错误也不能统一“吞掉”：<code>tool_call</code> 抛错时工具不执行，错误成为该工具的结果，run 可以继续；观察者抛错只记带扩展名的日志，后续观察者仍运行；<code>tool_result / context / before_provider_request / turn_end / next_turn</code> 抛错会记录后重抛，由 Agent 解包原错误，让 prompt/submit 拒绝。初始化 factory 失败则报含扩展名的初始化错误。</p>
+		<details>
+			<summary>现阶段明确不提供的能力与容易误读的边界</summary>
+			<ul>
+				<li>只有内联扩展：没有 jiti 文件动态加载、npm 扩展分发、热重载或插件市场。</li>
+				<li>不是进程隔离沙箱；不 import core 运行时代码解决耦合，不限制任意扩展访问系统。</li>
+				<li>真实 demo 的 context 规则过滤首个文本以 <code>[truncated</code> 开头的工具结果，不是自动重复读取去重器；本页的成组去重是另一个教学规则。</li>
+				<li>next_turn 可记录工具声明的增删，但不会登记执行闭包。新声明没有匹配的既有工具定义，仍无法执行。</li>
+				<li>finishTurn 是有限预算里的控制，不是阶段 13 followUp 队列，也不盖过硬停。maxTurns 耗尽，底层 loop 抛错；Agent 将其记录为错误 assistant 消息，而非钩子原错的基础设施 reject。</li>
+				<li>观察通知实际只分发 message_end 与 tool_execution_start/update/end 等支持的事件，其他 core 事件被忽略；不能通过观察返回值阻止工具。类型声明有 session_start，但当前 CLI/notify 接线没有实际发出它，不能承诺启动会触发该回调。</li>
+				<li>CLI 已支持 <code>/ext</code> 查看登记项，<code>/demo</code> 运行已登记命令；没有通用的模型热切换命令。原始 core turn_end 观察流与扩展同名决策事件不是同一次通知分发。</li>
+			</ul>
+		</details>
+	</section>
+
+	<footer id="sources">
+		<h2>07 / 当前实现依据与继续阅读</h2>
+		<p>核实基线：分支 <code>stage-11-extensions</code>，HEAD <code>ad4cded</code>。关键提交：<code>5622919</code> 登记与观察，<code>18afb4a</code> 工具拒绝，<code>66f9003</code> 结果钩子，<code>99a9c34</code> 引用校验，<code>4266d22</code> 续轮，<code>e5d12e8</code> 下一轮真历史，<code>b64d733</code> 包装器，<code>0871ca8</code> CLI 接线，<code>ad4cded</code> 补日志的 hooks 条件。</p>
+		<ul>
+			<li><a href="../../packages/extensions/src/types.ts">扩展类型与返回值</a> · <a href="../../packages/extensions/src/runner.ts">runner 的六种组合规则与失败方向</a> · <a href="../../packages/extensions/src/bootstrap.ts">组装入口与默认包装器安装</a></li>
+			<li><a href="../../packages/extensions/src/demo.ts">真实 demo：word_count、禁用 bash、截断结果过滤、命令</a> · <a href="../../packages/extensions/src/second-stream-fn.ts">第二 StreamFn：实际是装饰/转发器</a></li>
+			<li><a href="../../packages/core/src/agent-options.ts">六个 SessionHooks 类型</a> · <a href="../../packages/core/src/agent-loop.ts">调用顺序与引用校验</a> · <a href="../../packages/core/src/after-tool-call.ts">只应用 content/isError</a></li>
+			<li><a href="../../packages/core/src/agent-session.ts">会话接线、日志顺序与 hooks 条件</a> · <a href="../../packages/core/src/session-recovery.ts">恢复不重跑扩展链</a> · <a href="../../packages/cli/src/index.ts">CLI 的真实装配与命令上下文</a></li>
+			<li><a href="../../packages/extensions/test/runner.test.ts">真实 runner 测试</a> · <a href="../../packages/extensions/test/integration.test.ts">真实会话集成测试</a> · <a href="../../packages/core/test/stage11-teaching.test.ts">本页交互与生产行为的对照测试</a></li>
+			<li><a href="../../packages/examples/src/stage11-cart.ts">可独立运行的购物车示例（05 节代码块的真实来源）</a> · <a href="../../packages/examples/test/stage11-cart.test.ts">示例与本页代码块的一致性及行为测试</a></li>
+			<li><a href="../plans/2026-10-15-stage-11-extensions.md">阶段 11 实施计划（含与总设计的差异）</a> · <a href="../specs/2026-10-09-mini-agent-v3-design.md#阶段-11--扩展系统">总设计的阶段 11 入口</a></li>
+		</ul>
+		<p>目前没有独立阶段 11 Markdown；已有实施计划与生产实现，不再据此误判“未实现”。链接均为真实相对路径；离线点击源码/Markdown 时，浏览器可能显示原文或下载。</p>
+		<p><a href="09-session-persistence-explained.html">回顾阶段 9：日志为什么不能当执行次数</a> · <a href="#lesson-area">重做互动</a> · <a href="#pain">回到痛点</a></p>
+		<p>单文件、无 CDN、无网络请求、无依赖安装，可直接以 file:// 打开。Tab 移动焦点，Enter/空格激活原生按钮。Node VM 交互与源码对照测试不替代真实浏览器的视觉检查。</p>
+	</footer>
+</main>
+<script>
+"use strict";
+const historyCards = ["任务", "read#1 调用+结果", "read#2 调用+结果", "lint_cart 检查结果"];
+const prunedCards = ["任务", "read#2 调用+结果", "lint_cart 检查结果"];
+const builtinTools = ["read", "edit", "bash"];
+function snapshot(overrides = {}) {
+	return {
+		mode: "implemented-behavior-simulation",
+		tools: [...builtinTools, "lint_cart"], virtualExecutions: 0,
+		actualModelRequests: 0, actualToolExecutions: 0,
+		handlersVisited: [], errorResult: false, requestOrder: [],
+		historyCards: [...historyCards], requestCards: [...historyCards],
+		failure: "", resultText: "ok", resultIsError: false,
+		nextSections: [], turns: 1, provider: "base",
+		oldSessionProvider: "base", explicitProvider: "explicit", coreEdits: 0,
+		...overrides,
+	};
+}
+function step(title, question, explanation, change, cards, technical, overrides = {}) {
+	return { title, question, explanation, change, cards, technical, state: snapshot(overrides) };
+}
+const lessons = [
+	{
+		id: "naive", context: "先做反例。三个 core 修改位置只是耦合成本的示意，不是实际改文件或源码行数。",
+		steps: [
+			step("先加一个 if", "最快接上 lint_cart，是不是改核心执行器就够了？",
+				"局部看很快，但 core 开始认识购物车项目的业务名。",
+				"示意 core 修改位置：0 → 1；工具处理器多出项目专属分支。",
+				["工具执行处出现 lint_cart 特判。", "换一个项目时，这个特判没有意义。"],
+				"反例，不是当前扩展用法：在 core 执行器写业务 if。", { coreEdits: 1, tools: [...builtinTools] }),
+			step("再塞权限规则", "监听到工具结束才禁止 bash，能撤销刚才的执行吗？",
+				"不能。要阻止副作用，必须在工具真正执行之前决定。",
+				"示意 core 修改位置：1 → 2；工具代码又混入团队权限。",
+				["事后观察不是执行前决策。", "需要受控的执行前插口，而不是更多内部特判。"],
+				"当前已有解决办法：扩展 tool_call → beforeToolCall。", { coreEdits: 2, tools: [...builtinTools] }),
+			step("请求处也加特判", "去重、加计时也各改一处，下一次升级要检查哪里？",
+				"业务、权限和请求规则分散在发动机内，容易遗漏。下面用已经实现的扩展入口拆开。",
+				"示意 core 修改位置：2 → 3。规则分散，接下来把团队能力移到 factory。",
+				["需要维护工具特判、权限特判和请求特判。", "目标：添加团队规则时不再修改 core。"],
+				"真实方案：ExtensionFactory(api) 登记规则，由组装方统一接线。", { coreEdits: 3, tools: [...builtinTools] }),
+		],
+	},
+	{
+		id: "inline", context: "由 bootstrapExtensions 顺序初始化 { name, factory }，factory 通过 ExtensionAPI 登记。lint_cart 是本页示例工具。",
+		steps: [
+			step("留下内置工具", "加团队检查之前，要先删掉 read、edit、bash 吗？",
+				"不需要。工具共存，编程助手仍要读取和修改文件。",
+				"起点工具箱 3 项，虚拟执行为 0。",
+				["read 查看 src/cart.ts；edit 修改逻辑。", "bash 仍可登记，但是否执行还要经过团队规则。"],
+				"boot.tools(createDefaultTools()) 合并：内置在前，扩展在后。",
+				{ tools: [...builtinTools] }),
+			step("登记自定义检查", "ExtensionFactory 具体用哪个方法登记工具？",
+				"调用 api.registerTool(ToolDef)，不是导入核心执行器。组装方把 runner 收集的定义并进执行表。",
+				"工具箱：3 → 4；新增 lint_cart。core 修改位置保持 0。撞名抛错，不覆盖。",
+				["登记 lint_cart 的名称、参数声明、execute 与 replay 策略。", "registerTool 与 tools(base) 分别检查扩展内部、合并内置后的重名。"],
+				"api.registerTool(tool)\nconst tools = boot.tools(baseTools)\nAgent: { tools, ...boot.hooks }\nAgentSession: { tools, hooks: boot.hooks }",
+				{ tools: [...builtinTools, "lint_cart"] }),
+			step("经过统一执行路径", "新增工具要不要在 core 再写一个 lint_cart 分支？",
+				"不需要。模型工具声明与执行定义接好后，沿统一的查找、参数校验、权限和执行路径调用。",
+				"lint_cart 虚拟执行：0 → 1；四项工具仍共存，core 修改位置 0。真实工具执行仍为 0。",
+				["lint_cart：虚拟检查结果为通过。", "未替换内置工具，也未修改 core 执行器。"],
+				"真实 CLI 的扩展工具是 word_count；lint_cart 是同 API 的教学例子。",
+				{ tools: [...builtinTools, "lint_cart"], virtualExecutions: 1 }),
+		],
+	},
+	{
+		id: "permission", context: "购物车团队禁用所有 bash。规则 A/B/C 按登记顺序调用；短路是“已有明确返回就停止继续问”。",
+		steps: [
+			step("有提议，不代表已执行", "模型提出 bash 调用，工具已经动手了吗？",
+				"还没有。找到工具且参数校验通过后，执行前才咨询 tool_call。",
+				"收到调用提议，虚拟执行仍为 0。准备运行 A、B、C 三条规则。",
+				["执行前决策：不是 tool_execution_end 的事后回调。", "规则返回值会传给已有 beforeToolCall 检查。"],
+				"api.on('tool_call', ({toolCall}) => toolCall.name === 'bash'\n  ? {block:true, reason:'bash disabled'} : undefined)"),
+			step("A 不管，B 拒绝，C 不运行", "A 返回 undefined，B 返回 block:true，C 还会收到调用吗？",
+				"不会。第一个非 undefined 返回值就短路。B 的 reason 进入错误结果；工具未执行。",
+				"已运行规则：A → B；C 跳过。虚拟执行：0 → 0；产生 isError=true 的拒绝结果。",
+				["A：undefined，继续问下一条。", "B：{ block: true, reason: 'bash disabled' }；C：不运行。"],
+				"tool_call 短路条件是 result !== undefined，不是 result.block。\n已知工具且会话传 hooks 时，拒绝结果也补记 journal。",
+				{ handlersVisited: ["A", "B"], errorResult: true }),
+			step("小心空对象也会短路", "正常 lint_cart 调用，A 返回 {}，后面的 B 还会拦它吗？",
+				"不会。{} 已经是明确返回，但没有 block:true，所以放行。这也是为什么与自己无关的规则应该返回 undefined。",
+				"本次仅运行 A，B 跳过；lint_cart 虚拟执行：0 → 1，非错误结果。不要把 {} 当作“没意见”。",
+				["正常调用的 A：{}，停止规则链但不拒绝。", "需要后续规则继续检查时，明确返回 undefined。"],
+				"短路同样适用于 {block:false}。\n这是注册序相关的实际语义，不是“所有规则投票”。",
+				{ handlersVisited: ["A"], virtualExecutions: 1 }),
+		],
+	},
+	{
+		id: "context", context: "同一任务反复读取相同文件。read 卡片代表完整调用+结果组；删重是本页自定义规则，不是 demo 自动完成的能力。",
+		steps: [
+			step("先准备，再剪枝", "context 过滤是在 before_provider_request 前面吗？",
+				"不是。会话先重投影并检查压缩，扩展 before_provider_request 再装饰，最后才把消息交给 context 过滤。",
+				"请求仍有 4 张卡，历史也有 4 张；尚未剪枝。先认清实际顺序。",
+				["AgentSession 内部准备 → before_provider_request。", "按准备后的工具声明筛执行表 → context → StreamFn。"],
+				"prepared = await prepareRequest(input)\nmessages = await transformContext(prepared.messages)\nstreamFn({...prepared, messages})",
+				{ requestOrder: ["before_provider_request", "context", "streamFn"] }),
+			step("只移出重复读取组", "移出 read#1 后，原始历史也会少一组吗？",
+				"不会。过滤返回的是由原消息对象组成的新数组；请求视图变短，历史仍保留。该规则必须自己保证消息关系合理。",
+				"请求卡片：4 → 3；移出 read#1 调用+结果，保留 read#2。历史：4 → 4；不删日志。",
+				["保留：任务。", "保留：read#2 调用+结果；lint_cart 检查结果。", "只从本次请求移出：read#1 调用+结果。"],
+				"api.on('context', messages => messages.filter(keepExistingMessage))\n返回的每个元素必须来自入参，且最终数组非空。",
+				{ requestCards: [...prunedCards], requestOrder: ["before_provider_request", "context", "streamFn"] }),
+			step("克隆也不是同一条消息", "把消息展开成 {...message} 再返回，内容没变，可以吗？",
+				"不可以。引用不同会触发 TypeError，并在真正请求模型之前失败。返回空数组也会失败；这不是深度冻结或完整语义校验。",
+				"错误分支：transformContext 返回克隆对象 → TypeError → prompt 拒绝；没有发模型请求，也没有改历史。",
+				["只过滤或重排原对象：允许。", "克隆、在 context 注入新对象、全部过滤为空：拒绝。"],
+				"messages.map(m => ({...m})) // 会失败\n要加临时请求资料用 before_provider_request；要写真历史用 next_turn。",
+				{ failure: "TypeError", requestOrder: ["before_provider_request", "context"] }),
+		],
+	},
+	{
+		id: "result", context: "lint_cart 已执行返回 ok。现在两条结果处理器分别整理文字、标记错误；它们不能倒转执行副作用。",
+		steps: [
+			step("检查完成，再整理输出", "tool_result 是否能重新执行被 block 的工具？",
+				"不能。它只处理已经形成的结果，当前只允许覆盖 content 与 isError，不接管 execute。",
+				"虚拟执行已为 1；原始结果是 ok、isError=false。还没应用覆盖。",
+				["原始结果：ok。", "durationMs 与 terminate 仍归 core，details 也不在可覆盖类型中。"],
+				"afterToolCall 位于 finalize 之后、工具 end 与结果消息之前。",
+				{ virtualExecutions: 1 }),
+			step("A 改内容", "A 返回新 content 后，工具 end 与历史结果会不一致吗？",
+				"core 在一处应用覆盖，再把同一结果交给事件和消息两个消费者。",
+				"内容：ok → coupon checked；isError 仍为 false。执行次数仍为 1。",
+				["A 返回 content：coupon checked。", "单次 applyAfterToolCall 重建 result 与 message。"],
+				"api.on('tool_result', () => ({content:[{type:'text',text:'coupon checked'}]}))",
+				{ virtualExecutions: 1, resultText: "coupon checked" }),
+			step("B 只改错误标志", "B 收到 A 改过的文字，还是原始 ok？最终内容又是什么？",
+				"B 收到的仍是原始 context，原文仍为 ok。但返回值按字段累积，B 只改 isError，不抹掉 A 返回的 content。",
+				"最终结果：coupon checked、isError=true；工具 end 与 toolResult 一致。A/B 都读原始 ok，虚拟执行保持 1。",
+				["A 的 content 保留下来。", "B 的 isError:true 合并进最终结果；同字段后者胜出，void 不擦掉前值。"],
+				"runner 对每个 handler 都调用 handler(context)，不把累计覆盖回写 context。\naccumulated = {...accumulated, ...partial}",
+				{ virtualExecutions: 1, resultText: "coupon checked", resultIsError: true }),
+		],
+	},
+	{
+		id: "turns", context: "购物车检查后还想让助手补一轮报告。turn 从 0 计数；两条 next_turn 规则 A/B 各补一句说明。",
+		steps: [
+			step("默认收敛还是补一轮", "模型已经没要工具，扩展还能请求继续一次吗？",
+				"可以在 turn_end 决策里返回 {action:'continue'}。先发出 core turn_end 事件，再咨询该决策；仍受同一个 maxTurns 限制。",
+				"本课第一次 turn_end 返回 continue；预备第二轮，不新增用户输入或 followUp 队列。",
+				["无工具的正常轮次：void/end 默认结束，continue 才续轮。", "有工具的正常轮次：void/continue 默认继续，end 可结束。"],
+				"api.on('turn_end', ({turn}) => ({action:turn === 0 ? 'continue' : 'end'}))"),
+			step("下一轮写一条真 system 消息", "A/B 都返回 sections，是 B 覆盖 A 吗？",
+				"不是。sections 和 toolsAdded 按注册序拼接，toolsRemoved 去重。从第二轮起，非空结果合成一条 system 消息写进历史。",
+				"新增 system：coupon checked + report discount；bash 移除名合并为一个。不是改一份易失快照。",
+				["A：sections=[coupon checked]，移除 bash。", "B：sections=[report discount]，也移除 bash。", "合并：两句说明都保留，移除名 bash 只有一次。"],
+				"next_turn 返回 {sections?, toolsAdded?, toolsRemoved?}\n任一非空：message_start → message_end → AgentSession journal。",
+				{ nextSections: ["coupon checked", "report discount"] }),
+			step("重开后仍看见说明", "这些说明只在内存，还是能随历史重放？",
+				"能重放，因为它们是真 system 消息。重启仍需重新装配扩展代码；记录过的系统更新不会靠再次运行 factory 来还原。",
+				"第二轮完成，虚拟轮次为 2；重开日志仍保留这两句说明。全空 next_turn 不写记录；硬停不允许 finishTurn 复活。",
+				["journal 里新增一条 system 历史事实，不是两份并行状态。", "continue 共用 maxTurns；本例第二次返回 end，避免烧满预算。"],
+				"next_turn 在 turn >= 1 的 turn_start 后、system/tools replay 前运行。\n工具声明不是执行器；toolsAdded 不会创建 execute。",
+				{ nextSections: ["coupon checked", "report discount"], turns: 2 }),
+		],
+	},
+	{
+		id: "provider", context: "StreamFn 是普通模型函数插口。这里用 base 代表已有 provider；wrapper 代表已实现的第二函数包装器，不代表另一家服务。",
+		steps: [
+			step("先有 base，再创建旧会话", "Agent 每次调用都会重新读取全局默认函数吗？",
+				"不会。构造时取 options.streamFn 或当时的默认函数，并保存在实例里。AgentSession 的任务与摘要也共用这一引用。",
+				"默认槽为 base；旧实例创建并捕获 base。尚未安装包装器。",
+				["旧实例：base。", "StreamFn 返回统一事件流，而不是 provider 的原始 HTTP 响应。"],
+				"this.streamFn = options.streamFn ?? getDefaultStreamFn()"),
+			step("安装 wrapper，不改 core", "installStreamFn 会安装 ai-sdk 客户端吗？",
+				"不会。它读取当前默认函数，包上 createSecondStreamFn 再装回默认槽；仍向原来的服务转发。",
+				"默认槽：base → wrapper → base。未修改 core，也未引入 ai-sdk。旧实例仍使用 base。",
+				["第二实现：装饰/转发器，可配置 decorate、onCall。", "CLI 默认安装只包装转发，没有指定装饰或观测回调。"],
+				"setDefaultStreamFn(createSecondStreamFn(getDefaultStreamFn()))\n调用前若未安装任何默认函数，会抛错。",
+				{ provider: "wrapper → base" }),
+			step("新实例、旧实例、显式函数", "改完默认槽，三种实例分别用哪一个？",
+				"新实例没有显式函数才读取 wrapper；旧实例已捕获 base；显式 streamFn 的优先级高于默认槽。",
+				"新实例：wrapper → base；旧实例：base；显式实例：explicit。默认槽不是已运行会话的热切换开关。",
+				["新建且未显式传入：wrapper → base。", "已经创建：base。", "显式传 streamFn：explicit，不受默认槽影响。"],
+				"优先级：options.streamFn ?? getDefaultStreamFn()\n生命周期：实例构造时捕获。命令 context 的 setter 当前为空操作。",
+				{ provider: "wrapper → base", oldSessionProvider: "base", explicitProvider: "explicit" }),
+		],
+	},
+	{
+		id: "failure", context: "同一个购物车任务，分别让权限规则、观察者、上下文规则出错。比较它们是否能阻止工具、是否拒绝整次运行。",
+		steps: [
+			step("权限规则自身坏了", "tool_call 抛 rule offline，会默认放行吗？",
+				"不会。runner 记录后重抛，执行前检查把错误变成该工具的 error result。工具不执行，模型仍可收到诊断。",
+				"虚拟执行：0 → 0；错误结果为 rule offline。run 可以继续，不等于整次 prompt reject。",
+				["fail-closed：不知道权限规则结论，就不动手。", "向模型交回工具错误结果，不默默放行。"],
+				"tool_call throw → log → prepareToolCall catch → immediate error result",
+				{ failure: "error result; run continues", errorResult: true }),
+			step("日志观察者坏了", "message_end 观察者抛错，会杀掉正在完成的任务吗？",
+				"不会。notify 捕获并记录带扩展名的错误，然后继续分发后续观察者，不让渲染/日志故障中断会话。",
+				"新增一条观察错误日志；任务继续。观察者返回值从来不参与执行许可。",
+				["记录 renderer offline。", "后续观察者仍可收到事件；工具控制权不在观察层。"],
+				"session.subscribe(event => boot.notify(event))\nCLI 用 void 忽略通知 promise；runner 内部隔离 observer 异常。",
+				{ failure: "logged; run continues" }),
+			step("上下文决策坏了", "context 出错也只记日志继续发请求，可以吗？",
+				"不可以。模型材料已经无法可信地准备；决策异常被记录并冒泡，经 Agent 解包为原错误，prompt/submit 拒绝。",
+				"本次没有模型请求；调用方收到 pruner crashed。tool_result、before_provider_request、turn_end、next_turn 的抛错也是该方向。",
+				["不能吞掉决策异常，悄悄走成另一条分支。", "包装器 decorate 失败另走 error 事件协议，别与钩子 reject 混淆。"],
+				"context throw → log → AgentInfrastructureFailure → 解包原错 reject\nfactory 初始化异常则附扩展名后抛出。",
+				{ failure: "reject original error" }),
+		],
+	},
+];
+const get = (id) => document.getElementById(id);
+let lessonIndex = 0;
+let stepIndex = 0;
+let unlocked = 0;
+let revealed = false;
+function render() {
+	const lesson = lessons[lessonIndex];
+	const current = lesson.steps[stepIndex];
+	get("lesson").value = lesson.id;
+	get("lesson-context").textContent = lesson.context;
+	get("lesson-position").textContent = "小课 " + (lessonIndex + 1) + " / " + lessons.length;
+	get("position").textContent = (stepIndex + 1) + " / " + lesson.steps.length;
+	get("step-title").textContent = current.title;
+	get("prediction").textContent = current.question;
+	get("prev").disabled = stepIndex === 0;
+	get("next").disabled = !revealed || stepIndex === lesson.steps.length - 1;
+	get("next-lesson").disabled = !revealed || stepIndex !== lesson.steps.length - 1 || lessonIndex === lessons.length - 1;
+	get("reveal").setAttribute("aria-expanded", String(revealed));
+	get("answer").hidden = !revealed;
+	get("explanation").textContent = revealed ? current.explanation : "";
+	get("change").textContent = revealed ? current.change : "";
+	get("technical-output").textContent = revealed ? current.technical : "";
+	get("snapshot-output").textContent = revealed ? JSON.stringify(current.state, null, 2) : "";
+	get("state-summary").textContent = revealed
+		? "教学桌面｜工具箱：" + current.state.tools.join(" · ") + "｜虚拟执行：" + current.state.virtualExecutions
+			+ " 次｜本页真实工具 / 模型：0 / 0 次"
+		: "";
+	const cards = revealed ? current.cards.map((text) => {
+		const card = document.createElement("p");
+		card.className = "card";
+		card.textContent = text;
+		return card;
+	}) : [];
+	get("cards").replaceChildren(...cards);
+	const timeline = lesson.steps.map((entry, index) => {
+		const button = document.createElement("button");
+		button.setAttribute("type", "button");
+		button.textContent = (index + 1) + ". " + entry.title;
+		button.disabled = index > unlocked;
+		button.className = index === stepIndex ? "active" : "";
+		if (index === stepIndex) button.setAttribute("aria-current", "step");
+		button.addEventListener("click", () => {
+			if (index <= unlocked) navigate(index);
+		});
+		return button;
+	});
+	get("timeline").replaceChildren(...timeline);
+}
+function navigate(index) {
+	stepIndex = index;
+	revealed = false;
+	get("advanced").open = false;
+	render();
+}
+function chooseLesson(index) {
+	lessonIndex = index;
+	unlocked = 0;
+	navigate(0);
+}
+get("reveal").addEventListener("click", () => {
+	revealed = true;
+	unlocked = Math.max(unlocked, Math.min(stepIndex + 1, lessons[lessonIndex].steps.length - 1));
+	render();
+});
+get("next").addEventListener("click", () => {
+	if (revealed && stepIndex < lessons[lessonIndex].steps.length - 1) navigate(stepIndex + 1);
+});
+get("prev").addEventListener("click", () => {
+	if (stepIndex > 0) navigate(stepIndex - 1);
+});
+get("reset").addEventListener("click", () => chooseLesson(lessonIndex));
+get("lesson").addEventListener("change", () => {
+	const index = lessons.findIndex((entry) => entry.id === get("lesson").value);
+	if (index >= 0) chooseLesson(index);
+});
+get("next-lesson").addEventListener("click", () => {
+	if (revealed && stepIndex === lessons[lessonIndex].steps.length - 1 && lessonIndex < lessons.length - 1)
+		chooseLesson(lessonIndex + 1);
+});
+chooseLesson(0);
+</script>
+</body>
+</html>

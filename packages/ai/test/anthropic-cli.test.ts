@@ -113,7 +113,7 @@ describe("CLI composition root", () => {
 			{ body: await fixture("toolcall") }, { body: await fixture("text") },
 		]);
 		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("mini-agent (stage 10)");
+		expect(result.stdout).toContain("mini-agent (stage 11)");
 		expect(result.stdout).toContain("session:");
 		expect(result.stdout).toContain('→ read {"path":"package.json"}');
 		expect(result.stdout).toContain("你好，文件已读。");
@@ -182,7 +182,7 @@ describe("CLI composition root", () => {
 			], { cwd, cleanup: false, args: ["--continue"] });
 
 			expect(second.code).toBe(0);
-			expect(second.stdout).toContain("mini-agent (stage 10)");
+			expect(second.stdout).toContain("mini-agent (stage 11)");
 			expect(second.stdout).toContain("resumed");
 			expect(second.stdout).toContain(sessionPath);
 			expect(second.requests).toHaveLength(1);
@@ -225,7 +225,7 @@ describe("CLI composition root", () => {
 			const result = await runCli("/compact\n/exit\n", [], { cwd, cleanup: false });
 			expect(result.code).toBe(0);
 			expect(result.requests).toHaveLength(0);
-			expect(result.stdout).toContain("mini-agent (stage 10)");
+			expect(result.stdout).toContain("mini-agent (stage 11)");
 			expect(result.stdout).toContain("nothing to compact");
 			const directory = join(cwd, ".mini-agent", "sessions");
 			const [file] = await readdir(directory);

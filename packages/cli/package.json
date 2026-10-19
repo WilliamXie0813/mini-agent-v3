@@ -9,7 +9,8 @@
 	},
 	"dependencies": {
 		"@mini-agent/ai": "workspace:*",
-		"@mini-agent/core": "workspace:*"
+		"@mini-agent/core": "workspace:*",
+		"@mini-agent/extensions": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/node": "22.19.19",
