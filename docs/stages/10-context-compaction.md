@@ -3,6 +3,12 @@
 > spec：`docs/specs/2026-10-09-mini-agent-v3-design.md` §3.2(b)、§4、§5 阶段 10  
 > 计划：`docs/plans/2026-10-15-stage-10-context-compaction.md`
 
+## 从零开始的教学入口
+
+先打开 [阶段 10 离线交互图解](10-context-compaction-explained.html)：从“模型每次收到什么”和 token / 上下文窗口开始，贯穿“修复 `src/total.ts` 的负数总价且保留接口”的任务。先手动走过选保留边界、独立摘要、追加记录、组装下一次请求，再依次看工具配对、请求前阈值、单次超窗恢复、分支回原文、再次压缩和摘要失败。
+
+页面无需依赖或联网；双栏卡片分别展示完整历史与下一次请求材料，每步先猜再揭示，并标出本步新增、移出与进入请求的记录。摘要和用量是教学示例，不会调用真实模型或写入会话。JSON、usage 与源码细节可按需展开；实现语义以下文和源码为准。
+
 ## 这个阶段解决了什么问题
 
 阶段 9 之后，session journal 只会变长，而模型的 context window 有限。长会话必然撞窗：不处理，provider 报错然后会话卡死；真删历史，阶段 9 的 branch 和审计承诺全部作废。
@@ -34,6 +40,8 @@ journal:  ... u1 a1 u2 a2 u3 a3 [compaction C(summary, firstKept=a2)] u4 a4
 ### 3. 切点只能落在完整 turn 边界
 
 一个 retained turn = 一条有效（非 error/aborted）assistant + 紧随其后的全部 toolResult。`findCutPoint` 从尾部数 N 条有效 assistant，候选 entry 之前的 conversation 进摘要，候选及其后原样保留。**切点永远不会落在 toolResult 中间**——否则模型看到没有结果的 toolCall（或没有调用的 toolResult），协议直接坏掉。parallel 结果的完成顺序不影响切点。
+
+这里的 N 不是 N 次用户问答；自动算法只选择有效 assistant，范围比日志边界校验允许的 submission / 非 toolResult message 更窄。system 与工具声明历史完整重放、不进摘要。无候选前缀时，压缩是零请求、零事件、零写入；刚压缩过却不保证再次 `/compact` 无事可做，因为旧摘要本身仍可能成为下一次候选。
 
 ### 4. 摘要是一次独立的无工具请求
 

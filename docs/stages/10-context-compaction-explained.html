@@ -3,439 +3,632 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>装不下，也不删 — 阶段 10 交互教学</title>
+<title>对话太长了，怎么办？— 阶段 10 从零图解</title>
 <style>
-	:root { --paper: #f4efe3; --panel: #fffaf0; --ink: #172033; --soft: #586174; --line: #d8cfbe; --blue: #2457d6; --accent: #d95d39; }
+	:root { --paper: #f4efe3; --panel: #fffaf0; --ink: #172033; --soft: #586174; --line: #d8cfbe; --blue: #2457d6; --accent: #b34428; --green: #246343; --wash: #e7f2e8; }
 	* { box-sizing: border-box; }
-	body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.8 Georgia, "Songti SC", serif; }
-	main { max-width: 1200px; margin: auto; padding: 45px 24px 80px; }
-	header { border-bottom: 4px double var(--ink); padding-bottom: 30px; }
-	h1 { font-size: clamp(36px, 6vw, 68px); line-height: 1.15; margin: 12px 0; }
-	h2 { margin: 36px 0 12px; font-size: 29px; }
-	h3 { margin: 0 0 10px; font-size: 19px; }
-	p { color: var(--soft); }
-	.kicker { color: var(--accent); font: 13px/1.6 monospace; letter-spacing: .15em; }
+	html { scroll-behavior: smooth; }
+	body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.85 Georgia, "Songti SC", serif; }
+	main { max-width: 1160px; margin: auto; padding: 40px 24px 72px; }
+	header { border-bottom: 4px double var(--ink); padding-bottom: 26px; }
+	h1 { font-size: clamp(34px, 6vw, 62px); line-height: 1.2; margin: 14px 0; }
+	h2 { margin: 44px 0 14px; font-size: 28px; line-height: 1.4; }
+	h3 { margin: 0 0 10px; font-size: 20px; }
+	h4 { margin: 0 0 8px; font-size: 16px; }
+	p { margin: 10px 0; color: var(--soft); }
 	a { color: var(--blue); }
-	code { font: .88em monospace; background: #e8e1d2; padding: 2px 5px; border-radius: 4px; }
-	pre { padding: 16px; margin: 0; background: #111827; color: #e5e9f2; border-radius: 8px; font: 13px/1.7 monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 440px; overflow: auto; }
+	.kicker, .badge { font: 12px/1.6 system-ui, sans-serif; letter-spacing: .06em; }
+	.kicker { color: var(--accent); }
+	.lead { color: var(--ink); font-size: 22px; }
 	.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 	.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; min-width: 0; }
-	.flow { margin: 22px 0; border-left: 4px solid var(--accent); }
-	button, select { font: 14px/1.5 system-ui, sans-serif; padding: 9px 14px; color: var(--ink); border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
+	.note { background: var(--panel); border-left: 4px solid var(--blue); padding: 12px 18px; margin: 18px 0; }
+	.route { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 16px 0 0; font: 14px/1.7 system-ui, sans-serif; }
+	.flow { margin: 18px 0; padding: 16px; border-left: 4px solid var(--accent); background: var(--panel); color: var(--ink); }
+	code { font: .87em monospace; background: #e8e1d2; padding: 2px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+	pre { margin: 12px 0 0; padding: 16px; background: #111827; color: #e5e9f2; border-radius: 8px; font: 13px/1.7 monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 380px; overflow: auto; }
+	button, select, input { font: 14px/1.6 system-ui, sans-serif; }
+	button, select { max-width: 100%; padding: 9px 13px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); }
 	button { cursor: pointer; }
 	button:hover:not(:disabled), button.active { background: var(--ink); color: var(--paper); }
-	button:disabled { opacity: .4; cursor: not-allowed; }
-	button:focus-visible, select:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
-	.controls { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; margin: 15px 0; }
-	select { max-width: 100%; }
-	#timeline { display: flex; flex-wrap: wrap; gap: 7px; margin: 15px 0; }
+	button:disabled { opacity: .45; cursor: not-allowed; }
+	button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
+	.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 15px 0; }
+	#timeline { display: flex; flex-wrap: wrap; gap: 7px; margin: 16px 0; }
 	#timeline button { font-size: 12px; }
 	#step-title { color: var(--accent); }
-	#path-output { min-height: 60px; }
-	#error-output { color: #b83c3c; font-family: system-ui, sans-serif; }
-	table { width: 100%; border-collapse: collapse; font-size: 15px; }
-	th, td { text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); padding: 12px 8px; }
-	.note { border-left: 4px solid var(--blue); padding: 12px 18px; background: var(--panel); }
-	[hidden] { display: none !important; }
-	.question { font-size: 21px; color: var(--ink); }
-	#delta-output { border-left: 5px solid #6fce99; }
-	#change-summary { color: var(--ink); white-space: pre-line; }
-	details { margin-top: 18px; border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+	#prediction { color: var(--ink); }
+	#change-summary, #summary-input { white-space: pre-line; }
+	#change-summary { color: var(--ink); border-left: 4px solid var(--green); padding-left: 14px; }
+	#status-output { color: var(--green); font: 14px/1.8 system-ui, sans-serif; }
+	#error-output { color: #a12626; font-family: system-ui, sans-serif; }
+	.compare { margin-top: 20px; }
+	.message { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 12px; margin-top: 10px; overflow-wrap: anywhere; }
+	.message p { margin: 5px 0 0; font-size: 15px; white-space: pre-wrap; }
+	.message .badge { display: block; margin-bottom: 5px; color: var(--soft); }
+	.message.changed { border-left: 5px solid var(--green); background: var(--wash); }
+	.message.summary { border-color: var(--blue); background: #edf0fa; }
+	.message.omitted { background: #eee8db; border-style: dashed; }
+	.message.omitted .badge { color: var(--accent); }
+	.message.tool { border-left: 4px solid var(--accent); }
+	.message.boundary { outline: 2px solid var(--accent); outline-offset: 2px; }
+	details { margin-top: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; }
 	summary { cursor: pointer; font-family: system-ui, sans-serif; }
-	.reading-order { padding-left: 24px; }
-	.reading-order li { margin: 7px 0; }
-	footer { margin-top: 38px; border-top: 1px solid var(--line); font-size: 14px; }
-	@media (max-width: 760px) { .grid { grid-template-columns: 1fr; } main { padding: 25px 16px 50px; } }
+	.table-wrap { overflow-x: auto; }
+	table { width: 100%; border-collapse: collapse; font-size: 15px; }
+	th, td { text-align: left; vertical-align: top; padding: 12px 9px; border-bottom: 1px solid var(--line); }
+	li { margin: 7px 0; }
+	#budget-input, meter { display: block; width: 100%; margin: 15px 0; }
+	meter { height: 24px; }
+	[hidden] { display: none !important; }
+	footer { margin-top: 38px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 14px; }
+	@media (max-width: 760px) { .grid { grid-template-columns: 1fr; } main { padding: 24px 16px 48px; } .card { padding: 15px; } }
+	@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 </style>
 </head>
 <body>
 <main>
 	<header>
-		<div class="kicker">MINI-AGENT / STAGE 10 / CONTEXT COMPACTION</div>
-		<h1>装不下，也不删</h1>
-		<p class="question">对话长到模型装不下，删掉最早的消息是最简单的办法——为什么这个工具偏偏一条都不删？</p>
-		<p>删了，branch 就再也回不到原文；不删，下一次请求又超窗。这页先让你遇到这个两难，再一步步看「摘要 + 保留尾巴」的投影如何两全。</p>
-		<p><a href="10-context-compaction.md">阶段文档</a> · <a href="09-session-persistence-explained.html">上一阶段：让历史活过进程</a></p>
+		<div class="kicker">MINI-AGENT / STAGE 10 / 从零理解上下文压缩</div>
+		<h1>对话太长了，怎么办？</h1>
+		<p class="lead">你和 Agent 已经改了半天代码。再贴一份日志，模型突然说：“装不下了。”</p>
+		<p>删掉前面的对话，就可能忘掉“不要改接口”这样的约束；全部带上，又超过模型能接收的容量。阶段 10 做的不是让模型无限记忆，而是：<strong>原始记录一条不删，下一次请求只带摘要和最近一段原文。</strong></p>
+		<p>不需要先读源码。先弄懂“模型这次看到了什么”，再亲手走一遍压缩；函数名和日志字段放到最后。</p>
+		<p><a href="10-context-compaction.md">阶段 10 技术文档</a> · <a href="09-session-persistence-explained.html">回看阶段 9：把历史存下来</a></p>
+		<nav class="route" aria-label="本页阅读路线">
+			<a href="#context">1. 模型的容量</a><a href="#two-copies">2. 存下来的 ≠ 发出去的</a><a href="#lab">3. 动手看压缩</a><a href="#budget">4. 何时自动压缩</a><a href="#boundaries">5. 哪些事不能保证</a><a href="#source">6. 回到源码</a>
+		</nav>
 	</header>
 
-	<h2>01 / 先试几个直觉方案：哪里会出事？</h2>
-	<table>
-		<thead><tr><th>直觉方案</th><th>会出什么事</th><th>因此需要什么</th></tr></thead>
-		<tbody>
-			<tr><td>直接删掉最早的对话</td><td>日志被改写，branch 回不到原文，审计也断了。</td><td>历史 append-only，只追加一条 compaction 记录。</td></tr>
-			<tr><td>只在内存里换成摘要</td><td>重启后摘要丢失，下一次请求又超窗。</td><td>摘要本身也写进日志，重启后能重新投影。</td></tr>
-			<tr><td>按条数砍掉前 N 条</td><td>可能把 toolCall 和它的 toolResult 切成两截。</td><td>切点只落在 user / assistant 边界。</td></tr>
-			<tr><td>超窗报错就交给用户重来</td><td>任务上下文全断，之前的工具成果白做。</td><td>识别超窗错误，自动压缩后重试一次。</td></tr>
-			<tr><td>永远逐条数字符估算</td><td>和真实计费偏差越滚越大，要么误触发要么漏触发。</td><td>用最近一次 usage 校准，之后的增量再粗估。</td></tr>
-		</tbody>
-	</table>
-	<p>关键不是“把旧的藏起来就好了”，而是：<strong>journal 永远是完整事实；发给模型的只是当前路径投出的一面——最新摘要 + 保留的原文尾巴。</strong></p>
-
-	<h2>02 / 两个新概念：压缩记录与投影</h2>
-	<div class="grid">
-		<article class="card"><h3>compaction entry：摘要的收据</h3><p>大白话：“从这里往前，模型看这份摘要就够了。”它带 <code>reason</code>（manual / threshold / overflow）、<code>summary</code>、<code>firstKeptEntryId</code> 和 <code>tokensBefore</code>，像普通记录一样 append 进日志、等 fsync。它不改 parent 树，不删、不改任何旧行。</p></article>
-		<article class="card"><h3>projection：给模型看的那一面</h3><p>大白话：“同一份日志，模型看到的取决于你站在哪个 leaf。”取当前路径上最新的一条 compaction，在 <code>firstKeptEntryId</code> 前插入摘要，其后保留原文。branch 到压缩之前，投影就恢复原文。</p></article>
-	</div>
-	<pre class="flow">完整 journal（事实）→ 沿 parent 链取当前路径 → 找路径上最新的 compaction
-→ firstKept 前插入摘要 → 摘要 + 保留尾巴 = 模型上下文</pre>
-	<p><strong>三条触发路径，共用同一个压缩编排。</strong>区别只在什么时候动手、动手后谁重建上下文：</p>
-	<div class="grid">
-		<article class="card"><h3>manual：用户输入 /compact</h3><p>session 空闲时执行。压缩落盘后立刻重建 idle Agent。没有可摘要的前缀时返回 undefined——零事件、零请求、零写入。</p></article>
-		<article class="card"><h3>threshold：请求前的最后一道检查</h3><p>每次调用模型前估算上下文，严格大于 <code>contextWindow − reserveTokens</code> 才压缩。刚好等于不压缩，避免边界抖动。</p></article>
-		<article class="card"><h3>overflow：provider 说装不下了</h3><p>provider 用结构化 <code>errorKind: "context_overflow"</code> 报告。压缩后重试一次；再超窗就正常报错，绝不循环。</p></article>
-	</div>
-	<p class="note"><code>enabled: false</code> 只关 threshold 这条自动路径。手动 /compact 和 overflow 恢复仍然可用——一个是用户明说要的，一个是救火，都不该被“自动压缩开关”误伤。</p>
-
-	<h2>03 / 先猜，再看这一步留下什么</h2>
-	<p>每步先回答一个小问题，再点“揭示答案与变化”。优先看本步变化；完整日志、当前路径和模型上下文在折叠区，需要时再展开。这里不执行真实 fsync、模型请求或工具。</p>
-	<ol class="reading-order">
-		<li><strong>threshold：</strong>跨过阈值的那一刻，发送前发生了什么？</li>
-		<li><strong>cutpoint：</strong>为什么切点不能落在 toolResult 上？</li>
-		<li><strong>manual：</strong>/compact 是命令不是输入；没有可摘要内容时会怎样？</li>
-		<li><strong>overflow：</strong>超窗后压缩重试——为什么只给一次机会？</li>
-		<li><strong>branch：</strong>回到压缩之前的节点，模型还能看到摘要吗？</li>
-		<li><strong>recompact：</strong>第二次压缩的输入是什么？旧 usage 还算数吗？</li>
-	</ol>
-	<div class="controls">
-		<label for="scenario">实验场景</label>
-		<select id="scenario">
-			<option value="threshold">1 / threshold：跨过阈值才压缩</option>
-			<option value="cutpoint">2 / cutpoint：切点不能切开工具调用对</option>
-			<option value="manual">3 / manual：/compact 与“没什么可压”</option>
-			<option value="overflow">4 / overflow：只恢复一次</option>
-			<option value="branch">5 / branch：压缩前后的两张面孔</option>
-			<option value="recompact">6 / recompact：站在上一份摘要肩上</option>
-		</select>
-	</div>
-	<div class="controls">
-		<button id="prev">上一步</button><button id="next">下一步</button>
-		<button id="jump-end">看最终状态</button><button id="reset">重置</button>
-		<span id="position"></span>
-	</div>
-	<nav id="timeline" aria-label="实验时间线"></nav>
-	<article class="card" aria-live="polite">
-		<h3 id="step-title"></h3>
-		<p id="scenario-context"></p>
-		<p class="question"><strong>猜一猜：</strong><span id="prediction"></span></p>
-		<button id="reveal" aria-controls="step-answer" aria-expanded="false">揭示答案与变化</button>
-		<div id="step-answer" hidden>
-			<p id="explanation"></p>
-			<h3>这一步改变了什么？</h3>
-			<p id="change-summary"></p>
-			<pre id="delta-output" aria-label="本步新增的日志记录"></pre>
-			<p><strong id="decision"></strong></p>
-			<p id="error-output" role="status"></p>
-			<details id="history-details">
-				<summary>辅助细节：完整日志、当前路径与模型上下文</summary>
-				<div class="grid" style="margin-top:18px">
-					<article class="card"><h3>完整 journal / 已保存的记录</h3><p>压缩后旧记录一字节不动，文件只会变长。compaction 记录也在其中，但它不是对话本身。</p><pre id="journal-output"></pre></article>
-					<article class="card"><h3>当前对话路径与最新压缩</h3><p>投影只看当前路径上的记录；路径上最后一条 compaction 是唯一生效的摘要。</p><pre id="path-output"></pre><h3 style="margin-top:18px">累计调用次数</h3><pre id="execution-output"></pre></article>
-					<article class="card"><h3>模型上下文 / 投影</h3><p>system sections 始终完整重放；摘要插在 firstKept 之前；overflow 诊断留在日志里供审计，但不进下一次请求。</p><pre id="context-output"></pre></article>
-					<article class="card"><h3>摘要请求长什么样？</h3><p>独立请求，不是普通 turn：固定的 summarization system prompt、一个装着 JSON 序列化对话的 user message、<code>tools: []</code>。响应为 error / aborted / length、含 toolCall 或全空白，都算失败——不落盘、不发 completed 事件。</p></article>
-				</div>
-			</details>
+	<section id="context">
+		<h2>01 / 先别谈压缩：模型每次到底看什么？</h2>
+		<p>在这个 Agent 的模型请求里，模型能依据的是<strong>本次发送的规则、对话和工具声明</strong>，不是你电脑上的整份会话文件。你上次说过的话，要被程序再次带入这次请求，模型才能继续据此回答。保存到磁盘和发送给模型，是两回事。</p>
+		<div class="grid">
+			<article class="card">
+				<h3>一次请求，像摊在桌上的材料</h3>
+				<p><strong>system：</strong>规则，例如“改代码前先读文件”。</p>
+				<p><strong>user：</strong>你的需求，例如“修复负数总价，接口不要变”。</p>
+				<p><strong>assistant：</strong>模型的回复，也可能是在请求调用工具。</p>
+				<p><strong>toolResult：</strong>工具返回的内容，例如读出的源文件。工具声明则告诉模型有哪些工具可以用。</p>
+			</article>
+			<article class="card">
+				<h3>桌子不是无限大的</h3>
+				<p><strong>token</strong> 是模型计量文本的单位，不等于字数，也不是“一条消息”。一大段文件内容可能占很多 token。</p>
+				<p><strong>上下文</strong>就是本次请求提供给模型的材料；<strong>上下文窗口</strong>就是它的容量限制。</p>
+				<p>材料越积越多，就要提前腾出余量。代码用 token 估算和已知用量判断，估算不等于精确分词，因此也要准备“真的装不下”时的恢复路径。</p>
+			</article>
 		</div>
-	</article>
-	<div class="controls">
-		<button id="next-scenario">继续下一个实验</button>
-		<span id="scenario-position"></span>
-	</div>
+		<p class="note">阶段 9 回答“退出后，对话还在吗？”；阶段 10 回答“对话都在，但这次不能全给模型看，怎么办？”</p>
+	</section>
 
-	<h2>04 / 从实验归纳压缩规则</h2>
-	<p>压缩不是“差不多满了就砍一点”，而是每一步都有明确的触发条件和失败形状。</p>
-	<table>
-		<thead><tr><th>情况</th><th>行为</th><th>为什么</th></tr></thead>
-		<tbody>
-			<tr><td>估算 ≤ window − reserve</td><td>不压缩，直接发送</td><td>严格大于才触发；刚好相等不压，避免边界来回抖动</td></tr>
-			<tr><td>切点候选落在 toolResult 上</td><td>拒绝，继续往前找 assistant / submission</td><td>toolCall 与它的结果必须成对出现，切开就是坏上下文</td></tr>
-			<tr><td>摘要响应 error / aborted / length / 含 toolCall / 空白</td><td>压缩失败，不写 compaction，原错误重抛</td><td>不能留下 success 形状的坏摘要污染回放</td></tr>
-			<tr><td>一次 submit 内第二次 overflow</td><td>不再压缩、不再重试，run 以 error 结束</td><td>防止“压缩—重试—再超窗”无限循环</td></tr>
-			<tr><td>第二次压缩</td><td>只有最新摘要生效；旧摘要作为输入被卷进新摘要</td><td>摘要并列只会越叠越长，违背压缩的目的</td></tr>
-			<tr><td>compaction 之前记录的 usage</td><td>失效，回退逐条 <code>ceil(chars / 4)</code> 粗估</td><td>旧 usage 描述的是已被摘要替代的历史，不能再用</td></tr>
-			<tr><td><code>stopReason: "length"</code></td><td>按输出截断处理，不触发压缩恢复</td><td>那是输出 token 上限，不是上下文装不下</td></tr>
-		</tbody>
-	</table>
+	<section id="two-copies">
+		<h2>02 / 不是删笔记，而是准备一份短版材料</h2>
+		<p>下面始终用同一件事举例：修复 <code>src/total.ts</code>，让折扣后的总价不小于 0，同时保留现有导出接口。先看几个直觉方案的后果。</p>
+		<div class="table-wrap">
+			<table>
+				<thead><tr><th>如果这样做</th><th>会失去什么</th><th>阶段 10 怎么做</th></tr></thead>
+				<tbody>
+					<tr><td>真把旧消息删掉</td><td>原始要求没了，回头查证或从旧位置重新尝试也做不到。</td><td>磁盘历史只追加；旧内容仍然在。</td></tr>
+					<tr><td>只给模型最后几条</td><td>可能丢掉“接口不能变”的约束，也可能只留下工具结果、丢了对应调用。</td><td>旧内容整理成摘要，最近的调用与结果完整保留。</td></tr>
+					<tr><td>把摘要只放在内存</td><td>进程一退出，下次就不知道该用哪份摘要。</td><td>把摘要和保留边界作为一条新记录写入历史。</td></tr>
+				</tbody>
+			</table>
+		</div>
+		<div class="grid compare">
+			<article class="card"><h3>磁盘上的完整笔记</h3><p>规则 → 原始需求 → 讨论 → 读文件的调用与结果 → 回复 → <strong>新增一张摘要便签</strong></p><p>压缩之后，这本笔记甚至多了一条记录。磁盘文件不会因此变小。</p></article>
+			<article class="card"><h3>为下一次请求准备的短版</h3><p>完整规则与工具声明 → <strong>摘要</strong> → 最近保留的原文</p><p>没有发送的旧原文仍在笔记里，但模型这次不能直接看到。这个“从完整笔记组装请求”的过程，代码叫 <strong>projection（投影）</strong>。</p></article>
+		</div>
+		<p class="lead">所以，“压缩上下文”不是压缩文件，也不是无损打包；它是用有损的文字摘要，替代这次请求中的一部分原文。</p>
+	</section>
 
-	<h2>05 / 为什么 branch 到压缩前后，模型看到的不一样？</h2>
-	<p>compaction 记录也挂在 parent 链上。投影只认<strong>当前路径</strong>上的压缩记录——移走 leaf，生效的摘要就跟着变。</p>
-	<pre>A → u1 → a1 → u2 → a2 → C1(compaction, firstKept=a2) → u3 → a3   leaf = a3
+	<section id="lab">
+		<h2>03 / 先手动走一遍，暂时不管自动触发</h2>
+		<p>第一个实验只回答四件事：<strong>哪些原文进摘要？摘要怎么生成？保存在哪里？模型随后看到了什么？</strong>看完再继续工具边界、阈值与超窗，不必一次记住所有场景。</p>
+		<p>实验使用缩小的示例历史，保留最近 <strong>2 条有效 assistant 回复及其后面的内容</strong>。注意：这不是“2 次用户问答”。一次用户需求可能让模型回复、调用工具、再回复，已经占了两条 assistant。实际默认保留数是 4。</p>
+		<p class="note">这是离线教学模拟：不请求真实模型、不改文件、不执行工具，也不做真实磁盘同步。摘要内容预先写好；用量示例不是这些短句的真实分词结果。为聚焦压缩，图中省略阶段 9 的工具执行元数据和每轮结束记录。</p>
+		<div class="controls">
+			<label for="scenario">按顺序学习</label>
+			<select id="scenario">
+				<option value="manual">1 / 第一次手动压缩：从原文到下一次请求</option>
+				<option value="cutpoint">2 / 为什么不能只留下工具结果？</option>
+				<option value="threshold">3 / 在发送请求前，发现快装满了</option>
+				<option value="overflow">4 / 已经超窗：压缩后只重试一次</option>
+				<option value="branch">5 / 从旧位置重来，原文还找得到吗？</option>
+				<option value="recompact">6 / 又聊长了：第二份摘要怎么来？</option>
+				<option value="failure">7 / 摘要失败了，宁可不压缩</option>
+			</select>
+		</div>
+		<p id="scenario-context"></p>
+		<div class="controls">
+			<button id="prev">上一步</button><button id="next">下一步</button><button id="jump-end">跳到最后一步</button><button id="reset">重置本实验</button><span id="position"></span>
+		</div>
+		<nav id="timeline" aria-label="本实验步骤"></nav>
+		<article class="card">
+			<h3 id="step-title"></h3>
+			<p class="lead">先猜：<span id="prediction"></span></p>
+			<button id="reveal" aria-controls="step-answer" aria-expanded="false">揭示答案与本步变化</button>
+			<div id="step-answer" aria-live="polite" hidden>
+				<p id="explanation"></p>
+				<p id="change-summary"></p>
+				<p id="status-output"></p>
+				<p id="error-output" role="status"></p>
+				<div id="summary-work" class="note" hidden>
+					<h4>本次选中的摘要材料</h4>
+					<p id="summary-input"></p>
+					<p>发起摘要时，这些材料会进入另一次模型请求：只要求整理目标、约束、已完成和未完成工作，<strong>工具列表为空</strong>，不接着执行任务。摘要响应不会当成一条普通 assistant 回复写入会话。</p>
+				</div>
+				<div class="grid compare">
+					<section class="card" aria-label="完整历史卡片">
+						<h3>左边：磁盘完整历史</h3>
+						<p>绿色边框与文字标记 = 本步新增或本步移出请求；虚线卡片 = 记录还在，但这次请求不直接发送它；橙色外框 = 选定的原文保留起点。</p>
+						<div id="journal-cards"></div>
+					</section>
+					<section class="card" aria-label="请求上下文卡片">
+						<h3>右边：此刻组装任务请求，会带什么？</h3>
+						<p>这是模型可读的那份材料，不是另一个存档。蓝色卡片表示摘要，工具声明随完整系统历史重放。</p>
+						<div id="request-cards"></div>
+					</section>
+				</div>
+				<details id="history-details">
+					<summary>读代码时再展开：本步 JSON、保留边界、请求与事件</summary>
+					<p><code>compaction</code> 是“上下文压缩记录”；<code>summary</code> 是摘要正文；<code>firstKeptEntryId</code> 是“从哪条记录开始保留原文”；<code>reason</code> 是触发原因；<code>tokensBefore</code> 是压缩前估算用量。</p>
+					<h4>仅本步新增的记录</h4><pre id="delta-output"></pre>
+					<h4>当前路径与保留边界</h4><pre id="path-output"></pre>
+					<h4>模型请求上下文（尚未必真的发出）</h4><pre id="context-output"></pre>
+					<h4>摘要请求 / 模拟事件</h4><pre id="summary-output"></pre>
+				</details>
+			</div>
+		</article>
+		<div class="controls"><button id="next-scenario">继续下一个实验</button><span id="scenario-position"></span></div>
+	</section>
 
-leaf = a3 的投影：system + 摘要 + a2, u3, a3
-branch(u1) 的投影：system + u1              ← C1 不在路径上，原文回来了
-branch(C1) 的投影：system + 摘要 + a2</pre>
-	<p><code>firstKeptEntryId</code> 必须是 compaction parent 的既有祖先，且是模型可见的对话边界。缺失、不在祖先链上、或指向 toolResult，append 与 open 都拒绝——宁可打不开，也不让坏边界悄悄投出半截上下文。</p>
-	<p>token 估算也遵守同一条规矩：<code>Usage.inputTokens</code> 已经包含 cache 读写，校准时只用 <code>inputTokens + outputTokens</code>，不能再加一遍。摘要请求自己的 usage 不算会话 usage，否则下一次估算会被一次“不是对话的请求”带偏。</p>
+	<section id="budget">
+		<h2>04 / 现在才问：什么时候自动压缩？</h2>
+		<p>手动压缩是你输入 <code>/compact</code>。自动压缩则在<strong>每次任务模型请求前</strong>检查，包括工具结果返回后的下一次请求。代码里的 <code>threshold</code> 就是“请求前阈值”，<code>overflow</code> 就是“提供模型服务的一方真的报了超窗”。</p>
+		<div class="card">
+			<h3>拖一拖：刚好 80，和超过 80 一样吗？</h3>
+			<p>把窗口缩小成 100 格、预留量设为 20 格：检查线 = 100 − 20 = 80。这里仅演示比较规则，不是真的发送请求，也不计算摘要会占多少格。</p>
+			<label for="budget-input">当前估算用量：<output id="budget-used" for="budget-input">80</output> / 100</label>
+			<input id="budget-input" type="range" min="60" max="100" step="1" value="80">
+			<meter id="budget-meter" min="0" max="100" value="80" aria-label="估算上下文用量"></meter>
+			<p id="budget-decision" aria-live="polite"></p>
+			<p>代码是 <code>tokens &gt; window − reserve</code>，不是 <code>&gt;=</code>。越过检查线不代表已经超出窗口：它是在真正装不下之前尝试腾空间，而不是容量保证。</p>
+		</div>
+		<div class="table-wrap">
+			<table>
+				<thead><tr><th>入口</th><th>何时发生</th><th>关闭自动阈值后</th></tr></thead>
+				<tbody>
+					<tr><td>手动 manual</td><td>会话空闲时输入 <code>/compact</code>，不把这条命令存成用户请求。</td><td>仍可用。</td></tr>
+					<tr><td>请求前 threshold</td><td>估算用量严格超过检查线，尝试压缩，再组装请求。</td><td><code>enabled: false</code> 关闭的只有这一项。</td></tr>
+					<tr><td>超窗后 overflow</td><td>识别结构化超窗错误，成功压缩后最多给一次恢复重试。</td><td>仍可用；不是无限救火。</td></tr>
+				</tbody>
+			</table>
+		</div>
+		<details>
+			<summary>用量怎么估？为什么不能一直用上次的数字？</summary>
+			<p><code>usage</code> 是模型服务返回的用量。这里优先用压缩之后最近一条有效 assistant 的 <code>inputTokens + outputTokens</code> 校准，再加后续消息的粗估用量。缓存读写已经包含在 inputTokens 中，不能重复加。</p>
+			<p>压缩前的 usage 量的是旧的大上下文，即使那条回复仍在保留区，其用量也不能套到新请求上。没有新的有效 usage 时，对整个投影逐条用 <code>ceil(字符数 / 4)</code> 粗估。系统规则和工具声明也占空间；错误、中断和全零用量不能做校准点。</p>
+			<p>实际默认：<code>contextWindow = 128000</code>、<code>reserveTokens = 16384</code>，检查线为 111616。CLI 可用 <code>ANTHROPIC_CONTEXT_WINDOW</code> 配置窗口；reserve 必须小于 window，不是任意正整数都能与默认预留量搭配。</p>
+		</details>
+	</section>
 
-	<h2>06 / 看懂之后，再对照实现</h2>
-	<div class="grid">
-		<article class="card"><h3>compaction.ts：阈值、切点、摘要</h3><p><code>shouldCompact()</code> 严格大于；<code>findCutPoint()</code> 从尾部反向数 assistant turn，error / aborted 不计入；<code>generateCompactionSummary()</code> 用同一份 streamFn 发独立请求，失败形状明确。</p></article>
-		<article class="card"><h3>session-context.ts：投影</h3><p>找当前路径最新 compaction，在 firstKept 前插入固定 wrapper 包裹的摘要。<code>streamContextFromSessionPath()</code> 额外排除 overflow 诊断，并从完整历史重算 system 与 tools。</p></article>
-		<article class="card"><h3>agent-session.ts：三条路径编排</h3><p>manual 落盘后立刻重建 idle Agent；threshold 挂在 <code>prepareRequest</code> 上，每次请求前检查；overflow 挂在 <code>recoverContextOverflow</code> 上，一次 submit 只恢复一次。内部压缩只 append entry，不当场替换正在运行的 Agent。</p></article>
-		<article class="card"><h3>anthropic-error.ts：结构化错误分类</h3><p>provider 层把 Anthropic / Kimi 的超窗响应分类成 <code>errorKind: "context_overflow"</code>，其余是 <code>"provider"</code>。core 只认这个字段，从不匹配错误字符串。</p></article>
-	</div>
-	<p>现在再看完整顺序：threshold 发生在发送之前，overflow 发生在收到错误之后，两者都汇入同一个内部压缩编排。</p>
-	<pre class="flow">submit → prepareRequest 估算 → 超阈值？ → compact(threshold) → 重新投影 → streamFn
-→ 收到 context_overflow？ → compact(overflow) 一次 → 重试 → 仍 overflow → error 结束</pre>
-	<p class="note">事件顺序同样固定：<code>compaction_start</code> 在摘要请求之前发出；compaction entry 写入并 fsync 之后才发 <code>compaction_end(status: "completed")</code>。失败时发成对的 <code>compaction_end(status: "error")</code>，再重抛原错误。</p>
-	<details>
-		<summary>进阶边界：阈值估算、CLI 入口与不做什么</summary>
-		<p>估算优先用 compaction 之后最后一条有效 assistant usage 校准（<code>inputTokens + outputTokens</code>，不含 cache 字段），其后的增量消息逐条 <code>ceil(chars / 4)</code>；找不到有效 usage 就全量粗估。error / aborted / 全零 usage 不做校准点。</p>
-		<p>CLI 用 <code>ANTHROPIC_CONTEXT_WINDOW</code> 覆盖默认 128000 窗口；非法值（0、负数、小数、非数字）启动即失败并报出变量名。<code>/compact</code> 在输入循环里早于普通 submit 分支识别，不生成 requestId，也不会把摘要正文打印到终端。本阶段不做通用 hook 注册表、第二 provider、/fork 或自动定时压缩。</p>
-	</details>
-	<footer><p>源码入口：<code>compaction.ts</code> / <code>session-context.ts</code> / <code>agent-session.ts</code> / <code>anthropic-error.ts</code>。阶段 10 源码净增量预算约 380 行；三条路径共用一份压缩编排，是控制预算的关键。</p></footer>
+	<section id="boundaries">
+		<h2>05 / 看懂压缩，也要知道它救不了什么</h2>
+		<div class="grid">
+			<article class="card"><h3>摘要有损，不保证“一定记住”</h3><p>摘要要求保留目标、约束、文件路径、错误和未完成工作，但仍可能遗漏细节。旧原文在磁盘，不代表本次模型能直接看到它；保留原文是为了追查与回退，不是让摘要变成无损存储。</p></article>
+			<article class="card"><h3>没材料可摘要，就不强压</h3><p>有效 assistant 数量不足，或保留边界前根本没有可摘要对话，手动压缩就返回“nothing to compact”：没有摘要请求、没有压缩事件、没有新记录。超窗恢复也可能因为没有候选前缀而无法重试。</p></article>
+			<article class="card"><h3>压完，也不保证一定装得下</h3><p>最近保留的内容、系统规则或工具声明本身仍可能很大；摘要也可能不够短。请求前阈值路径不会在原地一直压到变小；超窗恢复只有一次机会，仍失败就明确报错。</p></article>
+			<article class="card"><h3>输出被截断，不是输入超窗</h3><p><code>stopReason: "length"</code> 是模型输出达到上限，不是 <code>errorKind: "context_overflow"</code>。不能看到“长度”就触发压缩。摘要本身被截断也算摘要失败，不保存半份摘要。</p></article>
+		</div>
+		<p class="note">再输入一次 <code>/compact</code> 不一定无事可做：当前实现可能把上一份摘要本身再次作为候选前缀。是否有候选要看当前投影，不能用“刚压过”代替判断，也不能承诺每次都更短。</p>
+		<details>
+			<summary>一分钟自测：先自己回答，再展开</summary>
+			<p><strong>压缩后磁盘文件变小了吗？</strong>没有，新增压缩记录，完整旧字节不动。</p>
+			<p><strong>只保留工具结果，能靠摘要代替调用吗？</strong>不能。调用和结果必须配套；算法从最近的有效 assistant 选边界，它后面的结果一起留下。</p>
+			<p><strong>旧摘要和新摘要要并排给模型吗？</strong>不用。旧摘要进入下一次摘要请求；当前路径上最新的压缩记录决定这一份上下文。</p>
+			<p><strong>切回压缩前的位置呢？</strong>那条路径没有后来的压缩记录，组装请求时恢复该位置之前的原文。原文能回来，正因为从未删除。</p>
+		</details>
+	</section>
+
+	<section id="source">
+		<h2>06 / 最后，把学过的动作对应回源码</h2>
+		<p>到这里已经完成概念学习。想追实现时，再展开下面的入口；不用为了理解压缩而先记住函数名。</p>
+		<details>
+			<summary>展开源码入口与阅读线索</summary>
+		<div class="table-wrap">
+			<table>
+				<thead><tr><th>刚才看到的动作</th><th>源码入口</th><th>阅读时只追这件事</th></tr></thead>
+				<tbody>
+					<tr><td>查用量、选保留边界、生成摘要</td><td><code>packages/core/src/compaction.ts</code></td><td><code>shouldCompact</code> → <code>findCutPoint</code> → <code>generateCompactionSummary</code>。自动选边界从有效 assistant 计数，不按用户输入次数计数。</td></tr>
+					<tr><td>旧历史没动，模型材料换了</td><td><code>packages/core/src/session-context.ts</code></td><td><code>projectSessionContext</code> 只应用当前路径最新摘要；system 与工具历史完整重放。<code>streamContextFromSessionPath</code> 还会排除超窗诊断。</td></tr>
+					<tr><td>三种入口汇到同一套保存流程</td><td><code>packages/core/src/agent-session.ts</code></td><td><code>compactInternal</code>：选候选 → 发 start → 请求摘要 → 追加并同步磁盘 → 发 completed。失败则 end(error) 并传播错误。</td></tr>
+					<tr><td>识别超窗，最多恢复一次</td><td><code>packages/ai/src/anthropic-error.ts</code> 与 <code>packages/core/src/agent-loop.ts</code></td><td>provider 层分类错误；core 只读结构化 kind。诊断先入日志、结束当前 turn，再恢复重试，不靠字符串猜。</td></tr>
+					<tr><td>保存摘要，且仍能回到旧分支</td><td><code>packages/core/src/session-journal.ts</code></td><td>压缩记录追加在当前末端，parentId 仍指向上一条记录；firstKeptEntryId 是请求投影的边界，不是新的 parent。</td></tr>
+				</tbody>
+			</table>
+		</div>
+		</details>
+		<details>
+			<summary>进阶：运行中的 Agent 为什么不能立刻换掉？</summary>
+			<p>Agent 是负责本轮模型与工具执行的运行对象。手动压缩发生在空闲时，保存后可以立刻按新投影重建它。请求前或超窗恢复发生在本轮执行中，只追加压缩记录、更新本次请求材料；等旧 Agent 完全结束，再重建供下一次使用的对象，避免丢掉事件与中断信号的归属。</p>
+			<p>自动选点与日志校验不是同一件事：<code>findCutPoint</code> 只选有效 assistant；日志校验允许当前祖先路径上的 submission 或非 toolResult 的 message。不要把“允许保存的边界”误读成“自动算法会选的边界”。</p>
+			<p>手动摘要失败时，CLI 打印诊断并回到提示符，不输出摘要正文。摘要不是继续执行任务，也不会因为读到旧工具调用就重新运行工具。本阶段没有新增可交互分支选择器、通用扩展系统、第二 provider 或 <code>/fork</code> 命令。</p>
+		</details>
+	</section>
+	<footer><p>读到这里，最重要的一句话是：<strong>完整历史负责“事实还在”，上下文投影负责“这次给模型什么”。</strong>技术细节与阶段成本见 <a href="10-context-compaction.md">阶段 10 文档</a>。本页可直接离线打开，所有实验均为教学模拟。</p></footer>
 </main>
 <script>
-	const systemText = "You are a minimal coding agent.";
-	const header = { type: "session", version: 1, id: "demo-session", createdAt: "2026-10-15T00:00:00.000Z" };
-	const SUMMARY_WRAPPER = (summary) => "The conversation history before this point was compacted into the following summary:\n\n<summary>\n" + summary + "\n</summary>";
-	const sub = (id, prompt) => ({ id, type: "submission", requestId: "req-" + id, prompt });
-	const asst = (id, content, extra = {}) => ({ id, type: "message", role: "assistant", content, ...extra });
-	const tool = (id, content) => ({ id, type: "message", role: "toolResult", content });
-	const action = (kind, title, explanation, data = {}) => ({ kind, title, explanation, ...data });
-	const note = (title, question, explanation, data = {}) => action("note", title, explanation, { question, ...data });
-	const submit = (id, prompt, explanation, tokens) => action("submit", "保存用户输入：" + id, explanation, { id, prompt, tokens });
-	const compact = (id, reason, summary, firstKeptEntryId, tokensBefore, explanation, tokens) =>
-		action("compact", "追加 compaction " + id + "（" + reason + "）", explanation, { id, reason, summary, firstKeptEntryId, tokensBefore, tokens });
+	const get = (id) => document.getElementById(id);
+	const createdAt = "2026-10-16T00:00:00.000Z";
+	const text = (value) => [{ type: "text", text: value }];
+	const user = (id, prompt) => ({ id, type: "submission", requestId: "req-" + id, prompt });
+	const assistant = (id, value, extra = {}) => ({ id, type: "message", message: { role: "assistant", content: text(value), stopReason: "stop", ...extra } });
+	const summaryMessage = (value) => ({
+		role: "user",
+		content: text("The conversation history before this point was compacted into the following summary:\n\n<summary>\n" + value + "\n</summary>"),
+	});
+	const system = {
+		id: "A", type: "message", message: {
+			role: "system", sections: [{ text: "修改前先读文件；不要泄露密钥。" }],
+			toolsAdded: [{ name: "read", description: "读取文件", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } }],
+		},
+	};
+	const baseEntries = [
+		user("u1", "修复 src/total.ts：折扣不能让总价小于 0。保留现有导出接口。"),
+		assistant("a1", "先定位总价计算逻辑，保留导出接口。"),
+		user("u2", "先读 src/total.ts，再改计算逻辑。"),
+		assistant("a2", "", { stopReason: "toolUse", content: [{ type: "toolCall", id: "call-read", name: "read", arguments: { path: "src/total.ts" } }] }),
+		{ id: "r2", type: "message", message: { role: "toolResult", toolCallId: "call-read", toolName: "read", content: text("export function total(price, discount) { return price - discount; }"), isError: false } },
+		assistant("a3", "已读到直接相减的问题；接下来加下限保护并补测试。", { usage: { inputTokens: 770, outputTokens: 30, cacheReadTokens: 100, cacheWriteTokens: 0 } }),
+	];
+	const S1 = "S1：修复 src/total.ts 的负数总价，导出接口不变。已决定先读文件再改计算逻辑。";
+	const S2 = "S2：src/total.ts 需要给折扣后的总价加 0 下限，接口不变；read 已确认目前直接相减，下一步修改并补测试。";
+	const priorCompaction = { id: "C1", type: "compaction", reason: "manual", summary: S1, firstKeptEntryId: "a2", tokensBefore: 800 };
+	const step = (kind, title, question, explanation, data = {}) => ({ kind, phase: kind, title, question, explanation, ...data });
+	const choose = step("cut", "选出原文保留边界", "保留最近 2 条有效 assistant，第一条保留的是哪条？", "从后往前数：a3 是第 1 条，a2 是第 2 条，因此从 a2 开始保留原文。a2 后面的 read 结果 r2 也留下。此前的用户要求和讨论进摘要；系统规则与工具声明不进摘要。");
+	const summarize = step("summarize", "单独请模型整理摘要", "这次请求是在继续改代码吗？历史会马上变化吗？", "不是继续任务。这次只发送候选前缀，请同一个底层模型接口整理摘要，工具列表为空。发出压缩开始事件，但此时没有写入摘要记录，原来的请求投影还没改变。", { phase: "summarizing" });
+	const commit = (id, reason, value) => step("commit", "保存摘要 " + id + "，再更新请求材料", "左边会删除旧卡片吗？右边会从哪条保留原文？", "摘要有效后，追加一条 compaction 记录并同步磁盘，才发 completed 事件。左边旧记录不动，右边换成完整系统规则、摘要和从保留边界开始的原文。", { phase: "committed", id, reason, summary: value });
+	const submit = step("submit", "保存下一条用户输入", "用户说“继续”时，刚才的摘要还会跟着带上吗？", "会。新输入追加到当前历史路径上；下一次请求仍按最新摘要组装。保存输入本身不是模型调用。", { entry: user("u3", "继续修改并跑测试。") });
+	const request = step("request", "组装并发送下一次任务请求", "这次是在请求摘要，还是继续处理用户任务？", "保存压缩记录后，投影已经能组装短版材料；现在正式发送：完整系统规则与工具声明、最新摘要、保留原文以及新输入。模型只收到右边的材料，不会顺便读取左边未发送的原文。演示在请求发出这里停下，不伪造后续改文件或测试成功。");
 	const scenarios = {
-		threshold: {
-			context: "实验 1：contextWindow = 128000，reserve = 16384，阈值 = 111616，keepRecentTurns = 2。历史已有 4 个 turn。",
-			decision: "记住：压缩发生在请求之前；模型从没看到被摘要的原文，但原文一直在日志里。",
-			entries: [
-				sub("u1", "定重构目标"), asst("a1", "目标与约束"),
-				sub("u2", "第一步修改"), asst("a2", "第一步完成"),
-				sub("u3", "第二步修改"), asst("a3", "第二步完成"),
-				sub("u4", "第三步修改"), asst("a4", "第三步完成")],
-			actions: [
-				note("估算当前上下文", "估算约 108000，距离阈值 111616 还有余量：这次会压缩吗？", "不压缩。108000 小于阈值，prepareRequest 直接放行。估算用最近一条有效 assistant usage 校准，其后的新消息逐条 ceil(chars / 4)。", { tokens: 108000 }),
-				submit("u5", "继续：补上测试", "新输入把估算推过阈值，触发 compaction_start(threshold)。注意：此时还没有正式请求模型。", 112000),
-				compact("C1", "threshold", "u1–u3：重构目标、约束，以及前两步修改的内容与结果。", "a3", 112000,
-					"独立摘要请求（固定 system prompt、tools 为空）返回摘要；append C1 并 fsync 之后才发 compaction_end(completed)。旧记录一字节未动，文件只变长。", 41000),
-				action("provider", "正式请求模型：发送的是投影", "模型收到 system + 摘要 + 保留尾巴（a3, u4, a4）+ u5；被摘要的 u1–u2 原文不在其中。", { entry: asst("a5", "测试已补上"), tokens: 43000 })] },
-		cutpoint: {
-			context: "实验 2：历史里有两次工具调用，第二次是并行调用（c2、c3 对应 r2、r3）。keepRecentTurns = 2。",
-			decision: "记住：assistant 与它后面的全部 toolResult 是一个整体；切点只落在 submission 或 assistant 上。",
-			entries: [
-				sub("u1", "读配置"), asst("a1", "toolCall c1"), tool("r1", "c1 的结果"), asst("a2", "读完，继续"),
-				sub("u2", "改两个文件"), asst("a3", "toolCall c2, c3"), tool("r2", "c2 的结果"), tool("r3", "c3 的结果"), asst("a4", "两个文件都改好了")],
-			actions: [
-				note("反向扫描：第 1 个保留 turn 是 a4", "从尾部数保留 turn，哪些 assistant 不算数？", "stopReason 为 error / aborted 的 assistant 不计入 retained turn。a4 是正常回复，算第 1 个。"),
-				note("第 2 个保留 turn 是 a3", "切点候选是 a3：r2、r3 会跟着保留，还是被摘要？", "r2、r3 跟在 a3 之后，随它一起保留——候选之后的 entries 原样 retained，parallel 结果的顺序不影响切点。"),
-				note("为什么不能从 r2 切", "如果把 firstKept 定在 r2，上下文会坏在哪里？", "模型会看到一条没有对应 toolCall 的 toolResult，而 a3 的 c2/c3 调用被摘要掉——调用与结果断成两截。append 与 open 都拒绝指向 toolResult 的边界。"),
-				compact("C1", "threshold", "u1–u2：读了配置，并决定修改两个文件。", "a3", 95000,
-					"摘要输入是 u1, a1, r1, a2, u2；投影保留 a3, r2, r3, a4。toolCall 与结果始终成对。", 36000)] },
 		manual: {
-			context: "实验 3：session 空闲，历史 3 个 turn，keepRecentTurns = 2。用户输入 /compact。",
-			decision: "记住：手动压缩只追加一条 compaction；没有可摘要的前缀时什么都不做。",
-			entries: [
-				sub("u1", "搭骨架"), asst("a1", "骨架完成"),
-				sub("u2", "填实现"), asst("a2", "实现完成"),
-				sub("u3", "跑测试"), asst("a3", "测试通过")],
-			actions: [
-				note("输入 /compact", "/compact 会变成一条 submission 发给模型吗？", "不会。CLI 在输入循环里先识别命令：不生成 requestId、不写 submission、不请求模型。它只在 idle 时触发手动压缩。"),
-				compact("C1", "manual", "u1–u2：已搭好骨架并填完实现。", "a2", 60000,
-					"compaction_start(manual) → 摘要请求 → append C1 + fsync → compaction_end(completed)。落盘后立刻重建 idle Agent，session.state 换成摘要 + 保留尾巴。", 24000),
-				note("再输一次 /compact", "保留尾巴之前只剩摘要本身：这次会再压出一条吗？", "不会。投影里 firstKept 之前没有新的可摘要对话，返回 undefined——零事件、零 provider 请求、零写入。终端打印 nothing to compact。")] },
+			title: "第一次手动压缩",
+			intro: "会话空闲时输入 /compact。先不管容量：左边是已经保存的需求、讨论和一次 read；最近两条 assistant 是 a2、a3。",
+			entries: baseEntries, steps: [choose, summarize, commit("C1", "manual", S1), submit, request],
+		},
+		cutpoint: {
+			title: "工具调用和结果不能拆开",
+			intro: "a2 是模型说“请 read 读取 src/total.ts”；r2 是工具返回的源代码。它们通过同一个调用 id 关联。压缩不是重新运行这次 read。",
+			entries: baseEntries,
+			steps: [
+				step("invalid-cut", "试着从工具结果 r2 开始保留", "只有源代码结果、没有 read 调用，上下文还完整吗？", "不完整。模型会看到一个找不到对应调用的工具结果。这个边界会被拒绝，不写日志。自动选切点的算法不会从 toolResult 起步。", { target: "r2" }),
+				choose, summarize, commit("C1", "manual", S1),
+			],
+		},
+		threshold: {
+			title: "请求前的容量检查",
+			intro: "为方便心算，演示窗口设为 1000、预留 200，检查线是 800。a3 的示例 usage 为输入 770 + 输出 30 = 800；这不是短句的实际分词结果。",
+			entries: baseEntries,
+			steps: [
+				step("budget", "估算正好等于 800", "刚好等于检查线，要压缩吗？", "不压。公式是严格大于：800 > 800 不成立。缓存用量已含在输入 770 中，不再重复相加。这里只展示检查结果，不发送任务请求。"),
+				submit, choose, summarize, commit("C1", "threshold", S1), request,
+			],
+		},
 		overflow: {
-			context: "实验 4：历史 2 个 turn，keepRecentTurns = 1。这一次 provider 直接说：装不下了。",
-			decision: "记住：一次 submit 最多 compact-and-retry 一次；防循环比再试一次重要。",
-			entries: [
-				sub("u1", "分析日志"), asst("a1", "日志结论"),
-				sub("u2", "贴上完整堆栈"), asst("a2", "堆栈分析")],
-			actions: [
-				submit("u3", "再贴一份更长的日志", "输入正常保存，正式请求发出。", 130000),
-				action("overflow", "provider 返回 context_overflow", "provider 层把超窗响应分类成 errorKind: \"context_overflow\"。这条诊断 append 进日志供审计，但会从下一次模型上下文排除。随后本轮 turn_end，触发 overflow 恢复。", { id: "ov1" }),
-				compact("C1", "overflow", "u1–u2：日志与堆栈的结论。", "a2", 130000,
-					"用 reason \"overflow\" 调同一个压缩编排。append 成功才允许重试；没有可摘要前缀或摘要失败，都不会重试。", 30000),
-				action("overflow", "重试：仍返回 context_overflow", "重试上下文 = system + 摘要 + a2 + u3，不含 ov1 诊断。假设还是装不下——同一 submit 的恢复机会已经用完。", { id: "ov2" }),
-				note("不再压缩，run 以 error 结束", "为什么不再压一次？摘要不是刚更新过吗？", "第二次 overflow 正常结束为 error：summary 仅 1 次、正式请求仅 2 次。stopReason: \"length\" 是输出上限，同样不触发这条路径。", { error: "context overflow persists after one compaction retry" })] },
+			title: "已经超窗后的单次恢复",
+			intro: "为单独看清救火路径，这个实验关闭请求前的自动阈值。它不影响超窗恢复：即使估算没有提前拦住，模型服务仍可能返回“上下文太长”。",
+			entries: baseEntries,
+			steps: [
+				submit,
+				step("overflow", "第一次任务请求返回超窗", "失败诊断要留下吗？下次还应把它发给模型吗？", "诊断先保存到历史、结束当前 turn，再尝试恢复。它用于审计，但不放进下一次任务请求；错误文本不是新的任务材料。", { id: "ov1" }),
+				choose, summarize, commit("C1", "overflow", S1),
+				step("overflow", "恢复重试仍然超窗", "要继续“压缩—重试—压缩”吗？", "不再用第二次超窗触发恢复。一次用户提交最多获得一次成功压缩后的恢复重试，这里任务请求共 2 次、摘要请求 1 次。估算与压缩都不是容量保证。", { id: "ov2", terminal: true }),
+			],
+		},
 		branch: {
-			context: "实验 5：日志里已有一次 compaction（C1，firstKept = a2），当前 leaf 在 C1 之后的 a3。",
-			decision: "记住：压缩不改历史；branch 到压缩前看原文，branch 到压缩后看摘要。",
-			entries: [
-				sub("u1", "旧方案讨论"), asst("a1", "旧方案结论"),
-				sub("u2", "换方向"), asst("a2", "新方向第一步"),
-				{ id: "C1", type: "compaction", reason: "manual", summary: "u1：旧方案的取舍。", firstKeptEntryId: "a2", tokensBefore: 90000 },
-				sub("u3", "继续新方向"), asst("a3", "新方向第二步")],
-			actions: [
-				note("当前投影：摘要生效", "leaf = a3 时，u1 的原文在模型上下文里吗？", "不在。路径上最新的 compaction 是 C1，模型看到 system + 摘要 + a2, u3, a3。u1 原文只在日志里。"),
-				action("branch", "branch(u1)：回到压缩之前", "文件没改、C1 没删；只是 leaf 移回 u1。C1 不在当前路径上，投影恢复原文——模型重新看到 u1。", { id: "u1" }),
-				action("branch", "branch(C1)：回到压缩本身", "leaf 移到 C1，摘要重新生效，保留 a2。同一份日志，两张面孔，由 leaf 位置决定。", { id: "C1" }),
-				action("branch", "branch(a3)：回到最新", "leaf 回到 a3，摘要 + a2, u3, a3。多次切换不会产生任何新记录。", { id: "a3" }),
-				note("非法边界会被拒绝", "如果手写一行 compaction，firstKeptEntryId 指向 r1 或别的分支，会怎样？", "append 与 open 都拒绝：firstKept 缺失、不是 parent 的祖先、或指向 toolResult，日志与 leaf 保持不变。宁可打不开，也不投出半截上下文。", { error: "invalid compaction boundary: firstKeptEntryId must be an ancestor assistant/submission entry" })] },
+			title: "回到旧位置，原文还在",
+			intro: "起点已经有 C1 摘要。branch 表示从历史中的一个位置重新开始；leaf 是当前末端，parentId 是每条记录指向上一条记录的线索。本页演示 API 语义，不是新增 CLI 分支命令。",
+			entries: [...baseEntries, priorCompaction],
+			steps: [
+				step("branch", "回到压缩之前的 a3", "C1 还在文件里，为什么模型能重新看到原文？", "当前路径停在 a3，没有经过后来的 C1，所以不应用那份摘要。完整原文恢复到请求材料里；C1 没有被删除。", { phase: "raw-branch", target: "a3" }),
+				step("branch", "回到摘要记录 C1", "这次路径包含 C1，哪份摘要生效？", "当前路径的最新压缩记录又是 C1，因此恢复为摘要 + a2、r2、a3。切换位置不写入新记录。", { target: "C1" }),
+				step("branch", "再回到 a3，准备另起一条对话", "接下来追加的新输入会指向 C1 吗？", "不会。当前末端是 a3，下一条输入的 parentId 指向 a3，绕开 C1。文件追加顺序与当前对话路径不是一回事。", { phase: "raw-branch", target: "a3" }),
+				step("submit", "在旧位置追加新输入", "文件里的 C1 会被覆盖吗？", "不会。新输入追加在文件末尾，但接续 a3；C1 成为不在当前路径上的旧分支记录。", { entry: user("u4", "先别改代码，重新讨论边界条件。") }),
+			],
+		},
 		recompact: {
-			context: "实验 6：C1 之后又积累了两轮对话（a2、a3 带真实 usage）。keepRecentTurns = 1，再次跨过阈值。",
-			decision: "记住：重复压缩站在上一份摘要肩上；旧 usage 随旧上下文一起失效。",
-			entries: [
-				sub("u1", "最初的目标"), asst("a1", "目标确认"),
-				{ id: "C1", type: "compaction", reason: "threshold", summary: "S1：目标与第一步已完成的修改。", firstKeptEntryId: "a1", tokensBefore: 112000 },
-				sub("u2", "第二步"), asst("a2", "第二步完成", { usage: { inputTokens: 60000, outputTokens: 2000 } }),
-				sub("u3", "第三步"), asst("a3", "第三步完成", { usage: { inputTokens: 114500, outputTokens: 1200 } })],
-			actions: [
-				note("估算：校准点只能是 C1 之后的 usage", "a1 的 usage 还管用吗？估算要不要再加 cacheReadTokens？", "a1 的 usage 描述的是已被 S1 替代的历史，失效。校准用 a3 的 inputTokens + outputTokens = 115700，cache 字段不重复加。115700 > 111616，触发第二次压缩。", { tokens: 115700 }),
-				note("第二次摘要的输入", "摘要请求会重新发送 u1 的原文吗？", "不会。投影里 a3 之前是 旧摘要 S1 + u2, a2, u3——u1 原文早已不在投影中。新摘要基于旧摘要 + 新增旧消息生成。"),
-				compact("C2", "threshold", "S2：目标、第一步修改，以及补完的第二、三步实现与验证。", "a3", 115700,
-					"append C2。最新 compaction 成为唯一活动摘要：S1 不并列出现，它已被卷进 S2。", 30000),
-				note("C2 之后的估算回退", "a3 的 usage 还能校准下一次估算吗？", "不能。a2、a3 的 usage 同样失效；直到压缩后出现新的有效 usage，逐条 ceil(chars / 4) 粗估。", { tokens: 30000 })] },
+			title: "第二次压缩与旧用量失效",
+			intro: "C1 已保存，后来又有新输入和 a4 回复。保留最近 2 条有效 assistant，这次边界向前推进到 a3。旧摘要参与下一次摘要，不把最早原文全部重发。",
+			entries: [...baseEntries, priorCompaction, user("u3", "补一下边界测试方案。"), assistant("a4", "需要覆盖折扣大于价格、等于价格和零价格。", { usage: { inputTokens: 900, outputTokens: 20 } })],
+			steps: [
+				step("cut", "新边界是 a3，旧摘要进入候选前缀", "这次摘要请求会重新收到 u1 的完整原文吗？", "不会。候选前缀是 S1 摘要 + a2 的工具调用 + r2 的结果；这些是在当前投影中、a3 之前的内容。系统规则仍不进摘要。"),
+				summarize, commit("C2", "manual", S2),
+				step("cut", "如果立刻再输入 /compact", "刚压缩过，是不是一定返回 nothing to compact？", "不是。当前候选前缀还包含 S2 摘要本身，所以仍可能再次请求摘要。这里仅显示候选，不实际重复请求。C2 之前的 a4 用量也已失效，现在回退逐条粗估；要等压缩后新的有效回复才能再用 usage 校准。"),
+			],
+		},
+		failure: {
+			title: "摘要失败，不假装成功",
+			intro: "仍用同一份完整历史。这次假设摘要服务返回空白文本。摘要服务失败不意味着原文损坏，也不应该写一条“成功但内容为空”的压缩记录。",
+			entries: baseEntries,
+			steps: [
+				choose, summarize,
+				step("failure", "拒绝空白摘要", "可以先保存一条空摘要，再继续任务吗？", "不可以。发出 compaction_end(error)，向调用方报告失败，不保存 compaction、不切换请求材料。手动 /compact 的 CLI 会打印错误并回到提示符。error、aborted、length 或含工具调用的摘要也会失败。"),
+			],
+		},
 	};
 
-	function append(state, entry) {
-		state.entries.push({ ...entry, parentId: state.leafId });
-		state.leafId = entry.id;
-	}
-	function project(state) {
+	function pathTo(state) {
 		const byId = new Map(state.entries.map((entry) => [entry.id, entry]));
 		const path = [];
 		for (let id = state.leafId; id !== null;) {
 			const entry = byId.get(id);
-			if (!entry) throw new Error("Unknown demo entry: " + id);
+			if (!entry) throw new Error("Unknown history entry: " + id);
 			path.unshift(entry);
 			id = entry.parentId;
 		}
-		const systems = path.filter((entry) => entry.type === "message" && entry.role === "system")
-			.map((entry) => ({ role: "system", content: entry.content }));
-		const toMessage = (entry) => {
-			if (entry.type === "submission") return { role: "user", content: entry.prompt };
-			if (entry.type === "message" && entry.role !== "system")
-				return { role: entry.role, content: entry.content, ...(entry.errorKind ? { errorKind: entry.errorKind } : {}) };
-			return null;
-		};
-		const compactions = path.filter((entry) => entry.type === "compaction");
-		const active = compactions.length ? compactions[compactions.length - 1] : null;
-		let conversation;
-		if (!active) {
-			conversation = path.map(toMessage).filter(Boolean);
-		} else {
-			const k = path.findIndex((entry) => entry.id === active.firstKeptEntryId);
-			const c = path.findIndex((entry) => entry.id === active.id);
-			if (k < 0 || c < 0 || k >= c) throw new Error("Invalid compaction boundary: " + active.firstKeptEntryId);
-			const kept = path.slice(k, c).map(toMessage).filter(Boolean);
-			const after = path.slice(c + 1).map(toMessage).filter(Boolean);
-			conversation = [{ role: "user", content: SUMMARY_WRAPPER(active.summary) }, ...kept, ...after];
+		return path;
+	}
+	function entryMessages(entry) {
+		if (entry.type === "submission") return [{ role: "user", content: text(entry.prompt) }];
+		return entry.type === "message" ? [entry.message] : [];
+	}
+	function project(state) {
+		const path = pathTo(state);
+		const latest = path.findLastIndex((entry) => entry.type === "compaction");
+		const active = latest < 0 ? null : path[latest];
+		const cut = active ? path.findIndex((entry) => entry.id === active.firstKeptEntryId) : -1;
+		if (active && (cut < 0 || cut >= latest)) throw new Error("Invalid summary boundary");
+		const entries = [];
+		for (let i = 0; i < path.length; i++) {
+			if (i === latest) continue;
+			if (i === cut) entries.push({ source: active, messages: [summaryMessage(active.summary)] });
+			const messages = entryMessages(path[i]);
+			entries.push({ source: path[i], messages: active && i < cut ? messages.filter((message) => message.role === "system") : messages });
 		}
-		const messages = [...systems, ...conversation.filter((m) => !(m.role === "assistant" && m.errorKind === "context_overflow"))];
-		return { path: path.map((entry) => entry.id), active, messages };
+		const messages = entries.flatMap((entry) => entry.messages);
+		const requestEntries = entries.map((entry) => ({
+			...entry,
+			messages: entry.messages.filter((message) => !(message.role === "assistant" && message.errorKind === "context_overflow")),
+		}));
+		return { path, active, entries, messages, requestEntries, requestMessages: requestEntries.flatMap((entry) => entry.messages) };
+	}
+	function estimateMessage(message) {
+		const chars = message.role === "system"
+			? message.sections.reduce((total, section) => total + section.text.length, 0)
+				+ (message.toolsAdded ?? []).reduce((total, tool) => total + JSON.stringify(tool).length, 0)
+				+ (message.toolsRemoved ?? []).reduce((total, name) => total + name.length, 0)
+			: message.content.reduce((total, block) => total + (block.type === "text" ? block.text.length : block.name.length + JSON.stringify(block.arguments).length), 0);
+		return Math.ceil(chars / 4);
+	}
+	function estimate(state) {
+		const projection = project(state);
+		const boundary = projection.active?.parentId;
+		const start = boundary === undefined ? 0 : projection.entries.findIndex((entry) => entry.source.id === boundary) + 1;
+		let tail = 0;
+		for (let i = projection.entries.length - 1; i >= start; i--) {
+			const messages = projection.entries[i].messages;
+			for (let j = messages.length - 1; j >= 0; j--) {
+				const message = messages[j];
+				if (message.role === "assistant" && message.stopReason !== "error" && message.stopReason !== "aborted"
+					&& message.usage && message.usage.inputTokens + message.usage.outputTokens > 0)
+					return message.usage.inputTokens + message.usage.outputTokens + tail;
+				tail += estimateMessage(message);
+			}
+		}
+		return projection.messages.reduce((total, message) => total + estimateMessage(message), 0);
+	}
+	function findCut(state) {
+		const entries = project(state).entries;
+		let seen = 0;
+		for (let i = entries.length - 1; i >= 0; i--) {
+			if (!entries[i].messages.some((message) => message.role === "assistant" && message.stopReason !== "error" && message.stopReason !== "aborted")) continue;
+			if (++seen !== 2) continue;
+			const messages = entries.slice(0, i).flatMap((entry) => entry.messages).filter((message) => message.role !== "system");
+			return messages.length ? { id: entries[i].source.id, messages } : null;
+		}
+		return null;
+	}
+	function validBoundary(state, id) {
+		const target = pathTo(state).find((entry) => entry.id === id);
+		return target && (target.type === "submission" || (target.type === "message" && target.message.role !== "toolResult"));
+	}
+	function append(state, data) {
+		if (state.entries.some((entry) => entry.id === data.id)) throw new Error("Duplicate history id: " + data.id);
+		if (data.type === "compaction" && (!validBoundary(state, data.firstKeptEntryId) || !data.summary.trim()))
+			throw new Error("Invalid compaction");
+		state.entries.push({ ...structuredClone(data), parentId: state.leafId, createdAt });
+		state.leafId = data.id;
 	}
 	function snapshot(state) {
-		const projected = project(state);
-		return structuredClone({ ...state, path: projected.path, active: projected.active, messages: projected.messages });
+		const projection = project(state);
+		return structuredClone({ ...state, requestMessages: projection.requestMessages, estimatedTokens: estimate(state) });
 	}
-	function predictionFor(step) {
-		if (step.kind === "note") return step.question;
-		if (step.kind === "submit") return "发送前会先估算上下文：这次会触发压缩，还是直接请求模型？";
-		if (step.kind === "compact") return "这条 compaction 会改写旧记录吗？下一份模型上下文长什么样？";
-		if (step.kind === "overflow") return step.id === "ov1"
-			? "provider 说装不下了：这一轮就此报错，还是有别的出路？"
-			: "重试又超窗：会再压缩一次、再试一次吗？";
-		if (step.kind === "provider") return "这次正式请求，模型看到的是完整原文还是别的什么？";
-		if (step.kind === "branch") return "移动 leaf 会删掉摘要或原文吗？模型看到的会变成哪一段？";
-		throw new Error("Unknown prediction action: " + step.kind);
-	}
-	function describeEntry(entry) {
-		if (entry.type === "compaction")
-			return entry.id + " / compaction：" + entry.reason + " 摘要已保存（firstKept=" + entry.firstKeptEntryId + "），旧记录不变";
-		const descriptions = {
-			submission: "用户请求已保存",
-			message: entry.role === "system" ? "初始系统提示已保存"
-				: entry.role === "toolResult" ? "工具结果已保存"
-					: entry.errorKind === "context_overflow" ? "超窗诊断已保存（不进下次模型上下文）" : "模型回复已保存",
-		};
-		return entry.id + " / " + entry.type + "：" + descriptions[entry.type];
+	function requestSourceIds(projection) {
+		return new Set(projection.requestEntries.filter((entry) => entry.messages.length).map((entry) => entry.source.id));
 	}
 	function buildTrace(scenario) {
-		const state = { entries: [], leafId: null, providerCalls: 0, summaryCalls: 0, tokens: 0, error: "" };
-		append(state, { id: "A", type: "message", role: "system", content: systemText });
+		const state = { entries: [], leafId: null, cut: null, summaryInput: [], summaryRequest: null, summaryCalls: 0, providerCalls: 0, events: [], error: "", tokensBefore: 0, overflowCount: 0 };
+		append(state, system);
 		for (const entry of scenario.entries) append(state, entry);
+		const initial = project(state);
 		const trace = [{
-			title: "起点：历史已就位，尚未压缩",
-			question: "这份历史里，哪些记录会进入模型上下文？有被删掉的东西吗？",
-			explanation: "所有对话记录都进入投影，没有删除任何东西。compaction 记录（如果有）自身不直接进入模型上下文，只决定摘要插在哪里。",
-			added: [],
-			changes: ["初始化会话 header 与 " + (state.entries.length - 1) + " 条历史记录。", "模型请求 0 次；摘要请求 0 次。"],
-			after: snapshot(state),
+			phase: "start", title: initial.active ? "起点：历史里已经有摘要" : "起点：模型材料还是原文",
+			question: "左边保存的记录，和右边准备发送的内容，有什么不同？",
+			explanation: initial.active ? "当前路径包含压缩记录 " + initial.active.id + "，所以右边已经是摘要 + 保留的原文；左边旧记录仍全部存在。"
+				: "此时还没有摘要，所有对话原文都进入请求材料。左边存的是记录，右边把用户提交记录还原成 user 消息；系统规则与工具声明也一起保留。",
+			added: [], changes: "加载示例历史；还没有发出任何新的任务请求或摘要请求。", after: snapshot(state),
 		}];
-		for (const step of scenario.actions) {
+		for (const action of scenario.steps) {
 			const before = snapshot(state);
-			if (step.kind === "submit") {
-				append(state, { id: step.id, type: "submission", requestId: "req-" + step.id, prompt: step.prompt });
-			} else if (step.kind === "provider") {
-				state.providerCalls++;
-				if (step.entry) append(state, step.entry);
-			} else if (step.kind === "overflow") {
-				state.providerCalls++;
-				append(state, { id: step.id, type: "message", role: "assistant", content: "", stopReason: "error", errorKind: "context_overflow", errorMessage: "prompt is too long for the model context window" });
-			} else if (step.kind === "compact") {
+			state.error = "";
+			if (action.kind === "cut") {
+				const cut = findCut(state);
+				state.cut = cut?.id ?? null;
+				state.summaryInput = cut?.messages ?? [];
+			} else if (action.kind === "summarize") {
+				if (!state.cut) throw new Error("Cannot summarize without a prefix");
 				state.summaryCalls++;
-				append(state, { id: step.id, type: "compaction", reason: step.reason, summary: step.summary, firstKeptEntryId: step.firstKeptEntryId, tokensBefore: step.tokensBefore });
-			} else if (step.kind === "branch") {
-				if (!state.entries.some((entry) => entry.id === step.id)) throw new Error("Unknown branch entry");
-				state.leafId = step.id;
-			} else if (step.kind === "note") {
-				// 只观察，不改变状态
-			} else {
-				throw new Error("Unknown demo action: " + step.kind);
+				state.tokensBefore = estimate(state);
+				state.events.push("compaction_start");
+				state.summaryRequest = {
+					system: "仅整理历史目标、约束、完成与未完成工作；不继续任务，不调用工具。（固定英文提示的中文释义）",
+					messages: [{ role: "user", content: text("<conversation>\n" + JSON.stringify(state.summaryInput, null, 2) + "\n</conversation>") }],
+					tools: [],
+				};
+			} else if (action.kind === "commit") {
+				if (!state.summaryRequest || !state.cut) throw new Error("Cannot save before summarizing");
+				append(state, { id: action.id, type: "compaction", reason: action.reason, summary: action.summary, firstKeptEntryId: state.cut, tokensBefore: state.tokensBefore });
+				state.events.push("compaction_end:completed");
+			} else if (action.kind === "submit") {
+				append(state, action.entry);
+			} else if (action.kind === "request") {
+				state.providerCalls++;
+			} else if (action.kind === "overflow") {
+				if (state.overflowCount >= 2) throw new Error("No further overflow retry is allowed");
+				state.providerCalls++;
+				state.overflowCount++;
+				append(state, assistant(action.id, "", { stopReason: "error", errorKind: "context_overflow", errorMessage: "prompt is too long for the model context window" }));
+				if (action.terminal) state.error = "一次恢复重试后仍超窗；停止本次运行并报告错误。";
+			} else if (action.kind === "branch") {
+				if (!state.entries.some((entry) => entry.id === action.target)) throw new Error("Unknown branch target");
+				state.leafId = action.target;
+			} else if (action.kind === "invalid-cut") {
+				if (validBoundary(state, action.target)) throw new Error("Expected an invalid boundary in this exercise");
+				state.error = "拒绝边界 " + action.target + "：工具结果不能独自成为保留原文的起点。";
+			} else if (action.kind === "failure") {
+				state.events.push("compaction_end:error");
+				state.error = "Compaction summary returned empty text：摘要失败，没有保存压缩记录。";
+			} else if (action.kind !== "budget") {
+				throw new Error("Unknown lesson action: " + action.kind);
 			}
-			if (step.tokens !== undefined) state.tokens = step.tokens;
-			if (step.error !== undefined) state.error = step.error;
 			const added = state.entries.slice(before.entries.length);
-			const changes = [added.length ? "新增 " + added.length + " 条日志记录：" : "没有新增日志记录。"];
-			changes.push(...added.map(describeEntry));
-			if (state.leafId !== before.leafId) changes.push("当前末端：" + before.leafId + " → " + state.leafId + "。");
-			if (state.providerCalls !== before.providerCalls) changes.push("正式模型请求次数：" + before.providerCalls + " → " + state.providerCalls + "。");
-			if (state.summaryCalls !== before.summaryCalls) changes.push("摘要请求次数：" + before.summaryCalls + " → " + state.summaryCalls + "。");
-			if (state.tokens !== before.tokens) changes.push("上下文估算 tokens：" + before.tokens + " → " + state.tokens + "。");
-			if (step.kind === "branch") changes.push("只移动 leaf；文件与记录数不变。");
-			if (step.kind === "overflow") changes.push("本轮 turn_end；诊断留在日志，但会被下一次投影排除。");
-			trace.push({ title: step.title, question: predictionFor(step), explanation: step.explanation, added, changes, after: snapshot(state) });
+			const after = snapshot(state);
+			const changes = [added.length ? "本步新增 " + added.length + " 条磁盘记录：" + added.map((entry) => entry.id).join("、") + "。旧记录不变。" : "本步没有新增磁盘记录。"];
+			if (action.kind === "cut") changes.push(state.cut ? "从 " + state.cut + " 开始保留原文；其前的 " + state.summaryInput.length + " 条对话消息进入候选摘要。" : "没有可摘要前缀，不请求摘要、不发压缩事件。");
+			if (state.leafId !== before.leafId) changes.push("当前历史末端：" + before.leafId + " → " + state.leafId + "。");
+			if (state.summaryCalls !== before.summaryCalls) changes.push("摘要请求：" + before.summaryCalls + " → " + state.summaryCalls + "；任务请求次数不变。");
+			if (state.providerCalls !== before.providerCalls) changes.push("任务请求：" + before.providerCalls + " → " + state.providerCalls + "。");
+			if (JSON.stringify(before.requestMessages) !== JSON.stringify(after.requestMessages)) {
+				changes.push("右边请求材料已变化：" + before.requestMessages.length + " 条 → " + after.requestMessages.length + " 条。");
+				const oldIds = requestSourceIds(project(before));
+				const newIds = requestSourceIds(project(after));
+				const removed = [...oldIds].filter((id) => !newIds.has(id));
+				const entered = [...newIds].filter((id) => !oldIds.has(id));
+				if (removed.length) changes.push("不再直接发送：" + removed.join("、") + "（磁盘记录仍在）。");
+				if (entered.length) changes.push("新进入请求材料：" + entered.join("、") + "。");
+			}
+			if (action.kind === "budget") changes.push("估算用量 " + after.estimatedTokens + "；检查线 800；尚未越线，不触发压缩。");
+			if (action.kind === "submit" && scenario === scenarios.threshold) changes.push("新输入使估算变为 " + after.estimatedTokens + "，超过 800；下一步选摘要边界，尚未发出任务请求。");
+			trace.push({ ...action, added, changes: changes.join("\n"), after });
 		}
 		return trace;
 	}
-
-	const get = (id) => document.getElementById(id);
-	const scenarioOrder = ["threshold", "cutpoint", "manual", "overflow", "branch", "recompact"];
-	let selected = "threshold";
-	let trace = buildTrace(scenarios[selected]);
+	function messageText(message) {
+		if (message.role === "system")
+			return [
+				...message.sections.map((section) => section.text),
+				...(message.toolsAdded?.length ? ["新增工具声明：" + message.toolsAdded.map((tool) => tool.name).join("、")] : []),
+				...(message.toolsRemoved?.length ? ["移除工具声明：" + message.toolsRemoved.join("、")] : []),
+			].join("\n");
+		if (message.role === "assistant" && message.errorKind === "context_overflow") return "超窗诊断：" + message.errorMessage;
+		return message.content.map((block) => block.type === "text" ? block.text : "请求工具 " + block.name + "(" + JSON.stringify(block.arguments) + ")").join("\n");
+	}
+	function makeCard(label, content, badge, classes = "") {
+		const card = document.createElement("article");
+		card.className = "message " + classes;
+		const tag = document.createElement("span");
+		tag.className = "badge";
+		tag.textContent = badge;
+		const heading = document.createElement("h4");
+		heading.textContent = label;
+		const body = document.createElement("p");
+		body.textContent = content;
+		card.replaceChildren(tag, heading, body);
+		return card;
+	}
+	const roles = { system: "系统规则", user: "用户", assistant: "模型", toolResult: "工具结果" };
+	function renderCards(current, previous, added) {
+		const projection = project(current);
+		const boundaryId = current.cut ?? projection.active?.firstKeptEntryId;
+		const boundaryBadge = (id) => id === boundaryId
+			? (previous && previous.cut !== current.cut ? "本步选定保留起点 · " : "原文保留起点 · ")
+			: "";
+		const onPath = new Set(projection.path.map((entry) => entry.id));
+		const visible = requestSourceIds(projection);
+		const oldVisible = previous ? requestSourceIds(project(previous)) : new Set();
+		const newIds = new Set(added.map((entry) => entry.id));
+		get("journal-cards").replaceChildren(...current.entries.map((entry) => {
+			const omitted = !visible.has(entry.id);
+			const newlyOmitted = omitted && oldVisible.has(entry.id);
+			const classes = (newIds.has(entry.id) || newlyOmitted ? "changed " : "") + (omitted ? "omitted " : "") + (entry.type === "compaction" ? "summary " : "") + (entry.id === boundaryId ? "boundary" : "");
+			const badge = (newIds.has(entry.id) ? "本步新增 · " : "")
+				+ (newlyOmitted ? "本步不再直接发送 · " : "")
+				+ boundaryBadge(entry.id)
+				+ (!onPath.has(entry.id) ? "旧分支，仍在文件中" : omitted ? "原文仍在，本次不直接发送" : entry.type === "compaction" ? "本次生效的摘要记录" : "当前路径上的原文");
+			if (entry.type === "compaction")
+				return makeCard(entry.id + " · 压缩记录", entry.summary + "\n原文保留起点：" + entry.firstKeptEntryId, badge, classes);
+			const message = entryMessages(entry)[0];
+			return makeCard(entry.id + " · " + roles[message.role], messageText(message), badge, classes);
+		}));
+		get("request-cards").replaceChildren(...projection.requestEntries.flatMap((entry) => entry.messages.map((message) => {
+			const isSummary = entry.source.type === "compaction";
+			return makeCard(
+				(isSummary ? "摘要（作为 user 消息）" : roles[message.role]) + " · " + entry.source.id,
+				isSummary ? entry.source.summary : messageText(message),
+				boundaryBadge(entry.source.id) + (previous && !oldVisible.has(entry.source.id) ? "本步新进入请求材料" : "此刻会发送"),
+				(isSummary ? "summary " : "") + (message.role === "toolResult" ? "tool " : "") + (previous && !oldVisible.has(entry.source.id) ? "changed " : "") + (entry.source.id === boundaryId ? "boundary" : ""),
+			);
+		})));
+	}
+	const scenarioOrder = ["manual", "cutpoint", "threshold", "overflow", "branch", "recompact", "failure"];
+	let selected = "manual";
 	let cursor = 0;
 	let revealed = false;
+	let trace = buildTrace(scenarios[selected]);
 	function navigate(index) {
 		cursor = index;
 		revealed = false;
+		get("history-details").open = false;
 		render();
 	}
 	function selectScenario(name) {
-		if (!scenarios[name]) throw new Error("Unknown scenario: " + name);
+		if (!scenarios[name]) throw new Error("Unknown lesson: " + name);
 		selected = name;
-		get("scenario").value = selected;
-		trace = buildTrace(scenarios[selected]);
+		get("scenario").value = name;
 		get("history-details").open = false;
+		trace = buildTrace(scenarios[name]);
 		navigate(0);
 	}
 	function render() {
-		const step = trace[cursor];
-		get("step-title").textContent = step.title;
-		get("scenario-context").textContent = scenarios[selected].context;
-		get("prediction").textContent = step.question;
+		const item = trace[cursor];
+		const state = item.after;
+		const projection = project(state);
+		get("scenario-context").textContent = scenarios[selected].intro;
+		get("step-title").textContent = item.title;
+		get("prediction").textContent = item.question;
+		get("explanation").textContent = item.explanation;
+		get("change-summary").textContent = item.changes;
 		get("step-answer").hidden = !revealed;
-		get("reveal").hidden = revealed;
 		get("reveal").setAttribute("aria-expanded", String(revealed));
-		get("explanation").textContent = step.explanation;
-		get("change-summary").textContent = step.changes.join("\n");
-		get("delta-output").textContent = step.added.length
-			? step.added.map((entry) => JSON.stringify(entry, null, 2)).join("\n\n")
-			: "本步没有新增日志；变化见上方说明。";
-		get("decision").textContent = scenarios[selected].decision;
-		get("journal-output").textContent = JSON.stringify(header, null, 2) + "\n\n" + step.after.entries.map((entry) => JSON.stringify(entry, null, 2)).join("\n");
-		get("path-output").textContent = "leaf = " + step.after.leafId + "\n" + step.after.path.join(" → ")
-			+ "\n最新 compaction：" + (step.after.active ? step.after.active.id + "（firstKept=" + step.after.active.firstKeptEntryId + "）" : "（无）");
-		get("context-output").textContent = JSON.stringify(step.after.messages, null, 2);
-		get("execution-output").textContent = JSON.stringify({ providerCalls: step.after.providerCalls, summaryCalls: step.after.summaryCalls, contextTokens: step.after.tokens }, null, 2);
-		get("error-output").textContent = step.after.error;
+		get("reveal").textContent = revealed ? "收起答案，再想一遍" : "揭示答案与本步变化";
+		get("status-output").textContent = "本实验累计：任务请求 " + state.providerCalls + " 次 · 摘要请求 " + state.summaryCalls + " 次 · 当前上下文估算 " + state.estimatedTokens + " tokens（教学算法，不是精确分词）。";
+		get("error-output").textContent = state.error;
+		get("summary-work").hidden = !["cut", "summarizing", "committed"].includes(item.phase) || !state.cut;
+		get("summary-input").textContent = state.summaryInput.map((message) => roles[message.role] + "：" + messageText(message)).join("\n\n");
+		renderCards(state, cursor ? trace[cursor - 1].after : null, item.added);
+		get("delta-output").textContent = item.added.length ? item.added.map((entry) => JSON.stringify(entry, null, 2)).join("\n\n") : "本步没有新增记录。";
+		get("path-output").textContent = projection.path.map((entry) => entry.id).join(" → ")
+			+ "\n当前生效摘要：" + (projection.active?.id ?? "无")
+			+ "\n已选原文保留起点：" + (state.cut ?? projection.active?.firstKeptEntryId ?? "未选择");
+		get("context-output").textContent = JSON.stringify(state.requestMessages, null, 2);
+		get("summary-output").textContent = JSON.stringify({ summaryRequest: state.summaryRequest, events: state.events }, null, 2);
 		get("position").textContent = (cursor + 1) + " / " + trace.length;
 		get("prev").disabled = cursor === 0;
 		get("next").disabled = cursor === trace.length - 1;
 		get("jump-end").disabled = cursor === trace.length - 1;
-		const scenarioIndex = scenarioOrder.indexOf(selected);
-		get("next-scenario").disabled = scenarioIndex === scenarioOrder.length - 1;
-		get("scenario-position").textContent = "推荐顺序 " + (scenarioIndex + 1) + " / " + scenarioOrder.length;
+		const scene = scenarioOrder.indexOf(selected);
+		get("next-scenario").disabled = scene === scenarioOrder.length - 1;
+		get("scenario-position").textContent = "实验 " + (scene + 1) + " / " + scenarioOrder.length;
 		get("timeline").replaceChildren(...trace.map((item, index) => {
 			const button = document.createElement("button");
 			button.textContent = (index + 1) + ". " + item.title;
@@ -445,20 +638,35 @@ branch(C1) 的投影：system + 摘要 + a2</pre>
 			return button;
 		}));
 	}
+	function renderBudget() {
+		const used = Number(get("budget-input").value);
+		if (!Number.isInteger(used) || used < 60 || used > 100) throw new Error("Invalid demonstration budget");
+		const compact = used > 100 - 20;
+		get("budget-used").textContent = String(used);
+		get("budget-meter").setAttribute("value", String(used));
+		get("budget-decision").setAttribute("data-compact", String(compact));
+		get("budget-decision").textContent = compact
+			? used + " > 80：越过检查线，尝试自动压缩（还要有可摘要的前缀）。"
+			: used + " ≤ 80：没有越过检查线，不因阈值触发压缩。";
+	}
 	get("scenario").value = selected;
 	get("scenario").addEventListener("change", () => selectScenario(get("scenario").value));
 	get("reveal").addEventListener("click", () => {
-		revealed = true;
+		revealed = !revealed;
+		if (!revealed) get("history-details").open = false;
 		render();
 	});
 	get("prev").addEventListener("click", () => navigate(Math.max(0, cursor - 1)));
 	get("next").addEventListener("click", () => navigate(Math.min(trace.length - 1, cursor + 1)));
 	get("jump-end").addEventListener("click", () => navigate(trace.length - 1));
-	get("reset").addEventListener("click", () => navigate(0));
+	get("reset").addEventListener("click", () => { get("history-details").open = false; navigate(0); });
 	get("next-scenario").addEventListener("click", () => {
-		const index = scenarioOrder.indexOf(selected);
-		if (index < scenarioOrder.length - 1) selectScenario(scenarioOrder[index + 1]);
+		const next = scenarioOrder.indexOf(selected) + 1;
+		if (next < scenarioOrder.length) selectScenario(scenarioOrder[next]);
 	});
+	get("budget-input").value = "80";
+	get("budget-input").addEventListener("input", renderBudget);
+	renderBudget();
 	render();
 </script>
 </body>
