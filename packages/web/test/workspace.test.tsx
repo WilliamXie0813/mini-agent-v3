@@ -491,6 +491,19 @@ describe("usage, compaction and timeline rows", () => {
 		expect(within(timeline).getAllByText("Live").length).toBeGreaterThan(0);
 	});
 
+	it("gives turn rows a visible grouping treatment", () => {
+		renderWorkspace(fullState());
+		expect(screen.getByRole("button", { name: /turn start/ })).toHaveClass(
+			"timeline-row-turn",
+		);
+		expect(screen.getByRole("button", { name: /turn end/ })).toHaveClass(
+			"timeline-row-turn",
+		);
+		expect(screen.getByRole("button", { name: /agent start/ })).not.toHaveClass(
+			"timeline-row-turn",
+		);
+	});
+
 	it("reports timeline item ids when journal and live rows are clicked", async () => {
 		const user = userEvent.setup();
 		const { props } = renderWorkspace(fullState());
@@ -562,6 +575,29 @@ describe("event details modal", () => {
 		await user.click(screen.getByRole("button", { name: /agent end/ }));
 		expect(screen.getByRole("button", { name: "Next event" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Previous event" })).toBeEnabled();
+	});
+
+	it("applies syntax coloring to keys, strings and numbers in the modal JSON", async () => {
+		const user = userEvent.setup();
+		render(<Harness initial={fullState()} />);
+		// turn start envelope：{ sessionId: "s1", sequence: 1, elapsedMs: 5, event: { type: "turn_start" } }
+		await user.click(screen.getByRole("button", { name: /turn start/ }));
+		const body = screen.getByRole("dialog").querySelector(".event-json");
+		expect(body).not.toBeNull();
+		const keys = [...(body as HTMLElement).querySelectorAll(".json-key")].map(
+			(node) => node.textContent,
+		);
+		const strings = [
+			...(body as HTMLElement).querySelectorAll(".json-string"),
+		].map((node) => node.textContent);
+		const numbers = [
+			...(body as HTMLElement).querySelectorAll(".json-number"),
+		].map((node) => node.textContent);
+		expect(keys).toContain('"type"');
+		expect(strings).toContain('"turn_start"');
+		expect(strings).toContain('"s1"');
+		expect(numbers).toContain("1");
+		expect(numbers).toContain("5");
 	});
 
 	it("keeps the timeline rendered but inert while the modal is open", async () => {

@@ -1,8 +1,32 @@
 import { useEffect, useRef } from "react";
-import type { JSX, KeyboardEvent } from "react";
+import type { JSX, KeyboardEvent, ReactNode } from "react";
 
 import type { TimelineItem } from "../state/types.ts";
 import { formatJson } from "./tool-card.tsx";
+
+// 轻量 JSON 语法着色：只分 key / string / number / literal 四类 token，
+// 交替匹配保证字符串内的数字与引号不会被误标。key 靠“字符串后紧跟冒号”识别。
+const JSON_TOKEN =
+	/("(?:[^"\\]|\\.)*")(?=\s*:)|("(?:[^"\\]|\\.)*")|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false|null)\b/g;
+
+const TOKEN_CLASSES = ["json-key", "json-string", "json-number", "json-literal"];
+
+export function highlightJson(json: string): ReactNode[] {
+	const nodes: ReactNode[] = [];
+	let lastIndex = 0;
+	for (const match of json.matchAll(JSON_TOKEN)) {
+		if (match.index > lastIndex) nodes.push(json.slice(lastIndex, match.index));
+		const group = match.findIndex((part, index) => index > 0 && part !== undefined);
+		nodes.push(
+			<span key={match.index} className={TOKEN_CLASSES[group - 1]}>
+				{match[group]}
+			</span>,
+		);
+		lastIndex = match.index + match[0].length;
+	}
+	if (lastIndex < json.length) nodes.push(json.slice(lastIndex));
+	return nodes;
+}
 
 export interface EventDetailsModalProps {
 	item: TimelineItem;
@@ -96,7 +120,7 @@ export function EventDetailsModal(props: EventDetailsModalProps): JSX.Element {
 					</button>
 				</div>
 				<pre className="event-json">
-					<code>{json}</code>
+					<code>{highlightJson(json)}</code>
 				</pre>
 				<footer className="event-modal-footer">
 					<button

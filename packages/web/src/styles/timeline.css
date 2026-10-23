@@ -32,6 +32,14 @@
 	background: var(--color-primary-soft);
 }
 
+/* turn 分隔组：turn start/end row 上方画虚线分隔，把事件流按轮分组。 */
+.timeline-row-turn {
+	margin-top: 8px;
+	border-top: 1px dashed var(--color-border);
+	border-radius: 0 0 6px 6px;
+	padding-top: 10px;
+}
+
 .timeline-seq {
 	min-width: 28px;
 	text-align: right;

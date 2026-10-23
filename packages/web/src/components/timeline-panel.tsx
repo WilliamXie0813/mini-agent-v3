@@ -29,7 +29,11 @@ export function TimelinePanel(props: TimelinePanelProps): JSX.Element {
 						<li key={item.id}>
 							<button
 								type="button"
-								className="timeline-row"
+								className={
+									item.kind === "turn"
+										? "timeline-row timeline-row-turn"
+										: "timeline-row"
+								}
 								data-timeline-item={item.id}
 								aria-current={item.id === selectedId}
 								onClick={() => onSelect(item.id)}
