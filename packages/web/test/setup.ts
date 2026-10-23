@@ -1,3 +1,3 @@
-// Task 5 会在这里注册 @testing-library/jest-dom matcher；
-// 当前 state 测试不需要任何全局 setup。
-export {};
+// 注册 @testing-library/jest-dom matcher（toBeDisabled、toHaveFocus 等），
+// 供 Task 5 的 React 组件测试使用；state 纯函数测试不依赖 DOM matcher。
+import "@testing-library/jest-dom/vitest";
