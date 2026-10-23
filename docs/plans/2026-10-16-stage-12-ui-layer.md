@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 22+、TypeScript 5.9.3（strict + erasableSyntaxOnly）、pnpm workspaces、vitest 3、React、Vite、Node HTTP、`ws`、Testing Library、jsdom。运行时依赖只允许新增在 `server` / `web`；`ai`、`core`、`extensions` 的依赖与源码保持不变。
 
-**Spec:** 权威范围为 `docs/specs/2026-10-09-mini-agent-v3-design.md` §3.1、§3.2(c)、§5 阶段 12、§7.1–7.4。`docs/specs/2026-10-12-web-ui-v1-design.md` 仅作为已批准的 Light 三栏视觉/交互基线；其中 deterministic Demo、ephemeral session、阶段 6 基线和“不自动重连”被本计划的真实 provider、持久化 session、阶段 11 基线和 journal 重放覆盖。旧计划 `docs/plans/2026-10-12-web-ui-v1.md` 不用于阶段 12 执行。
+**Spec:** 权威范围为 `docs/specs/2026-10-09-mini-agent-v3-design.md` §3.1、§3.2(c)、§5 阶段 12、§7.1–7.4。`docs/specs/2026-10-12-web-ui-v1-design.md` 仅作为已批准的 Light 三栏视觉/交互基线；其中 deterministic Demo、ephemeral session、阶段 6 基线和“不自动重连”被本计划的真实 provider、持久化 session、阶段 11 基线和 journal 重放覆盖。已批准的 `docs/specs/2026-10-23-stage-12-ui-visual-design.md` 进一步锁定 Quiet Observability 方向、React + Vite 技术栈与 Event Details modal；其范围边界优先于旧视觉基线。旧计划 `docs/plans/2026-10-12-web-ui-v1.md` 不用于阶段 12 执行。
 
 ## Global Constraints
 
@@ -41,7 +41,9 @@
 - tool cards 按 assistant `toolCall` block 的源顺序；Timeline 中 `tool_execution_end` 按 envelope sequence。不得用同一排序满足两者。
 - token 用量只累计 `AssistantMessage.usage` 的 input/output/cache 计数。没有经验证的价格表，本阶段**不显示成本**、不把未知成本写成 0。
 - compaction 只显示 reason、状态、tokensBefore、entry/boundary 标识等已有事实；不得在 UI 里重新摘要或删除历史。
-- React 沿用已批准的 Light 三栏工作台；不加 Dark 主题、文件树、编辑器、diff、内嵌终端、session branch 选择器或扩展管理页。
+- React 沿用已批准的 Light 三栏工作台与 Quiet Observability 方向；不加 Dark 主题、文件树、编辑器、diff、内嵌终端、session branch 选择器或扩展管理页。
+- 阶段 12 不提供 Web 端 New session、历史 session 列表或 session 切换；新会话仍通过 server 启动参数控制。
+- Event Details 使用按需 modal，右侧栏完整留给 Timeline；不得为了常显 details 而恢复固定底部面板。
 - tab 缩进；ESM；包内相对导入带 `.ts` / `.tsx`；类型导入使用 `import type`。
 - `strict: true`、`erasableSyntaxOnly: true`；禁止 `enum`、构造函数参数属性、`namespace`、`as any`。
 - 每个 `src` 文件目标 < 200 行。超过时按协议、状态投影、组件职责拆分，不以大文件硬撑。
@@ -334,7 +336,7 @@ export function buildTimeline(session: SessionViewState): TimelineItem[];
 | `packages/web/src/state/timeline.ts` | journal rows + live AgentEvent rows + compaction markers。 |
 | `packages/web/src/protocol-client.ts` | WebSocket 生命周期、decode、自动重连、typed send。 |
 | `packages/web/src/use-agent-session.ts` | React hook：client、requestId、reducer、commands。 |
-| `packages/web/src/components/*.tsx` | Header、session sidebar、Chat、tool card、composer、Timeline、details。 |
+| `packages/web/src/components/*.tsx` | Header、session sidebar、Chat、tool card、composer、Timeline、Event Details modal。 |
 | `packages/web/src/workspace.tsx` | 三栏纯组件组合，不碰 WebSocket。 |
 | `packages/web/src/app.tsx` / `main.tsx` | hook 接线与 React 入口。 |
 | `packages/web/src/styles.css` | 已批准的 Light desktop-first tokens/layout。 |
@@ -937,7 +939,7 @@ git commit -m "feat(stage-12): project journal and events into web views" \
 - Create: `packages/web/src/components/tool-card.tsx`
 - Create: `packages/web/src/components/prompt-composer.tsx`
 - Create: `packages/web/src/components/timeline-panel.tsx`
-- Create: `packages/web/src/components/event-details.tsx`
+- Create: `packages/web/src/components/event-details-modal.tsx`
 - Create: `packages/web/src/workspace.tsx`
 - Create: `packages/web/src/styles.css`
 - Create: `packages/web/test/workspace.test.tsx`
@@ -995,14 +997,18 @@ pnpm --filter @mini-agent/web add -D \
 - tool result 默认折叠
 - aborted/error assistant 显式显示 terminal 状态
 
-- [ ] **Step 4: 写 usage / compaction / Timeline 失败测试**
+- [ ] **Step 4: 写 usage / compaction / Timeline modal 失败测试**
 
 - Header 显示 input/output/cache totals
 - 页面不存在 currency/cost 文案
 - compaction marker 显示 reason 与 tokensBefore
 - live message updates 显示聚合 count
 - 点击 durable entry/live event 调 `onSelectTimelineItem`
-- EventDetails 展示 source、id/sequence、elapsedMs 与格式化 JSON
+- 有 selected item 时打开 `role="dialog"`、`aria-modal="true"` 的 Event Details modal
+- modal 展示 source、id/sequence、elapsedMs 与格式化 JSON
+- Esc 与关闭按钮都调用 `onSelectTimelineItem(undefined)`，并把焦点还给原 Timeline row
+- Previous / Next event 调用相邻可见 Timeline item 的 id
+- modal 打开期间 Timeline 保持渲染，但背景不可交互（例如 `aria-hidden` / `inert`）
 
 - [ ] **Step 5: 运行确认失败**
 
@@ -1020,7 +1026,7 @@ Expected: FAIL，React components 尚未实现。
 
 组件只消费 selector 输出，不读取 raw entries/events。ToolCard 状态仅 `pending | running | completed | error`；run aborted 不伪造每个工具的 aborted 状态。
 
-- [ ] **Step 8: 实现 TimelinePanel 与 EventDetails**
+- [ ] **Step 8: 实现 TimelinePanel 与 EventDetailsModal**
 
 Timeline 同时展示：
 
@@ -1028,6 +1034,8 @@ Timeline 同时展示：
 - live：agent/turn/message/tool/compaction lifecycle
 
 两类 row 用 source badge 区分，避免把 journal replay 冒充原始实时事件。
+
+EventDetailsModal 只消费 selected `TimelineItem` 及其 raw payloads：modal 显示 source、sequence/id、elapsedMs、Copy JSON、Previous / Next event；Esc 或 Close 清除 selection。modal 尺寸遵循 `min(880px, calc(100vw - 64px))` 宽、`min(760px, calc(100vh - 96px))` 高，窄屏占满视口。背景 Timeline 保持可见但不可交互。
 
 - [ ] **Step 9: 实现 Workspace 与 Light CSS**
 
@@ -1049,6 +1057,8 @@ desktop grid：
 ```css
 grid-template-columns: 220px minmax(420px, 1.5fr) minmax(360px, 1fr);
 ```
+
+右侧栏不再为 details 预留固定高度，Timeline 占满可用纵向空间。modal overlay 使用半透明深色背景与单个白色内容容器；正文阅读区设置最大宽度并左对齐。Chat assistant 不使用厚重气泡，Timeline 使用连续事件轨道与 Live / Journal badge。
 
 小于 1100px 时 Timeline 变为右侧 drawer；不做 mobile navigation。
 
@@ -1357,6 +1367,7 @@ git commit -m "docs(stage-12): explain the event-driven ui boundary" \
 - [ ] Chat 的 delta/done 语义正确；tool cards 源顺序与 Timeline 完成顺序同时正确。
 - [ ] token usage 可见且不显示虚假成本；manual/threshold/overflow compaction 均可形成 marker。
 - [ ] `pnpm dev` 与 `pnpm dev:web` 可并列运行，共享同一 core/provider/extension 架构。
+- [ ] Event Details 通过 modal 展示 source、sequence、elapsedMs 与原始 JSON，并支持 Esc、Previous / Next 与焦点返回。
 - [ ] `docs/stages/12-ui-layer.md` 讲清本阶段决策点。
 - [ ] 分支 `stage-12-ui-layer` 上任务级原子 commits 均带 Copilot trailer。
 
@@ -1364,6 +1375,7 @@ git commit -m "docs(stage-12): explain the event-driven ui boundary" \
 
 - [x] Spec coverage：阶段 12 的事件序列化、WebSocket、React、双前端、工具卡、usage、流式文本、压缩 marker、journal reconnect 均有任务。
 - [x] Step scan：每个 checkbox 是单个可验证动作；实现 body 只在协议/seam 不足以消除歧义时给出。
-- [x] Type consistency：`SessionSnapshot`、`AgentEventEnvelope`、`SessionHost`、`AppState`、`WorkspaceProps` 在所有任务中命名一致。
+- [x] Type consistency：`SessionSnapshot`、`AgentEventEnvelope`、`SessionHost`、`AppState`、`WorkspaceProps`、`TimelineItem` 与 `EventDetailsModal` 在所有任务中命名一致。
+- [x] Visual sync：已批准的 Quiet Observability 方向、React + Vite、Event Details modal 与“不做 New session”边界在 Task 5 和 Global Constraints 中显式锁定。
 - [x] Review Focus：五个高风险输入/失败模式分别有 Task 1–6 的失败测试。
 - [x] Proportion：计划锁定接口、测试和边界，不转录 React/host 的完整实现。
