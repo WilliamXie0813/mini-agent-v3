@@ -1,0 +1,59 @@
+/* 工作台骨架与三栏 grid；窄屏时 Timeline 变右侧 drawer。 */
+
+.workspace {
+	display: flex;
+	flex-direction: column;
+	min-height: 100vh;
+	background: var(--color-page);
+}
+
+.workspace-frame {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+}
+
+.workspace-body {
+	flex: 1;
+	min-height: 0;
+	display: grid;
+	grid-template-columns: 220px minmax(420px, 1.5fr) minmax(360px, 1fr);
+	gap: 1px;
+	background: var(--color-border);
+}
+
+.session-sidebar,
+.chat-panel,
+.timeline-panel {
+	background: var(--color-panel);
+	min-height: 0;
+	overflow-y: auto;
+}
+
+.panel-title {
+	margin: 0;
+	padding: 12px 14px 8px;
+	font-size: 12px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--color-muted);
+}
+
+@media (max-width: 1099px) {
+	.workspace-body {
+		grid-template-columns: 220px minmax(420px, 1.5fr);
+	}
+
+	.timeline-panel {
+		position: fixed;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		width: min(380px, 92vw);
+		border-left: 1px solid var(--color-border);
+		box-shadow: -8px 0 24px rgba(23, 32, 51, 0.08);
+		z-index: 20;
+	}
+}

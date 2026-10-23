@@ -1,0 +1,98 @@
+/* Tool cards：左缘状态条承载状态色，卡片承载参数/结果/耗时/错误。 */
+
+.tool-card {
+	margin-left: 12px;
+	border: 1px solid var(--color-border);
+	border-left: 3px solid var(--color-muted);
+	border-radius: 10px;
+	padding: 8px 12px;
+	font-size: 13px;
+}
+
+.tool-card-running {
+	border-left-color: var(--color-primary);
+}
+
+.tool-card-completed {
+	border-left-color: var(--color-success);
+}
+
+.tool-card-error {
+	border-left-color: var(--color-danger);
+}
+
+.tool-card-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.tool-name {
+	font-family: var(--font-mono);
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.tool-status {
+	font-size: 11px;
+	padding: 1px 6px;
+	border-radius: 4px;
+	color: var(--color-muted);
+	background: var(--color-page);
+}
+
+.tool-status-running {
+	color: var(--color-primary);
+	background: var(--color-primary-soft);
+}
+
+.tool-status-completed {
+	color: var(--color-success);
+	background: var(--color-success-soft);
+}
+
+.tool-status-error {
+	color: var(--color-danger);
+	background: var(--color-danger-soft);
+}
+
+.tool-duration {
+	margin-left: auto;
+	font-family: var(--font-mono);
+	font-size: 11px;
+	color: var(--color-muted);
+}
+
+.tool-field {
+	margin-top: 6px;
+}
+
+.tool-field-label {
+	font-size: 11px;
+	color: var(--color-muted);
+}
+
+.tool-json {
+	margin: 2px 0 0;
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 1.5;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.tool-result {
+	margin-top: 6px;
+}
+
+.tool-result summary {
+	font-size: 12px;
+	color: var(--color-muted);
+	cursor: pointer;
+}
+
+.tool-error {
+	margin: 6px 0 0;
+	font-size: 12px;
+	color: var(--color-danger);
+}

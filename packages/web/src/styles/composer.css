@@ -1,0 +1,55 @@
+/* Prompt composer：固定在中央面板底部，running/compacting 时禁用。 */
+
+.prompt-composer {
+	border-top: 1px solid var(--color-border);
+	padding: 12px 20px;
+}
+
+.prompt-composer label {
+	display: block;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--color-muted);
+	margin-bottom: 6px;
+}
+
+.prompt-row {
+	display: flex;
+	gap: 8px;
+	align-items: flex-end;
+}
+
+.prompt-row textarea {
+	flex: 1;
+	resize: vertical;
+	border: 1px solid var(--color-border);
+	border-radius: 6px;
+	padding: 8px 10px;
+	font-family: var(--font-ui);
+	font-size: 14px;
+	line-height: 1.5;
+}
+
+.prompt-row button {
+	border: 1px solid var(--color-primary);
+	background: var(--color-primary);
+	color: #ffffff;
+	border-radius: 6px;
+	padding: 8px 16px;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.prompt-row textarea:disabled,
+.prompt-row button:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.composer-note {
+	margin: 8px 0 0;
+	font-size: 11px;
+	color: var(--color-muted);
+}

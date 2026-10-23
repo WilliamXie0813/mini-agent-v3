@@ -1,0 +1,36 @@
+/* 阶段 12 Light 工作台：Quiet Observability。
+   层级依靠边框与留白；等宽字体只服务代码与数据。 */
+
+:root {
+	--color-page: #f7f8fa;
+	--color-panel: #ffffff;
+	--color-border: #e4e7ec;
+	--color-text: #172033;
+	--color-muted: #667085;
+	--color-primary: #175cd3;
+	--color-success: #027a48;
+	--color-danger: #b42318;
+	--color-primary-soft: #eff4ff;
+	--color-success-soft: #ecfdf3;
+	--color-danger-soft: #fef3f2;
+	--color-warm-soft: #fffaeb;
+	--font-ui:
+		-apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+	--font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	font-family: var(--font-ui);
+	color: var(--color-text);
+	background: var(--color-page);
+}
+
+.mono {
+	font-family: var(--font-mono);
+	font-size: 0.85em;
+}

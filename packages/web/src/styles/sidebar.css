@@ -1,0 +1,54 @@
+/* Session 侧栏：session/leaf 元数据、持久化 badge 与 Compact。 */
+
+.session-meta {
+	margin: 0;
+	padding: 0 14px;
+	display: grid;
+	gap: 8px;
+}
+
+.session-meta dt {
+	font-size: 11px;
+	color: var(--color-muted);
+}
+
+.session-meta dd {
+	margin: 2px 0 0;
+	font-size: 12px;
+	word-break: break-all;
+}
+
+.session-badges {
+	display: flex;
+	gap: 6px;
+	padding: 12px 14px;
+}
+
+.badge {
+	font-size: 11px;
+	padding: 2px 8px;
+	border-radius: 999px;
+	border: 1px solid var(--color-border);
+	color: var(--color-muted);
+}
+
+.compact-button {
+	margin: 0 14px;
+	border: 1px solid var(--color-border);
+	background: var(--color-panel);
+	border-radius: 6px;
+	padding: 6px 12px;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.compact-button:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.session-pending {
+	padding: 0 14px;
+	color: var(--color-muted);
+	font-size: 13px;
+}
