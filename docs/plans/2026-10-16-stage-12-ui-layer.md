@@ -810,7 +810,7 @@ git commit -m "feat(stage-12): expose sessions over localhost websocket" \
 
 - `server.ready` 把 connection 设为 connected
 - `session.snapshot` 原子替换 entries/events/status/sequence
-- live `agent.event` 只接受同 session 且 sequence > latest
+- live `agent.event` 只接受同 session；本地已有事件时要求 sequence > latest。若 snapshot 没有 transient events 且 `latestSequence === 0`，表示尚未见过任何 event，第一个 sequence `0` 必须接受
 - duplicate sequence 不重复 append，写 diagnostic
 - sequence gap 保留事件并写 diagnostic，不 crash
 - `command.accepted/completed` 更新 pendingRequests
