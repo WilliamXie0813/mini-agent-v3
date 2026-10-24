@@ -182,6 +182,48 @@ describe("reduceAppState", () => {
 		expect(state.session?.status).toBe("idle");
 	});
 
+	it("replays transient events of a reconnect snapshot through live status", () => {
+		// 重连落在 mid-run threshold compaction 期间：server operation 是
+		// prompt.submit，snapshot.status 是 running，但 transientEvents 里
+		// 有 live compaction_start——折叠后必须显示 compacting。
+		const state = withSnapshot(
+			snapshot({
+				status: "running",
+				transientEvents: [
+					envelope(0, { type: "agent_start" }),
+					envelope(1, {
+						type: "compaction_start", reason: "threshold", contextTokens: 100,
+					}),
+				],
+				latestSequence: 1,
+			}),
+		);
+		expect(state.session?.status).toBe("compacting");
+		expect(state.session?.compactionActive).toBe(true);
+		expect(state.session?.agentActive).toBe(true);
+	});
+
+	it("returns to running when reconnect transient events hold a full compaction pair", () => {
+		const state = withSnapshot(
+			snapshot({
+				status: "running",
+				transientEvents: [
+					envelope(0, { type: "agent_start" }),
+					envelope(1, {
+						type: "compaction_start", reason: "threshold", contextTokens: 100,
+					}),
+					envelope(2, {
+						type: "compaction_end", reason: "threshold", status: "completed",
+						entryId: "c1", firstKeptEntryId: "e1", tokensBefore: 100,
+					}),
+				],
+				latestSequence: 2,
+			}),
+		);
+		expect(state.session?.status).toBe("running");
+		expect(state.session?.compactionActive).toBe(false);
+	});
+
 	it("ignores live events from a different session", () => {
 		let state = withSnapshot(snapshot());
 		state = dispatch(state, {

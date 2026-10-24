@@ -9,7 +9,7 @@ export type LiveStatusFacts = Pick<
 // 事件推进：mid-run threshold compaction 期间 agent 仍 active，compaction_end 后
 // 回到 running 而不是 idle；Stop 按钮与 composer 禁用全靠这里的 live status。
 export function liveStatusTransition(
-	session: SessionViewState,
+	session: LiveStatusFacts,
 	event: AgentEvent,
 ): LiveStatusFacts {
 	switch (event.type) {

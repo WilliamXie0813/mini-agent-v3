@@ -4,7 +4,7 @@ import type {
 	SessionSnapshot,
 } from "@mini-agent/protocol";
 
-import { liveStatusTransition } from "./live-status.ts";
+import { liveStatusTransition, type LiveStatusFacts } from "./live-status.ts";
 import type { AppAction, AppState, SessionViewState } from "./types.ts";
 
 export function createInitialAppState(): AppState {
@@ -67,16 +67,25 @@ function removePending(state: AppState, requestId: string): AppState {
 }
 
 // snapshot 是唯一事实源：原子替换 session 内全部字段，旧 diagnostics 随之失效。
+// status 先按 snapshot.status 播种，再把 transientEvents 折过 liveStatusTransition：
+// mid-run threshold compaction 期间 server operation 是 prompt.submit，snapshot.status
+// 是 running，但 transient 里的 compaction_start 必须让 UI 看到 compacting。
 function applySnapshot(
 	state: AppState,
 	snapshot: SessionSnapshot,
 ): AppState {
-	const session: SessionViewState = {
-		sessionId: snapshot.sessionId,
-		leafId: snapshot.leafId,
+	const facts: LiveStatusFacts = {
 		status: snapshot.status,
 		agentActive: snapshot.status === "running",
 		compactionActive: snapshot.status === "compacting",
+	};
+	for (const envelope of snapshot.transientEvents) {
+		Object.assign(facts, liveStatusTransition(facts, envelope.event));
+	}
+	const session: SessionViewState = {
+		sessionId: snapshot.sessionId,
+		leafId: snapshot.leafId,
+		...facts,
 		entries: snapshot.entries,
 		events: [...snapshot.transientEvents],
 		latestSequence: snapshot.latestSequence,
