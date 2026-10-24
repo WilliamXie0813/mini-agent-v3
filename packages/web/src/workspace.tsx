@@ -75,6 +75,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
 				<WorkspaceHeader
 					connection={state.connection}
 					sessionStatus={session?.status}
+					agentActive={session?.agentActive ?? false}
 					usage={usage}
 					protocolError={state.lastProtocolError}
 					onAbort={props.onAbort}

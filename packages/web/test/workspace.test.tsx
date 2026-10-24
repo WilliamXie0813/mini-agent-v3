@@ -317,6 +317,19 @@ describe("workspace layout and connection", () => {
 		expect(screen.getByRole("button", { name: "Compact" })).toBeDisabled();
 		expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
 	});
+
+	it("keeps Stop available during a compaction inside an active run", () => {
+		const session = {
+			...sessionView(durableEntries(), [], "compacting"),
+			agentActive: true,
+		};
+		renderWorkspace(appState({ session }));
+
+		expect(screen.getByRole("status", { name: "Run status" })).toHaveTextContent(
+			"compacting",
+		);
+		expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+	});
 });
 
 describe("chat panel and tool cards", () => {

@@ -5,6 +5,7 @@ import type { AppState, SessionViewState, UsageTotals } from "../state/types.ts"
 export interface WorkspaceHeaderProps {
 	connection: AppState["connection"];
 	sessionStatus?: SessionViewState["status"];
+	agentActive: boolean;
 	usage?: UsageTotals;
 	protocolError?: { code: string; message: string };
 	onAbort(): void;
@@ -21,7 +22,8 @@ const CONNECTION_TEXT: Record<AppState["connection"], string> = {
 // Header 保持轻量：品牌、连接状态、run 状态、token usage 与 Stop。
 // 只显示 token 计数，永不显示成本。Stop 仅发送 run.abort，不伪造结束。
 export function WorkspaceHeader(props: WorkspaceHeaderProps): JSX.Element {
-	const { connection, sessionStatus, usage, protocolError, onAbort } = props;
+	const { connection, sessionStatus, agentActive, usage, protocolError, onAbort } =
+		props;
 	return (
 		<header className="workspace-header">
 			<div className="brand">
@@ -47,7 +49,7 @@ export function WorkspaceHeader(props: WorkspaceHeaderProps): JSX.Element {
 					<span>cache write {usage.cacheWriteTokens}</span>
 				</span>
 			)}
-			{sessionStatus === "running" && (
+			{agentActive && (
 				<button type="button" className="stop-button" onClick={onAbort}>
 					Stop
 				</button>
