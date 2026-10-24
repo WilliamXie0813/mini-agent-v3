@@ -30,7 +30,7 @@
 	border-bottom: 1px solid var(--color-border);
 }
 
-.event-modal-heading h2 {
+.event-modal-heading h1 {
 	margin: 0 0 6px;
 	font-size: 15px;
 }
@@ -62,8 +62,8 @@
 	border: 1px solid var(--color-border);
 	background: var(--color-panel);
 	border-radius: 6px;
-	width: 28px;
-	height: 28px;
+	width: 44px;
+	height: 44px;
 	display: grid;
 	place-items: center;
 	cursor: pointer;
@@ -89,9 +89,15 @@
 	border: 1px solid var(--color-border);
 	background: var(--color-panel);
 	border-radius: 6px;
-	padding: 4px 10px;
+	min-height: 36px;
+	padding: 6px 12px;
 	font-size: 12px;
 	cursor: pointer;
+}
+
+.copy-status {
+	font-size: 11px;
+	color: var(--color-muted);
 }
 
 .event-json {
@@ -149,5 +155,12 @@
 		width: 100vw;
 		height: 100vh;
 		border-radius: 0;
+	}
+}
+
+@media (pointer: coarse) {
+	.copy-json,
+	.event-modal-footer button {
+		min-height: 44px;
 	}
 }

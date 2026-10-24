@@ -167,6 +167,19 @@ describe("createProtocolClient", () => {
 		}
 	});
 
+	it("retry() replaces an active connection without scheduling an automatic reconnect", () => {
+		vi.useFakeTimers();
+		const { client, sockets, onConnectionChange } = setup();
+		client.connect();
+		sockets[0].open();
+		onConnectionChange.mockClear();
+		client.retry();
+		expect(onConnectionChange).toHaveBeenCalledWith("connecting");
+		expect(sockets).toHaveLength(2);
+		vi.advanceTimersByTime(10_000);
+		expect(sockets).toHaveLength(2);
+	});
+
 	it("explicit close() cancels the reconnect timer and reports disconnected", () => {
 		vi.useFakeTimers();
 		const { client, sockets, onConnectionChange } = setup();

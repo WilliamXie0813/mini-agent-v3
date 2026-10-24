@@ -1,13 +1,9 @@
 import { createRuntime } from "./create-runtime.ts";
+import { loadSharedEnv } from "../../../scripts/load-shared-env.ts";
 import { startAgentWebSocketServer } from "./websocket-server.ts";
 
-// 本地开发的默认配置来自 cwd 的 .env（pnpm dev 时即 packages/server/.env）。
-// loadEnvFile 不覆盖已有变量——shell 显式设置的 env 优先；没有 .env 不算错误。
-try {
-	process.loadEnvFile();
-} catch (error) {
-	if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-}
+// CLI 与 server 共享仓库根目录 .env；shell 显式设置的 env 仍然优先。
+loadSharedEnv();
 
 const args = process.argv.slice(2);
 if (args.length > 1 || (args.length === 1 && args[0] !== "--continue")) {

@@ -3,6 +3,7 @@
 .chat-panel {
 	display: flex;
 	flex-direction: column;
+	overflow: hidden;
 }
 
 .chat-scroll {
@@ -20,8 +21,55 @@
 }
 
 .chat-empty {
+	padding: 18px;
+	border: 1px solid var(--color-border);
+	border-radius: 10px;
 	color: var(--color-muted);
+}
+
+.chat-empty h2,
+.connection-state h2 {
+	margin: 0 0 6px;
+	font-size: 14px;
+	color: var(--color-text);
+}
+
+.chat-empty p,
+.connection-state p {
+	margin: 0;
 	font-size: 13px;
+	line-height: 1.55;
+}
+
+.connection-state {
+	padding: 16px;
+	border: 1px solid var(--color-border);
+	border-radius: 10px;
+	background: var(--color-warning-soft);
+	color: var(--color-warning);
+}
+
+.connection-state-connected {
+	background: var(--color-primary-soft);
+	color: var(--color-primary);
+}
+
+.connection-state-disconnected,
+.connection-state-incompatible {
+	background: var(--color-danger-soft);
+	color: var(--color-danger);
+}
+
+.connection-state button {
+	margin-top: 12px;
+	min-height: 34px;
+	border: 1px solid currentColor;
+	border-radius: 6px;
+	background: var(--color-panel);
+	color: inherit;
+	padding: 6px 12px;
+	font-size: 13px;
+	cursor: pointer;
 }
 
 .chat-message {
@@ -71,6 +119,12 @@
 @keyframes pulse {
 	50% {
 		opacity: 0.3;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.chat-streaming::after {
+		animation: none;
 	}
 }
 

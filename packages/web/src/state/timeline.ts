@@ -8,13 +8,20 @@ export function buildTimeline(session: SessionViewState): TimelineItem[] {
 	appendJournal(session, items);
 	appendLive(session, items);
 	for (const diagnostic of session.diagnostics) {
-		items.push({ id: diagnostic.id, source: "diagnostic", kind: "diagnostic", label: diagnostic.message, raw: [] });
+		items.push({
+			id: diagnostic.id,
+			source: "diagnostic",
+			kind: "diagnostic",
+			label: diagnostic.message,
+			raw: [],
+			hasError: true,
+		});
 	}
 	return items;
 }
 
 type JournalRow = Pick<TimelineItem, "kind" | "label"> &
-	Partial<Pick<TimelineItem, "toolCallId">>;
+	Partial<Pick<TimelineItem, "toolCallId" | "hasError">>;
 
 function appendJournal(session: SessionViewState, items: TimelineItem[]): void {
 	const intentToCall = new Map<string, string>();
@@ -53,10 +60,15 @@ function journalRow(
 			return {
 				kind: "tool-outcome",
 				label: entry.isError ? "tool outcome: error" : "tool outcome",
+				hasError: entry.isError,
 				...toolCallOf(intentToCall, entry.intentId),
 			};
 		case "run_end":
-			return { kind: "run-end", label: `run end: ${entry.status}` };
+				return {
+					kind: "run-end",
+					label: `run end: ${entry.status}`,
+					hasError: entry.status === "error" || entry.status === "aborted",
+				};
 		case "compaction":
 			return {
 				kind: "compaction",
@@ -82,7 +94,7 @@ interface LiveContext {
 }
 
 type LiveRow = Pick<TimelineItem, "kind" | "label"> &
-	Partial<Pick<TimelineItem, "toolCallId" | "warning">>;
+	Partial<Pick<TimelineItem, "toolCallId" | "warning" | "hasError">>;
 
 function appendLive(session: SessionViewState, items: TimelineItem[]): void {
 	const context: LiveContext = {
@@ -136,9 +148,14 @@ function appendLiveEnvelope(
 			context.turnOpen = true;
 			return emit(context, items, envelope, { kind: "turn", label: "turn start" });
 		case "turn_end": {
-			const warning = context.turnOpen ? undefined : "turn_end without turn_start";
+				const warning = context.turnOpen ? undefined : "turn_end without turn_start";
 			context.turnOpen = false;
-			return emit(context, items, envelope, { kind: "turn", label: "turn end", warning });
+				return emit(context, items, envelope, {
+					kind: "turn",
+					label: "turn end",
+					warning,
+					hasError: warning !== undefined,
+				});
 		}
 		case "message_start":
 			if (event.message.role === "assistant") context.assistantOpen = true;
@@ -175,6 +192,7 @@ function appendLiveEnvelope(
 				kind: "tool-end",
 				label: `tool end: ${event.toolName}`,
 				toolCallId: event.toolCallId,
+					hasError: event.isError,
 			});
 		case "compaction_start":
 			return emit(context, items, envelope, {
@@ -187,12 +205,14 @@ function appendLiveEnvelope(
 				label: event.status === "completed"
 					? `compaction completed: ${event.reason}, ${event.tokensBefore} tokens before`
 					: `compaction failed: ${event.reason} (${event.errorMessage})`,
+					hasError: event.status === "error",
 			});
 		default:
 			return emit(context, items, envelope, {
 				kind: "diagnostic",
 				label: "unknown event",
 				warning: `unknown event type: ${(event as { type: string }).type}`,
+					hasError: true,
 			});
 	}
 }

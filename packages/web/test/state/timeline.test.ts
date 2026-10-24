@@ -197,6 +197,8 @@ describe("buildTimeline live rows", () => {
 		expect(items[0]?.label).toContain("progress");
 		expect(items[1]?.label).toContain("completed");
 		expect(items[1]?.label).toContain("1234");
+		expect(items[0]?.hasError).toBeUndefined();
+		expect(items[1]?.hasError).toBe(false);
 
 		const failed = buildTimeline(
 			sessionView([], [
@@ -209,6 +211,7 @@ describe("buildTimeline live rows", () => {
 			]),
 		);
 		expect(failed[0]?.label).toContain("failed");
+		expect(failed[0]?.hasError).toBe(true);
 	});
 });
 

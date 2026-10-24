@@ -19,6 +19,7 @@ import type { useAgentSession } from "../src/use-agent-session.ts";
 const protocolMock = vi.hoisted(() => ({
 	capturedOptions: undefined as ProtocolClientOptions | undefined,
 	connect: vi.fn(),
+	retry: vi.fn(),
 	send: vi.fn(),
 	close: vi.fn(),
 }));
@@ -29,6 +30,7 @@ vi.mock("../src/protocol-client.ts", () => ({
 		protocolMock.capturedOptions = options;
 		return {
 			connect: protocolMock.connect,
+				retry: protocolMock.retry,
 			send: protocolMock.send,
 			close: protocolMock.close,
 		};
@@ -43,6 +45,8 @@ const hookMock = vi.hoisted(() => ({
 		onAbort: vi.fn(),
 		onCompact: vi.fn(),
 		onSelectTimelineItem: vi.fn(),
+			onRetryConnection: vi.fn(),
+			onDismissError: vi.fn(),
 	},
 	useAgentSession: vi.fn(),
 }));
@@ -137,6 +141,7 @@ beforeAll(async () => {
 beforeEach(() => {
 	protocolMock.capturedOptions = undefined;
 	protocolMock.connect.mockClear();
+	protocolMock.retry.mockClear();
 	protocolMock.send.mockClear();
 	protocolMock.close.mockClear();
 	hookMock.useAgentSession.mockReset();
@@ -184,7 +189,9 @@ describe("App with a mocked session hook", () => {
 			actions: hookMock.actions,
 		}));
 		rerender(<App />);
-		await user.click(screen.getByRole("button", { name: "Compact" }));
+			await user.click(screen.getByRole("button", { name: "Compact session" }));
+			expect(hookMock.actions.onCompact).not.toHaveBeenCalled();
+			await user.click(screen.getByRole("button", { name: "Compact session" }));
 		expect(hookMock.actions.onCompact).toHaveBeenCalledTimes(1);
 		const timeline = within(screen.getByLabelText("Timeline"));
 		await user.click(timeline.getByRole("button", { name: /submission/ }));
@@ -310,9 +317,10 @@ describe("App against a fake protocol client", () => {
 		act(() => options.onMessage(READY));
 		act(() => options.onMessage(snapshot("idle", 0, [submission])));
 		act(() => options.onConnectionChange("reconnecting"));
-		expect(screen.getByRole("alert")).toHaveTextContent(
-			"Reconnecting to the agent",
-		);
+			expect(screen.getByText("Agent connection lost")).toBeInTheDocument();
+			expect(
+				screen.getByRole("button", { name: "Retry connection" }),
+			).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
 		expect(screen.getByText("read the files")).toBeInTheDocument();
 	});

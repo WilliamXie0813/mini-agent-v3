@@ -25,6 +25,10 @@
 }
 
 .badge {
+	cursor: help;
+}
+
+.badge {
 	font-size: 11px;
 	padding: 2px 8px;
 	border-radius: 999px;
@@ -38,6 +42,45 @@
 	background: var(--color-panel);
 	border-radius: 6px;
 	padding: 6px 12px;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.compact-confirmation {
+	margin: 0 14px;
+	padding: 10px;
+	border: 1px solid var(--color-border);
+	border-radius: 8px;
+	background: var(--color-page);
+}
+
+.compact-confirmation p {
+	margin: 0 0 10px;
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--color-muted);
+}
+
+.compact-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.compact-confirmation .compact-button {
+	margin: 0;
+}
+
+.compact-confirm {
+	border-color: var(--color-primary);
+	color: var(--color-primary);
+}
+
+.compact-cancel {
+	border: 0;
+	background: transparent;
+	color: var(--color-muted);
+	padding: 6px 8px;
 	font-size: 13px;
 	cursor: pointer;
 }

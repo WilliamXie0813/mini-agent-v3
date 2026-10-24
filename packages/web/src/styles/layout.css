@@ -3,7 +3,10 @@
 .workspace {
 	display: flex;
 	flex-direction: column;
-	min-height: 100vh;
+	height: 100vh;
+	height: 100dvh;
+	min-height: 0;
+	overflow: hidden;
 	background: var(--color-page);
 }
 
@@ -11,12 +14,14 @@
 	display: flex;
 	flex-direction: column;
 	flex: 1;
+	height: 100%;
 	min-height: 0;
 }
 
 .workspace-body {
 	flex: 1;
 	min-height: 0;
+	overflow: hidden;
 	display: grid;
 	grid-template-columns: 220px minmax(420px, 1.5fr) minmax(360px, 1fr);
 	gap: 1px;
@@ -31,6 +36,53 @@
 	overflow-y: auto;
 }
 
+.timeline-panel {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+.timeline-resizer-region {
+	display: none;
+	position: relative;
+	background: var(--color-panel);
+}
+
+.timeline-resizer {
+	position: absolute;
+	inset: 0;
+	cursor: col-resize;
+	touch-action: none;
+	user-select: none;
+}
+
+.timeline-resizer::before {
+	content: "";
+	position: absolute;
+	inset-block: 0;
+	inset-inline-start: 4px;
+	width: 1px;
+	background: var(--color-border);
+}
+
+.timeline-resizer:hover::before,
+.timeline-resizer:focus-visible::before {
+	inset-inline-start: 3px;
+	width: 3px;
+	background: var(--color-primary);
+}
+
+.timeline-resizer:focus-visible {
+	outline: 2px solid var(--color-primary);
+	outline-offset: -2px;
+}
+
+.timeline-toggle,
+.timeline-close,
+.timeline-scrim {
+	display: none;
+}
+
 .panel-title {
 	margin: 0;
 	padding: 12px 14px 8px;
@@ -41,12 +93,31 @@
 	color: var(--color-muted);
 }
 
+@media (min-width: 1300px) {
+	.workspace-body {
+		grid-template-columns:
+			220px
+			minmax(420px, 1fr)
+			9px
+			var(--timeline-width, 480px);
+	}
+
+	.timeline-resizer-region {
+		display: block;
+	}
+}
+
 @media (max-width: 1099px) {
 	.workspace-body {
-		grid-template-columns: 220px minmax(420px, 1.5fr);
+		grid-template-columns: 220px minmax(0, 1fr);
 	}
 
 	.timeline-panel {
+		display: none;
+	}
+
+	.timeline-panel.timeline-panel-open {
+		display: flex;
 		position: fixed;
 		top: 0;
 		right: 0;
@@ -55,5 +126,15 @@
 		border-left: 1px solid var(--color-border);
 		box-shadow: -8px 0 24px rgba(23, 32, 51, 0.08);
 		z-index: 20;
+	}
+
+	.timeline-scrim {
+		display: block;
+		position: fixed;
+		inset: 0;
+		z-index: 19;
+		border: 0;
+		background: rgba(23, 32, 51, 0.18);
+		cursor: pointer;
 	}
 }

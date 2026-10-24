@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type * as React from "react";
 
 import { ChatPanel } from "./components/chat-panel.tsx";
@@ -12,6 +12,11 @@ import { buildTimeline } from "./state/timeline.ts";
 import { buildToolCards } from "./state/tools.ts";
 import type { AppState } from "./state/types.ts";
 import { buildUsageTotals } from "./state/usage.ts";
+import {
+	MAX_TIMELINE_WIDTH,
+	MIN_TIMELINE_WIDTH,
+	useTimelineWidth,
+} from "./use-timeline-width.ts";
 import "./styles.css";
 
 export interface WorkspaceProps {
@@ -21,19 +26,47 @@ export interface WorkspaceProps {
 	onAbort(): void;
 	onCompact(): void;
 	onSelectTimelineItem(itemId?: string): void;
+	onRetryConnection(): void;
+	onDismissError(): void;
 }
 
-const CONNECTION_BANNER: Partial<Record<AppState["connection"], string>> = {
-	connecting: "Connecting to the agent…",
-	reconnecting: "Reconnecting to the agent…",
-	disconnected: "Disconnected from the agent. Editing is blocked.",
-	incompatible: "Incompatible protocol version. Reload the workbench.",
-};
+function composerNote(
+	connection: AppState["connection"],
+	session: AppState["session"],
+): string {
+	if (connection === "connecting") {
+		return "Connecting to the local agent. Your prompt will stay here while the connection opens.";
+	}
+	if (connection === "reconnecting") {
+		return "Reconnecting automatically. Start the local agent server if it is not running.";
+	}
+	if (connection === "disconnected") {
+		return "Connection closed. Retry from the connection panel.";
+	}
+	if (connection === "incompatible") {
+		return "The server protocol does not match this workbench. Retry after updating both.";
+	}
+	if (!session) return "Connected. Waiting for the session snapshot.";
+	if (session.status === "compacting") return "Compacting the active session context.";
+	if (session.status === "running") {
+		return "Agent is running. Use Stop to interrupt this run.";
+	}
+	return "Web and CLI share the same core; each process holds its own session.";
+}
 
 // Light 三栏工作台：Header + Session / Chat / Timeline。
 // 组件只消费 Task 4 selector 输出，不 reinterpret raw entries/events。
 export function Workspace(props: WorkspaceProps): React.JSX.Element {
 	const { state } = props;
+	const [timelineOpen, setTimelineOpen] = useState(false);
+	const [linkedToolCallId, setLinkedToolCallId] = useState<string>();
+	const {
+		timelineWidth,
+		timelinePointerDown,
+		timelinePointerMove,
+		timelinePointerEnd,
+		timelineKeyDown,
+	} = useTimelineWidth();
 	const session = state.session;
 	const chatItems = session ? buildChatView(session) : [];
 	const toolCards = session ? buildToolCards(session) : [];
@@ -44,6 +77,9 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
 	);
 	const selected = selectedIndex >= 0 ? timeline[selectedIndex] : undefined;
 	const modalOpen = selected !== undefined;
+	const timelineToolCallIds = new Set(
+		timeline.flatMap((item) => (item.toolCallId ? [item.toolCallId] : [])),
+	);
 
 	// modal 关闭后把焦点还给原 Timeline row。
 	const lastSelectedRef = useRef<string | undefined>(undefined);
@@ -61,10 +97,46 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
 		row?.focus();
 	}, [state.selectedTimelineItemId]);
 
+	useEffect(() => {
+		if (!timelineOpen) return;
+		const previous = document.activeElement as HTMLElement | null;
+		const close = document.querySelector<HTMLButtonElement>("[data-timeline-close]");
+		close?.focus();
+		const keyDown = (event: KeyboardEvent) => {
+			if (event.key === "Escape") setTimelineOpen(false);
+		};
+		window.addEventListener("keydown", keyDown);
+		return () => {
+			window.removeEventListener("keydown", keyDown);
+			previous?.focus();
+		};
+	}, [timelineOpen]);
+
+	useEffect(() => {
+		if (!linkedToolCallId) return;
+		const row = document.querySelector<HTMLElement>(
+			`[data-timeline-tool-call-id="${CSS.escape(linkedToolCallId)}"]`,
+		);
+		row?.scrollIntoView?.({ block: "nearest" });
+	}, [linkedToolCallId]);
+
 	const blocked =
 		state.connection !== "connected" || !session || session.status !== "idle";
-	const banner = CONNECTION_BANNER[state.connection];
 	const closeModal = () => props.onSelectTimelineItem(undefined);
+	const focusToolInTimeline = (toolCallId: string) => {
+		setLinkedToolCallId(toolCallId);
+		if (
+			typeof window.matchMedia === "function" &&
+			window.matchMedia("(max-width: 1099px)").matches
+		) {
+			setTimelineOpen(true);
+		}
+	};
+	const selectTimelineItem = (itemId: string) => {
+		props.onSelectTimelineItem(itemId);
+		const item = timeline.find((candidate) => candidate.id === itemId);
+		if (item?.toolCallId) setLinkedToolCallId(item.toolCallId);
+	};
 
 	return (
 		<div className="workspace" data-theme="light">
@@ -78,32 +150,77 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
 					agentActive={session?.agentActive ?? false}
 					usage={usage}
 					protocolError={state.lastProtocolError}
+					timelineOpen={timelineOpen}
+					onToggleTimeline={() => setTimelineOpen((open) => !open)}
+					onDismissError={props.onDismissError}
 					onAbort={props.onAbort}
 				/>
-				{banner && (
-					<p role="alert" className="connection-banner">
-						{banner}
-					</p>
-				)}
-				<div className="workspace-body">
+				<div
+					className="workspace-body"
+					style={
+						{
+							"--timeline-width": `${timelineWidth}px`,
+						} as React.CSSProperties
+					}
+				>
 					<SessionSidebar
 						session={session}
 						compactDisabled={blocked}
 						onCompact={props.onCompact}
 					/>
 					<main aria-label="Chat" className="chat-panel">
-						<ChatPanel items={chatItems} cards={toolCards} />
+						<ChatPanel
+							items={chatItems}
+							cards={toolCards}
+							connection={state.connection}
+							hasSession={session !== undefined}
+							availableTimelineToolIds={timelineToolCallIds}
+							linkedToolCallId={linkedToolCallId}
+							onFocusTimeline={focusToolInTimeline}
+							onRetryConnection={props.onRetryConnection}
+						/>
 						<PromptComposer
 							prompt={state.prompt}
 							disabled={blocked}
+							note={composerNote(state.connection, session)}
 							onPromptChange={props.onPromptChange}
 							onSubmit={props.onSubmit}
 						/>
 					</main>
+					<aside aria-label="Timeline resize" className="timeline-resizer-region">
+						<div
+							role="separator"
+							aria-label="Resize Timeline"
+							aria-orientation="vertical"
+							aria-valuemin={MIN_TIMELINE_WIDTH}
+							aria-valuemax={MAX_TIMELINE_WIDTH}
+							aria-valuenow={timelineWidth}
+							aria-valuetext={`${timelineWidth} pixels`}
+							className="timeline-resizer"
+							tabIndex={0}
+							onPointerDown={timelinePointerDown}
+							onPointerMove={timelinePointerMove}
+							onPointerUp={timelinePointerEnd}
+							onPointerCancel={timelinePointerEnd}
+							onKeyDown={timelineKeyDown}
+						/>
+					</aside>
+					{timelineOpen && (
+						<button
+							type="button"
+							className="timeline-scrim"
+							aria-label="Close Timeline"
+							onClick={() => setTimelineOpen(false)}
+						/>
+					)}
 					<TimelinePanel
 						items={timeline}
 						selectedId={state.selectedTimelineItemId}
-						onSelect={props.onSelectTimelineItem}
+						linkedToolCallId={linkedToolCallId}
+						open={timelineOpen}
+						onLinkTool={setLinkedToolCallId}
+						onSelect={selectTimelineItem}
+						onClose={() => setTimelineOpen(false)}
 					/>
 				</div>
 			</div>
@@ -119,7 +236,7 @@ export function Workspace(props: WorkspaceProps): React.JSX.Element {
 							: undefined
 					}
 					onClose={closeModal}
-					onNavigate={props.onSelectTimelineItem}
+					onNavigate={selectTimelineItem}
 				/>
 			)}
 		</div>

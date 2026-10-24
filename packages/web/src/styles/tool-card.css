@@ -21,6 +21,11 @@
 	border-left-color: var(--color-danger);
 }
 
+.tool-card-linked {
+	outline: 2px solid var(--color-primary);
+	outline-offset: 2px;
+}
+
 .tool-card-header {
 	display: flex;
 	align-items: center;
@@ -63,6 +68,17 @@
 	color: var(--color-muted);
 }
 
+.tool-timeline-link {
+	margin-left: 4px;
+	border: 0;
+	background: transparent;
+	color: var(--color-primary);
+	padding: 3px 4px;
+	font-size: 11px;
+	cursor: pointer;
+}
+
+.tool-arguments,
 .tool-field {
 	margin-top: 6px;
 }
@@ -91,8 +107,24 @@
 	cursor: pointer;
 }
 
+.tool-arguments summary {
+	font-size: 11px;
+	color: var(--color-muted);
+	cursor: pointer;
+}
+
 .tool-error {
 	margin: 6px 0 0;
 	font-size: 12px;
 	color: var(--color-danger);
+}
+
+@media (pointer: coarse) {
+	.tool-timeline-link,
+	.tool-arguments summary,
+	.tool-result summary {
+		min-height: 44px;
+		display: flex;
+		align-items: center;
+	}
 }

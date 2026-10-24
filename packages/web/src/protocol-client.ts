@@ -13,6 +13,7 @@ export interface ProtocolClientOptions {
 
 export interface ProtocolClient {
 	connect(): void;
+	retry(): void;
 	send(command: ClientCommand): void;
 	close(): void;
 }
@@ -82,13 +83,32 @@ export function createProtocolClient(
 		ws.onerror = () => {};
 	}
 
+	function releaseSocket(): void {
+		const ws = socket;
+		socket = null;
+		if (!ws) return;
+		ws.onopen = null;
+		ws.onmessage = null;
+		ws.onclose = null;
+		ws.onerror = null;
+		ws.close();
+	}
+
+	function startConnection(): void {
+		explicitClose = false;
+		reconnectAttempt = 0;
+		clearReconnectTimer();
+		releaseSocket();
+		options.onConnectionChange("connecting");
+		openSocket();
+	}
+
 	return {
 		connect(): void {
-			explicitClose = false;
-			reconnectAttempt = 0;
-			clearReconnectTimer();
-			options.onConnectionChange("connecting");
-			openSocket();
+			startConnection();
+		},
+		retry(): void {
+			startConnection();
 		},
 		send(command: ClientCommand): void {
 			if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -99,15 +119,7 @@ export function createProtocolClient(
 		close(): void {
 			explicitClose = true;
 			clearReconnectTimer();
-			const ws = socket;
-			socket = null;
-			if (ws) {
-				ws.onopen = null;
-				ws.onmessage = null;
-				ws.onclose = null;
-				ws.onerror = null;
-				ws.close();
-			}
+			releaseSocket();
 			options.onConnectionChange("disconnected");
 		},
 	};

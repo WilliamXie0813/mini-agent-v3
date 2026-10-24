@@ -3,6 +3,7 @@
 .workspace-header {
 	display: flex;
 	align-items: center;
+	flex: 0 0 auto;
 	gap: 16px;
 	padding: 10px 16px;
 	background: var(--color-panel);
@@ -33,6 +34,19 @@
 	align-items: center;
 	gap: 6px;
 	color: var(--color-muted);
+}
+
+.timeline-toggle {
+	align-items: center;
+	justify-content: center;
+	min-height: 32px;
+	padding: 4px 10px;
+	border: 1px solid var(--color-border);
+	border-radius: 6px;
+	background: var(--color-panel);
+	color: var(--color-text);
+	font-size: 12px;
+	cursor: pointer;
 }
 
 .status-dot {
@@ -76,16 +90,42 @@
 }
 
 .protocol-error {
+	display: flex;
+	align-items: center;
+	gap: 8px;
 	margin: 0;
 	color: var(--color-danger);
 	font-size: 12px;
 }
 
-.connection-banner {
-	margin: 0;
-	padding: 8px 16px;
-	background: var(--color-danger-soft);
-	border-bottom: 1px solid var(--color-border);
+.protocol-error button {
+	border: 0;
+	background: transparent;
 	color: var(--color-danger);
-	font-size: 13px;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+	cursor: pointer;
+}
+
+@media (max-width: 1099px) {
+	.timeline-toggle {
+		display: inline-flex;
+	}
+
+	.workspace-header {
+		flex-wrap: wrap;
+		row-gap: 6px;
+	}
+
+	.brand {
+		margin-right: 0;
+	}
+
+	.brand-edition {
+		display: none;
+	}
+
+	.usage {
+		font-size: 11px;
+	}
 }

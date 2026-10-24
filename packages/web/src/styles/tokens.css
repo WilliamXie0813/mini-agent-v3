@@ -10,9 +10,11 @@
 	--color-primary: #175cd3;
 	--color-success: #027a48;
 	--color-danger: #b42318;
+	--color-warning: #b54708;
 	--color-primary-soft: #eff4ff;
 	--color-success-soft: #ecfdf3;
 	--color-danger-soft: #fef3f2;
+	--color-warning-soft: #fffaeb;
 	--color-warm-soft: #fffaeb;
 	--font-ui:
 		-apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -28,6 +30,44 @@ body {
 	font-family: var(--font-ui);
 	color: var(--color-text);
 	background: var(--color-page);
+	caret-color: var(--color-primary);
+}
+
+button,
+input,
+textarea {
+	font: inherit;
+}
+
+button {
+	min-width: 0;
+}
+
+:focus-visible {
+	outline: 2px solid var(--color-primary);
+	outline-offset: 2px;
+}
+
+::selection {
+	color: var(--color-text);
+	background: #dbe7ff;
+}
+
+* {
+	scrollbar-color: #c7ced9 transparent;
+	scrollbar-width: thin;
+}
+
+.visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
 }
 
 .mono {

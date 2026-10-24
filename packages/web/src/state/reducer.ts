@@ -24,6 +24,11 @@ export function reduceAppState(state: AppState, action: AppAction): AppState {
 				...state,
 				lastProtocolError: { code: action.code, message: action.message },
 			};
+		case "local.error.clear": {
+			const next = { ...state };
+			delete next.lastProtocolError;
+			return next;
+		}
 		case "server.message":
 			return reduceServerMessage(state, action.message);
 	}

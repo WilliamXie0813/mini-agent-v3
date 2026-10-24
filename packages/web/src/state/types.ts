@@ -60,7 +60,8 @@ export type AppAction =
 	| { type: "server.message"; message: ServerMessage }
 	| { type: "prompt.changed"; prompt: string }
 	| { type: "timeline.selected"; itemId?: string }
-	| { type: "local.error"; code: string; message: string };
+	| { type: "local.error"; code: string; message: string }
+	| { type: "local.error.clear" };
 
 export interface ChatMessageView {
 	kind: "message";
@@ -126,4 +127,5 @@ export interface TimelineItem {
 	elapsedMs?: number;
 	toolCallId?: string;
 	warning?: string;
+	hasError?: boolean;
 }

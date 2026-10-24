@@ -130,11 +130,11 @@ inputTokens 表示总输入：`input_tokens + cache_read_input_tokens + cache_cr
 ```bash
 # 方式一：shell 环境变量（优先级更高）
 export ANTHROPIC_API_KEY='<your-key>'
-# 方式二：packages/cli/.env（已 gitignore；loadEnvFile 不覆盖已有 shell 变量）
+# 方式二：仓库根目录 .env（已 gitignore；CLI 与 server 共用）
 pnpm dev
 ```
 
-仅支持 API key → x-api-key；不读取 ANTHROPIC_AUTH_TOKEN，不退回 fake。`.env` 用 Node 内建 `process.loadEnvFile()` 加载（cwd 即 `packages/cli`），不引入 dotenv 依赖；文件缺失不算错误。baseUrl 保留 `/coding/` 前缀，拼接 `/v1/messages`；已带 `/v1` 不重复拼接。缺 key 在生命周期前报配置错误。
+仅支持 API key → x-api-key；不读取 ANTHROPIC_AUTH_TOKEN，不退回 fake。根目录 `.env` 由 CLI 与 server 通过共享 loader 使用 Node 内建 `process.loadEnvFile()` 加载，不引入 dotenv 依赖；文件缺失不算错误。baseUrl 保留 `/coding/` 前缀，拼接 `/v1/messages`；已带 `/v1` 不重复拼接。缺 key 在生命周期前报配置错误。
 
 `pnpm dev` 的工作目录是 `packages/cli`，工具相对路径以它为准；「读一下 package.json」会读 CLI 包文件。测试则把 CLI 子进程放进临时目录，只读取自建无敏感文件。
 

@@ -145,7 +145,10 @@ describe("CLI composition root", () => {
 	});
 
 	it("fails clearly when the API key is missing rather than falling back to fake", async () => {
-		const result = await runCli("/exit\n", [], { authenticated: false });
+		const result = await runCli("/exit\n", [], {
+			authenticated: false,
+			env: { MINI_AGENT_SKIP_ENV_FILE: "1" },
+		});
 		expect(result.code).not.toBe(0);
 		expect(result.stderr).toContain("ANTHROPIC_API_KEY");
 		expect(result.stdout).not.toContain("deterministic fake");

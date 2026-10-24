@@ -15,13 +15,23 @@ export function formatJson(value: unknown): string {
 // 状态只有 pending | running | completed | error 四种；run aborted 时
 // 不伪造每个工具的 aborted 状态。partialResult 在完成后可能仍挂在 card
 // 上（Task 4 已知行为），因此只在未完结时渲染。
-export function ToolCard({ card }: { card: ToolCardView }): JSX.Element {
+export interface ToolCardProps {
+	card: ToolCardView;
+	isLinked?: boolean;
+	onFocusTimeline?(toolCallId: string): void;
+}
+
+export function ToolCard({
+	card,
+	isLinked = false,
+	onFocusTimeline,
+}: ToolCardProps): JSX.Element {
 	const showPartial =
 		card.partialResult !== undefined &&
 		(card.status === "pending" || card.status === "running");
 	return (
 		<section
-			className={`tool-card tool-card-${card.status}`}
+				className={`tool-card tool-card-${card.status}${isLinked ? " tool-card-linked" : ""}`}
 			data-tool-call-id={card.toolCallId}
 		>
 			<header className="tool-card-header">
@@ -32,11 +42,20 @@ export function ToolCard({ card }: { card: ToolCardView }): JSX.Element {
 				{card.durationMs !== undefined && (
 					<span className="tool-duration">{card.durationMs} ms</span>
 				)}
+					{onFocusTimeline && (
+						<button
+							type="button"
+							className="tool-timeline-link"
+							onClick={() => onFocusTimeline(card.toolCallId)}
+						>
+							View Timeline
+						</button>
+					)}
 			</header>
-			<div className="tool-field">
-				<span className="tool-field-label">arguments</span>
+				<details className="tool-arguments">
+					<summary>arguments</summary>
 				<pre className="tool-json">{formatJson(card.args)}</pre>
-			</div>
+				</details>
 			{showPartial && (
 				<div className="tool-field tool-partial">
 					<span className="tool-field-label">partial result</span>

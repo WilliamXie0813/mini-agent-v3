@@ -72,6 +72,8 @@ export function useAgentSession(): AgentSession {
 				send({ type: "session.compact", requestId: crypto.randomUUID() }),
 			onSelectTimelineItem: (itemId) =>
 				dispatch({ type: "timeline.selected", itemId }),
+				onRetryConnection: () => clientRef.current?.retry(),
+				onDismissError: () => dispatch({ type: "local.error.clear" }),
 		};
 	}, [state.prompt]);
 

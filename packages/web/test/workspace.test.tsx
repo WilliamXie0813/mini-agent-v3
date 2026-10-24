@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -233,6 +233,8 @@ function renderWorkspace(state: AppState, overrides: Partial<WorkspaceProps> = {
 		onAbort: vi.fn(),
 		onCompact: vi.fn(),
 		onSelectTimelineItem: vi.fn(),
+			onRetryConnection: vi.fn(),
+			onDismissError: vi.fn(),
 		...overrides,
 	};
 	return { ...render(<Workspace {...props} />), props };
@@ -251,6 +253,8 @@ function Harness({ initial }: { initial: AppState }) {
 			onSelectTimelineItem={(itemId) =>
 				setState((s) => ({ ...s, selectedTimelineItemId: itemId }))
 			}
+			onRetryConnection={() => {}}
+			onDismissError={() => {}}
 		/>
 	);
 }
@@ -258,6 +262,9 @@ function Harness({ initial }: { initial: AppState }) {
 describe("workspace layout and connection", () => {
 	it("renders Session, Chat and Timeline landmarks on a light theme", () => {
 		const { container } = renderWorkspace(fullState());
+		expect(
+			screen.getByRole("heading", { level: 1, name: "mini-agent Runtime Workbench" }),
+		).toBeInTheDocument();
 		expect(
 			screen.getByRole("complementary", { name: "Session" }),
 		).toBeInTheDocument();
@@ -272,13 +279,13 @@ describe("workspace layout and connection", () => {
 	});
 
 	it.each([
-		["connecting", /^connecting/i],
-		["reconnecting", /^reconnecting/i],
-		["disconnected", /^disconnected/i],
-		["incompatible", /^incompatible/i],
-	] as const)("blocks input while %s", (connection, pattern) => {
+			["connecting", "Connecting to the local agent"],
+			["reconnecting", "Agent connection lost"],
+			["disconnected", "Agent disconnected"],
+			["incompatible", "Incompatible agent protocol"],
+		] as const)("blocks input while %s", (connection, message) => {
 		renderWorkspace(appState({ connection, session: sessionView([], [], "idle") }));
-		expect(screen.getByRole("alert").textContent).toMatch(pattern);
+			expect(screen.getByText(message)).toBeInTheDocument();
 		expect(screen.getByRole("textbox", { name: "Prompt" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
 	});
@@ -288,7 +295,7 @@ describe("workspace layout and connection", () => {
 		expect(screen.queryByRole("alert")).toBeNull();
 		expect(screen.getByRole("textbox", { name: "Prompt" })).toBeEnabled();
 		expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
-		expect(screen.getByRole("button", { name: "Compact" })).toBeEnabled();
+			expect(screen.getByRole("button", { name: "Compact session" })).toBeEnabled();
 		expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
 	});
 
@@ -298,7 +305,7 @@ describe("workspace layout and connection", () => {
 		);
 		expect(screen.getByRole("textbox", { name: "Prompt" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-		expect(screen.getByRole("button", { name: "Compact" })).toBeDisabled();
+			expect(screen.getByRole("button", { name: "Compact session" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
 	});
 
@@ -314,7 +321,7 @@ describe("workspace layout and connection", () => {
 		).not.toHaveTextContent("running");
 		expect(screen.getByRole("textbox", { name: "Prompt" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-		expect(screen.getByRole("button", { name: "Compact" })).toBeDisabled();
+			expect(screen.getByRole("button", { name: "Compact session" })).toBeDisabled();
 		expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
 	});
 
@@ -329,6 +336,69 @@ describe("workspace layout and connection", () => {
 			"compacting",
 		);
 		expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+	});
+
+	it("resizes the Timeline with keyboard and pointer input", () => {
+		renderWorkspace(fullState());
+		const resizer = screen.getByRole("separator", { name: "Resize Timeline" });
+		const body = document.querySelector(".workspace-body") as HTMLElement;
+
+		expect(resizer).toHaveAttribute("aria-orientation", "vertical");
+		expect(resizer).toHaveAttribute("aria-valuemin", "320");
+		expect(resizer).toHaveAttribute("aria-valuemax", "640");
+		expect(resizer).toHaveAttribute("aria-valuenow", "480");
+		expect(resizer).toHaveAttribute("aria-valuetext", "480 pixels");
+		expect(body.style.getPropertyValue("--timeline-width")).toBe("480px");
+
+		fireEvent.keyDown(resizer, { key: "ArrowLeft" });
+		expect(resizer).toHaveAttribute("aria-valuenow", "496");
+		expect(body.style.getPropertyValue("--timeline-width")).toBe("496px");
+
+		fireEvent.keyDown(resizer, { key: "ArrowRight" });
+		expect(resizer).toHaveAttribute("aria-valuenow", "480");
+		fireEvent.keyDown(resizer, { key: "Home" });
+		expect(resizer).toHaveAttribute("aria-valuenow", "320");
+		fireEvent.keyDown(resizer, { key: "End" });
+		expect(resizer).toHaveAttribute("aria-valuenow", "640");
+
+		fireEvent.keyDown(resizer, { key: "Home" });
+		const pointer = (type: string, clientX: number) => {
+			const event = new MouseEvent(type, { bubbles: true, clientX });
+			Object.defineProperty(event, "pointerId", { value: 1 });
+			return event;
+		};
+		fireEvent(resizer, pointer("pointerdown", 1000));
+		fireEvent(resizer, pointer("pointermove", 960));
+		fireEvent(resizer, pointer("pointerup", 960));
+		expect(resizer).toHaveAttribute("aria-valuenow", "360");
+		expect(body.style.getPropertyValue("--timeline-width")).toBe("360px");
+	});
+
+	it("offers a manual retry while reconnecting", async () => {
+		const user = userEvent.setup();
+		const onRetryConnection = vi.fn();
+		renderWorkspace(
+			appState({
+				connection: "reconnecting",
+				session: sessionView(durableEntries(), [], "idle"),
+			}),
+			{ onRetryConnection },
+		);
+		expect(screen.getByText("Agent connection lost")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Retry connection" }));
+		expect(onRetryConnection).toHaveBeenCalledTimes(1);
+	});
+
+	it("opens and closes the responsive Timeline drawer", async () => {
+		const user = userEvent.setup();
+		renderWorkspace(fullState());
+		const toggle = screen.getByRole("button", { name: "Timeline" });
+		expect(toggle).toHaveAttribute("aria-expanded", "false");
+		await user.click(toggle);
+		expect(toggle).toHaveAttribute("aria-expanded", "true");
+		await user.click(screen.getByRole("button", { name: "Close" }));
+		expect(toggle).toHaveAttribute("aria-expanded", "false");
+		expect(toggle).toHaveFocus();
 	});
 });
 
@@ -399,6 +469,56 @@ describe("chat panel and tool cards", () => {
 			.closest("details");
 		expect(details).not.toBeNull();
 		expect(details).not.toHaveAttribute("open");
+	});
+
+	it("collapses tool arguments by default", () => {
+		renderWorkspace(fullState());
+		const readCard = screen
+			.getByText("read", { selector: ".tool-name" })
+			.closest("[data-tool-call-id]") as HTMLElement;
+		const argumentsPanel = readCard.querySelector(".tool-arguments");
+		expect(argumentsPanel).not.toHaveAttribute("open");
+		expect(within(readCard).getByText("arguments")).toBeInTheDocument();
+	});
+
+	it("links a tool card to its Timeline events", async () => {
+		const user = userEvent.setup();
+		renderWorkspace(fullState());
+		const readCard = screen
+			.getByText("read", { selector: ".tool-name" })
+			.closest("[data-tool-call-id]") as HTMLElement;
+		await user.click(within(readCard).getByRole("button", { name: "View Timeline" }));
+		expect(readCard).toHaveClass("tool-card-linked");
+		const linkedRows = document.querySelectorAll(
+			'[data-timeline-tool-call-id="c1"].timeline-row-linked',
+		);
+		expect(linkedRows.length).toBeGreaterThan(0);
+	});
+
+	it("requires confirmation before compacting the session", async () => {
+		const user = userEvent.setup();
+		const { props } = renderWorkspace(idleState());
+		await user.click(screen.getByRole("button", { name: "Compact session" }));
+		expect(props.onCompact).not.toHaveBeenCalled();
+		expect(
+			screen.getByText(/Compaction summarizes the active context/),
+		).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Compact session" }));
+		expect(props.onCompact).toHaveBeenCalledTimes(1);
+	});
+
+	it("shows blank prompt validation beside the composer", async () => {
+		const user = userEvent.setup();
+		const { props } = renderWorkspace(appState({ ...idleState(), prompt: "   " }));
+		await user.click(screen.getByRole("button", { name: "Send" }));
+		expect(
+			screen.getByRole("alert", { name: "" }),
+		).toHaveTextContent("Enter a prompt before sending.");
+		expect(screen.getByRole("textbox", { name: "Prompt" })).toHaveAttribute(
+			"aria-invalid",
+			"true",
+		);
+		expect(props.onSubmit).not.toHaveBeenCalled();
 	});
 
 	it("shows partial results only while the tool is running", () => {
@@ -519,6 +639,26 @@ describe("usage, compaction and timeline rows", () => {
 		);
 	});
 
+	it("filters the Timeline to tool and error events", async () => {
+		const user = userEvent.setup();
+		renderWorkspace(fullState());
+		const filters = screen.getByRole("group", { name: "Filter timeline" });
+		await user.click(within(filters).getByRole("button", { name: "Tools" }));
+		expect(
+			screen.getByRole("button", { name: /tool intent: read/ }),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /message: assistant/ }),
+		).toBeNull();
+		await user.click(within(filters).getByRole("button", { name: "Errors" }));
+		expect(
+			screen.getByRole("button", { name: /tool outcome: error/ }),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /tool outcome$/ }),
+		).toBeNull();
+	});
+
 	it("reports timeline item ids when journal and live rows are clicked", async () => {
 		const user = userEvent.setup();
 		const { props } = renderWorkspace(fullState());
@@ -541,6 +681,7 @@ describe("event details modal", () => {
 		expect(dialog.textContent).toContain("sequence");
 		expect(dialog.textContent).toContain("elapsedMs");
 		expect(dialog.textContent).toContain('"type": "turn_start"');
+		expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
 	});
 
 	it("closes on Escape and returns focus to the original timeline row", async () => {
@@ -613,6 +754,20 @@ describe("event details modal", () => {
 		expect(strings).toContain('"s1"');
 		expect(numbers).toContain("1");
 		expect(numbers).toContain("5");
+	});
+
+	it("announces when JSON is copied", async () => {
+		const user = userEvent.setup();
+		const writeText = vi.fn().mockResolvedValue(undefined);
+		Object.defineProperty(navigator, "clipboard", {
+			configurable: true,
+			value: { writeText },
+		});
+		render(<Harness initial={fullState()} />);
+		await user.click(screen.getByRole("button", { name: /turn start/ }));
+		await user.click(screen.getByRole("button", { name: "Copy JSON" }));
+		expect(writeText).toHaveBeenCalledTimes(1);
+		expect(screen.getByText("JSON copied.")).toBeInTheDocument();
 	});
 
 	it("keeps the timeline rendered but inert while the modal is open", async () => {

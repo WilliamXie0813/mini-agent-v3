@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { JSX, KeyboardEvent, ReactNode } from "react";
 
 import type { TimelineItem } from "../state/types.ts";
@@ -42,18 +42,43 @@ export interface EventDetailsModalProps {
 export function EventDetailsModal(props: EventDetailsModalProps): JSX.Element {
 	const { item, previousId, nextId, onClose, onNavigate } = props;
 	const dialogRef = useRef<HTMLDivElement>(null);
+	const closeRef = useRef<HTMLButtonElement>(null);
+	const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">("idle");
 	useEffect(() => {
-		dialogRef.current?.focus();
-	}, []);
+		setCopyStatus("idle");
+		closeRef.current?.focus();
+	}, [item.id]);
 	const payload = item.raw.length === 1 ? item.raw[0] : item.raw;
 	const json = formatJson(payload);
 	const keyDown = (event: KeyboardEvent<HTMLDivElement>) => {
 		if (event.key === "Escape") onClose();
+		if (event.key !== "Tab") return;
+		const focusable = [
+			...Array.from(
+				dialogRef.current?.querySelectorAll<HTMLElement>(
+					'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+				) ?? [],
+			),
+		];
+		const first = focusable[0];
+		const last = focusable.at(-1);
+		if (!first || !last) return;
+		if (event.shiftKey && document.activeElement === first) {
+			event.preventDefault();
+			last.focus();
+		} else if (!event.shiftKey && document.activeElement === last) {
+			event.preventDefault();
+			first.focus();
+		}
 	};
-	const copy = () => {
-		void navigator.clipboard?.writeText(json).catch(() => {
-			// clipboard 不可用（无权限或非安全上下文）时静默降级。
-		});
+	const copy = async () => {
+		try {
+			if (!navigator.clipboard) throw new Error("Clipboard unavailable");
+			await navigator.clipboard.writeText(json);
+			setCopyStatus("copied");
+		} catch {
+			setCopyStatus("error");
+		}
 	};
 	return (
 		<div className="modal-overlay">
@@ -68,7 +93,7 @@ export function EventDetailsModal(props: EventDetailsModalProps): JSX.Element {
 			>
 				<header className="event-modal-header">
 					<div className="event-modal-heading">
-						<h2>{item.label}</h2>
+						<h1>{item.label}</h1>
 						<dl className="event-meta">
 							<div>
 								<dt>source</dt>
@@ -93,6 +118,7 @@ export function EventDetailsModal(props: EventDetailsModalProps): JSX.Element {
 						</dl>
 					</div>
 					<button
+							ref={closeRef}
 						type="button"
 						className="modal-close"
 						aria-label="Close"
@@ -115,9 +141,16 @@ export function EventDetailsModal(props: EventDetailsModalProps): JSX.Element {
 					{item.warning && (
 						<span className="event-warning">{item.warning}</span>
 					)}
-					<button type="button" className="copy-json" onClick={copy}>
-						Copy JSON
+					<button type="button" className="copy-json" onClick={() => void copy()}>
+						{copyStatus === "copied" ? "Copied" : "Copy JSON"}
 					</button>
+					<span className="copy-status" role="status" aria-live="polite">
+						{copyStatus === "copied"
+							? "JSON copied."
+							: copyStatus === "error"
+								? "Copy failed. Select the JSON directly."
+								: ""}
+					</span>
 				</div>
 				<pre className="event-json">
 					<code>{highlightJson(json)}</code>

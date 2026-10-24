@@ -12,6 +12,7 @@ import { useAgentSession } from "../src/use-agent-session.ts";
 const protocolMock = vi.hoisted(() => ({
 	capturedOptions: undefined as ProtocolClientOptions | undefined,
 	connect: vi.fn(),
+	retry: vi.fn(),
 	send: vi.fn(),
 	close: vi.fn(),
 }));
@@ -22,6 +23,7 @@ vi.mock("../src/protocol-client.ts", () => ({
 		protocolMock.capturedOptions = options;
 		return {
 			connect: protocolMock.connect,
+				retry: protocolMock.retry,
 			send: protocolMock.send,
 			close: protocolMock.close,
 		};
@@ -65,6 +67,7 @@ function snapshot(
 beforeEach(() => {
 	protocolMock.capturedOptions = undefined;
 	protocolMock.connect.mockClear();
+	protocolMock.retry.mockClear();
 	protocolMock.send.mockClear();
 	protocolMock.close.mockClear();
 	vi.spyOn(crypto, "randomUUID").mockReturnValue(UUID);
@@ -119,6 +122,29 @@ describe("useAgentSession", () => {
 			requestId: UUID,
 		});
 	});
+
+		it("retries the protocol connection through the latest client", () => {
+			const { result } = renderHook(() => useAgentSession());
+			act(() => result.current.actions.onRetryConnection());
+			expect(protocolMock.retry).toHaveBeenCalledTimes(1);
+		});
+
+		it("clears a visible protocol error", () => {
+			const { result } = renderHook(() => useAgentSession());
+			const options = protocolMock.capturedOptions;
+			if (!options) throw new Error("client was not created");
+			act(() =>
+				options.onMessage({
+					type: "protocol.error",
+					requestId: "r2",
+					code: "RUN_ACTIVE",
+					message: "run already active",
+				}),
+			);
+			expect(result.current.state.lastProtocolError).toBeDefined();
+			act(() => result.current.actions.onDismissError());
+			expect(result.current.state.lastProtocolError).toBeUndefined();
+		});
 
 	it("tracks command.accepted/completed and protocol.error through the reducer", () => {
 		const { result } = renderHook(() => useAgentSession());
