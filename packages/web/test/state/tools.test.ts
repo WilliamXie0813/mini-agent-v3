@@ -27,6 +27,8 @@ function sessionView(
 		sessionId: "s1",
 		leafId: entries.at(-1)?.id ?? null,
 		status: events.length > 0 ? "running" : "idle",
+		agentActive: events.length > 0,
+		compactionActive: false,
 		entries,
 		events,
 		latestSequence: events.at(-1)?.sequence ?? 0,

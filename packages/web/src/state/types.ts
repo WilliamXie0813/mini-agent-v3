@@ -31,6 +31,10 @@ export interface SessionViewState {
 	sessionId: string;
 	leafId: string | null;
 	status: SessionSnapshot["status"];
+	// snapshot.status 只反映连接时刻；连接期间的 live status 由事件对推导，
+	// 两个 active 标记区分 mid-run threshold compaction 与独立 compact 操作。
+	agentActive: boolean;
+	compactionActive: boolean;
 	entries: SessionSnapshot["entries"];
 	events: AgentEventEnvelope[];
 	latestSequence: number;

@@ -121,6 +121,67 @@ describe("reduceAppState", () => {
 		expect(state.session?.diagnostics).toEqual([]);
 	});
 
+	it("derives live status from agent_start and agent_end", () => {
+		let state = withSnapshot(snapshot());
+		state = dispatch(state, {
+			type: "agent.event",
+			envelope: envelope(0, { type: "agent_start" }),
+		});
+		expect(state.session?.status).toBe("running");
+		state = dispatch(state, {
+			type: "agent.event",
+			envelope: envelope(1, { type: "agent_end", messages: [] }),
+		});
+		expect(state.session?.status).toBe("idle");
+	});
+
+	it("keeps running status across a mid-run threshold compaction", () => {
+		let state = withSnapshot(snapshot());
+		state = dispatch(state, {
+			type: "agent.event",
+			envelope: envelope(0, { type: "agent_start" }),
+		});
+		state = dispatch(state, {
+			type: "agent.event",
+			envelope: envelope(1, {
+				type: "compaction_start", reason: "threshold", contextTokens: 100,
+			}),
+		});
+		expect(state.session?.status).toBe("compacting");
+		state = dispatch(state, {
+			type: "agent.event",
+			envelope: envelope(2, {
+				type: "compaction_end", reason: "threshold",
+				status: "error", errorMessage: "summary failed",
+			}),
+		});
+		expect(state.session?.status).toBe("running");
+		state = dispatch(state, {
+			type: "agent.event",
+			envelope: envelope(3, { type: "agent_end", messages: [] }),
+		});
+		expect(state.session?.status).toBe("idle");
+	});
+
+	it("returns to idle when a manual compaction ends outside a run", () => {
+		let state = withSnapshot(snapshot());
+		state = dispatch(state, {
+			type: "agent.event",
+			envelope: envelope(0, {
+				type: "compaction_start", reason: "manual", contextTokens: 10,
+			}),
+		});
+		expect(state.session?.status).toBe("compacting");
+		state = dispatch(state, {
+			type: "agent.event",
+			envelope: envelope(1, {
+				type: "compaction_end", reason: "manual", status: "completed",
+				entryId: "c1", firstKeptEntryId: "e1", tokensBefore: 10,
+			}),
+		});
+		expect(state.session?.status).toBe("idle");
+	});
+
 	it("ignores live events from a different session", () => {
 		let state = withSnapshot(snapshot());
 		state = dispatch(state, {

@@ -4,6 +4,7 @@ import type {
 	SessionSnapshot,
 } from "@mini-agent/protocol";
 
+import { liveStatusTransition } from "./live-status.ts";
 import type { AppAction, AppState, SessionViewState } from "./types.ts";
 
 export function createInitialAppState(): AppState {
@@ -74,6 +75,8 @@ function applySnapshot(
 		sessionId: snapshot.sessionId,
 		leafId: snapshot.leafId,
 		status: snapshot.status,
+		agentActive: snapshot.status === "running",
+		compactionActive: snapshot.status === "compacting",
 		entries: snapshot.entries,
 		events: [...snapshot.transientEvents],
 		latestSequence: snapshot.latestSequence,
@@ -101,6 +104,8 @@ function isSelectionValid(itemId: string, session: SessionViewState): boolean {
 	return false;
 }
 
+// agent/compaction 事件各自成对（core 保证失败路径也补齐配对），live status
+// 的推进规则在 live-status.ts；此处只负责 sequence 校验与事件追加。
 function applyAgentEvent(
 	state: AppState,
 	envelope: AgentEventEnvelope,
@@ -128,6 +133,7 @@ function applyAgentEvent(
 			...session,
 			events: [...session.events, envelope],
 			latestSequence: envelope.sequence,
+			...liveStatusTransition(session, envelope.event),
 		},
 	};
 	if (envelope.sequence > expected) {

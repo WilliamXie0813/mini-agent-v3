@@ -204,6 +204,8 @@ function sessionView(
 		sessionId: "s1",
 		leafId: entries.at(-1)?.id ?? null,
 		status,
+		agentActive: status === "running",
+		compactionActive: status === "compacting",
 		entries,
 		events,
 		latestSequence: events.at(-1)?.sequence ?? 0,

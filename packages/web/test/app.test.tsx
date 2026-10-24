@@ -107,6 +107,8 @@ function sessionState(status: SessionViewState["status"]): AppState {
 		sessionId: "s1",
 		leafId: "leaf-1",
 		status,
+		agentActive: status === "running",
+		compactionActive: status === "compacting",
 		entries: [submission],
 		events: [],
 		latestSequence: 0,
