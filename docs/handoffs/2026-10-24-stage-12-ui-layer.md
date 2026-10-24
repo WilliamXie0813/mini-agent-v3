@@ -3,7 +3,7 @@
 > 日期：2026-10-24  
 > 分支：`stage-12-ui-layer`  
 > Worktree：`/Users/william/Desktop/project/my-harness/mini-agent-v3/.claude/worktrees/stage-12-ui-layer`  
-> 当前 HEAD：`14a3d54e241d9b7b992089c4bc99d6f64661ec55`  
+> 当前 HEAD：以 `git log` 为准；实现完成点为 `14a3d54e241d9b7b992089c4bc99d6f64661ec55`  
 > 状态：Task 1–7 已完成并通过逐任务审查；whole-branch final review 按用户要求暂停，尚未执行。
 
 ---
