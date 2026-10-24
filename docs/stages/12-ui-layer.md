@@ -73,9 +73,9 @@ socket detach 只移除 sink，**不调用 `session.abort()`**。断开是浏览
 
 ## 实施边界与成本
 
-三个新包 src 合计 **2591 行**、测试 3975 行：protocol（wire unions + runtime guards + type-only core 引用）、server（session-path / session-operations / session-host / create-runtime / websocket-server / index）、web（state selectors + reducer + ProtocolClient + useAgentSession + 三栏工作台组件与样式）。每个 src 文件 < 200 行，`session-host.ts` 超限后拆出 `session-operations.ts`（operation begin/settle 记账）再继续。
+三个新包 src 合计 **2620 行**、测试 4030 行：protocol（wire unions + runtime guards + type-only core 引用）、server（session-path / session-operations / session-host / create-runtime / websocket-server / index）、web（state selectors + reducer + ProtocolClient + useAgentSession + 三栏工作台组件与样式）。每个 src 文件 < 200 行，`session-host.ts` 超限后拆出 `session-operations.ts`（operation begin/settle 记账）再继续。
 
-新增运行时依赖只在 server（`ws`）与 web（react / react-dom / vite 等）；`ai` / `core` / `extensions` / `cli` 零改动、零新依赖。运行期 client 状态增加 `agentActive` / `compactionActive` 两个标记：snapshot 的 `status` 只反映连接时刻，连接期间的 live status 由事件对推导（mid-run threshold compaction 期间 agent 仍 active，`compaction_end` 后回 running 而非 idle），Stop 按钮与 composer 禁用都依赖这条推导。
+新增运行时依赖只在 server（`ws`）与 web（react / react-dom / vite 等）；`ai` / `core` / `extensions` / `cli` 零改动、零新依赖。运行期 client 状态增加 `agentActive` / `compactionActive` 两个标记：snapshot 的 `status` 只反映连接时刻，连接期间的 live status 由事件对推导（mid-run threshold compaction 期间 agent 仍 active，`compaction_end` 后回 running 而非 idle），composer 禁用依赖推导后的 `status`，Stop 直接依赖 `agentActive`，因此压缩摘要期间仍可中止所属 run。
 
 未实现（计划内边界）：Web 端 New session / 历史 session 列表 / session 切换（新会话仍由 server 启动参数 `--continue` 控制）；Dark 主题、文件树、编辑器、diff、内嵌终端、扩展管理页；CBOR / RPC / 插件协议 / 二进制帧；成本显示（待经验证的价格表）；阶段 13 的 `steer` / `followUp`、子 agent 与 parent/child UI。
 
@@ -83,7 +83,7 @@ socket detach 只移除 sink，**不调用 `session.abort()`**。断开是浏览
 
 ## 验收
 
-`pnpm test` 与 `pnpm check` 全绿（protocol 19、server 37、web 83，ai/core/extensions/examples 无回归；CLI 类型检查通过）。覆盖：
+`pnpm test` 与 `pnpm check` 全绿（protocol 19、server 37、web 86，ai/core/extensions/examples 无回归；CLI 类型检查通过）。覆盖：
 
 - wire 边界：合法/非法命令、snapshot/envelope guards、protocol 对 core 只有 type-only import（测试强制）。
 - server：active parent path 与坏 parent 防御、prompt/abort/compact 命令、detach/reconnect 不 abort、run 中途 snapshot 停在 base leaf 且 transientEvents 无重复无缺口、真实 ws client 的中途重连补齐、server 只用包根导入（测试强制）。

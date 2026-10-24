@@ -3,18 +3,17 @@
 > 日期：2026-10-24  
 > 分支：`stage-12-ui-layer`  
 > Worktree：`/Users/william/Desktop/project/my-harness/mini-agent-v3/.claude/worktrees/stage-12-ui-layer`  
-> 当前 HEAD：以 `git log` 为准；实现完成点为 `14a3d54e241d9b7b992089c4bc99d6f64661ec55`  
-> 状态：Task 1–7 已完成并通过逐任务审查；whole-branch final review 按用户要求暂停，尚未执行。
+> 实现完成点：`74b7c30 fix(stage-12): keep stop available during active compaction`
+> 状态：Task 1–7、whole-branch final review 与 Important 修复均已完成；等待分支集成选择。
 
 ---
 
-## 1. 下次从哪里继续
+## 1. 当前状态
 
-下次会话可以直接说：
+阶段 12 实现与 final review 已完成。当前没有未处理的 Critical/Important finding；
+branch 等待 merge、PR 或保留原分支的集成选择。
 
-> 继续 stage-12-ui-layer，从 handoff 恢复，先读 `docs/handoffs/2026-10-24-stage-12-ui-layer.md`，然后执行 whole-branch final review。
-
-建议先确认 worktree 仍在：
+需要复核时：
 
 ```bash
 cd /Users/william/Desktop/project/my-harness/mini-agent-v3/.claude/worktrees/stage-12-ui-layer
@@ -32,13 +31,13 @@ git worktree list
 
 然后可以重新创建/进入 worktree，或直接在分支上继续。
 
-## 2. 当前验证状态
+## 2. 最终验证状态
 
-在 `14a3d54` 上由控制会话直接运行：
+在提交 `74b7c30` 上由控制会话直接运行：
 
-- `pnpm test`：679/679 passed
+- `pnpm test`：680/680 passed
 - `pnpm check`：全部 8 个 TypeScript package 通过
-- `git status --short`：干净（handoff 文档提交后仍应干净）
+- `git status --short`：handoff 文档提交后干净
 
 分包测试数：
 
@@ -49,9 +48,9 @@ git worktree list
 | protocol | 19 |
 | extensions | 41 |
 | examples | 2 |
-| web | 85 |
+| web | 86 |
 | server | 37 |
-| 合计 | 679 |
+| 合计 | 680 |
 
 ## 3. 已完成范围
 
@@ -182,23 +181,18 @@ Task 7 已用 agent-browser 对真实 provider 验证过：
 ANTHROPIC_MODEL=k3 pnpm dev:web
 ```
 
-## 5. 尚未完成：whole-branch final review
+## 5. Whole-branch final review
 
-用户明确要求在 Task 7 完成后暂停，所以目前**没有执行** SDD 的最终 whole-branch review。
+已完成从 `master`（`fcbb952`）到实现 HEAD 的双轴审查与复核：
 
-下次继续时的主要任务：
-
-1. 读本 handoff。
-2. 读 SDD ledger（如果 worktree 仍存在）：
-   `.superpowers/sdd/2026-10-16-stage-12-ui-layer/progress.md`
-3. 读最终计划与阶段文档。
-4. 执行 whole-branch final review，范围是从 master 基线到当前 HEAD。
-5. 处理 final review 的 Critical/Important findings。
-6. 再进入 `superpowers:finishing-a-development-branch`。
+- 0 Critical。
+- 1 Important：mid-run threshold compaction 时 Header 以 `status` 判断 Stop，导致 active run 暂时无法从 Web 中止。
+- 已用 RED→GREEN 测试修复：Stop 改由 `agentActive` 决定；Web tests 从 85 增至 86。
+- 其余 findings 均为 Minor，不阻塞阶段 12 完成。
 
 ## 6. Deferred Minor findings 汇总
 
-这些都不阻塞当前任务审查，但 final review 应该重新 triage。
+这些均已由 final review 重新 triage，不阻塞阶段 12 完成。
 
 ### Server / protocol
 
@@ -230,7 +224,7 @@ ANTHROPIC_MODEL=k3 pnpm dev:web
 - 自定义 `reconnectDelaysMs` 尚未有专门测试。
 - socket `onerror` 静默，依赖后续 `onclose`。
 - hook 把 non-open `send()` 转成 `NOT_CONNECTED` local error，这是超出计划的防御行为。
-- stage 文档中的 src 行数可能仍引用拆分前数字（2591 vs 2608）。
+- stage 文档中的 src 行数已同步为当前 2620 行；测试行数同步为 4030 行。
 - compact 不足 `keepRecentTurns` 时 UI 对 `compacted:false` 没有明显反馈。
 
 ## 7. 关键架构边界
@@ -269,4 +263,4 @@ pnpm test
 pnpm check
 ```
 
-若全部通过，下一步就是 whole-branch final review。
+若全部通过，进入分支集成选择：本地 merge、推送创建 PR，或保留当前分支。
