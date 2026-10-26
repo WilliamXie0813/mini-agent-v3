@@ -239,13 +239,58 @@ describe("Agent.followUp", () => {
 		expect(textOf(last)).toContain("maxTurns (2)");
 	});
 
-	it("treats active blank input as a no-op and rejects late nonblank calls", async () => {
+	it("closes acceptance before final delivery so a post-drain microtask cannot be dropped", async () => {
 		const { contexts, streamFn } = captureContexts(["done"]);
 		const agent = new Agent({ system: "test", streamFn });
+		let scheduled = false;
+		let accepted = false;
+		let lateError: unknown;
+		let finishLateCall = () => {};
+		const lateCalled = new Promise<void>((resolve) => {
+			finishLateCall = resolve;
+		});
+		agent.subscribe((event) => {
+			if (event.type !== "turn_end" || scheduled) return;
+			scheduled = true;
+			void Promise.resolve().then(() => {
+				void Promise.resolve().then(() => {
+					void Promise.resolve().then(() => {
+						void Promise.resolve().then(() => {
+							void Promise.resolve().then(() => {
+								try {
+									agent.followUp("late");
+									accepted = true;
+								} catch (error) {
+									lateError = error;
+								}
+								finishLateCall();
+							});
+						});
+					});
+				});
+			});
+		});
+
+		await expect(agent.prompt("go")).resolves.toBeUndefined();
+		await lateCalled;
+
+		const users = userTexts(agent.state.messages);
+		if (accepted) expect(users).toContain("late");
+		expect(contexts).toHaveLength(1);
+		expect(lateError).toBeInstanceOf(Error);
+		expect((lateError as Error).message).toMatch(/Cannot followUp.*active run/);
+		expect(users).toEqual(["go"]);
+	});
+
+	it("treats blank input as a no-op and rejects idle or late nonblank calls", async () => {
+		const { contexts, streamFn } = captureContexts(["done"]);
+		const agent = new Agent({ system: "test", streamFn });
+		expect(() => agent.followUp(" \t\n")).not.toThrow();
 		let lateError: unknown;
 		agent.subscribe((event) => {
 			if (event.type === "message_update") agent.followUp("   ");
 			if (event.type === "agent_end") {
+				expect(() => agent.followUp(" \t\n")).not.toThrow();
 				try {
 					agent.followUp("late");
 				} catch (error) {

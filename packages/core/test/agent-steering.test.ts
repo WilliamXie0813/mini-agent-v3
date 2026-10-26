@@ -192,12 +192,59 @@ describe("Agent.steer", () => {
 		]);
 	});
 
-	it("rejects idle and agent_end-listener calls without rejecting the prompt", async () => {
+	it("closes acceptance before final delivery so a post-drain microtask cannot be dropped", async () => {
+		const { contexts, streamFn } = captureContexts(["done"]);
+		const agent = new Agent({ system: "test", streamFn });
+		let scheduled = false;
+		let accepted = false;
+		let lateError: unknown;
+		let finishLateCall = () => {};
+		const lateCalled = new Promise<void>((resolve) => {
+			finishLateCall = resolve;
+		});
+		agent.subscribe((event) => {
+			if (event.type !== "turn_end" || scheduled) return;
+			scheduled = true;
+			void Promise.resolve().then(() => {
+				void Promise.resolve().then(() => {
+					void Promise.resolve().then(() => {
+						void Promise.resolve().then(() => {
+							void Promise.resolve().then(() => {
+								try {
+									agent.steer("late");
+									accepted = true;
+								} catch (error) {
+									lateError = error;
+								}
+								finishLateCall();
+							});
+						});
+					});
+				});
+			});
+		});
+
+		await expect(agent.prompt("go")).resolves.toBeUndefined();
+		await lateCalled;
+
+		const users = agent.state.messages
+			.filter((message) => message.role === "user")
+			.map((message) => textOf(message));
+		if (accepted) expect(users).toContain("late");
+		expect(contexts).toHaveLength(1);
+		expect(lateError).toBeInstanceOf(Error);
+		expect((lateError as Error).message).toMatch(/Cannot steer.*active run/);
+		expect(users).toEqual(["go"]);
+	});
+
+	it("treats idle and agent_end blank calls as no-ops and rejects nonblank calls", async () => {
 		const agent = new Agent({ system: "test", streamFn: createFakeStreamFn(["done"]) });
+		expect(() => agent.steer(" \t\n")).not.toThrow();
 		expect(() => agent.steer("x")).toThrow(/Cannot steer.*active run/);
 		let lateError: unknown;
 		agent.subscribe((event) => {
 			if (event.type !== "agent_end") return;
+			expect(() => agent.steer(" \t\n")).not.toThrow();
 			try {
 				agent.steer("late");
 			} catch (error) {

@@ -88,9 +88,9 @@ export class Agent {
 	}
 
 	steer(prompt: string, mode: QueueMode = "one-at-a-time"): void {
+		if (prompt.trim() === "") return;
 		if (!this.acceptingQueueMessages)
 			throw new Error("Cannot steer without an active run");
-		if (prompt.trim() === "") return;
 		this.steeringQueue.enqueue({
 			role: "user",
 			content: [{ type: "text", text: prompt }],
@@ -98,9 +98,9 @@ export class Agent {
 	}
 
 	followUp(prompt: string, mode: QueueMode = "one-at-a-time"): void {
+		if (prompt.trim() === "") return;
 		if (!this.acceptingQueueMessages)
 			throw new Error("Cannot followUp without an active run");
-		if (prompt.trim() === "") return;
 		this.followUpQueue.enqueue({
 			role: "user",
 			content: [{ type: "text", text: prompt }],
@@ -288,6 +288,7 @@ export class Agent {
 	}
 
 	private processEvents(event: AgentEvent): Promise<void> {
+		if (event.type === "agent_end") this.acceptingQueueMessages = false;
 		const delivery = this.eventTail.then(() => this.deliverEvent(event));
 		delivery.catch(() => {});
 		this.eventTail = delivery.then(() => {}, () => {});
@@ -311,7 +312,6 @@ export class Agent {
 				this.runMessages.push(event.message);
 				break;
 			case "agent_end":
-				this.acceptingQueueMessages = false;
 				this.turnOpen = false;
 				this.messageOpen = false;
 				break;
