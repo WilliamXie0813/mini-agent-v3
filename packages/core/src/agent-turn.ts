@@ -21,6 +21,7 @@ export type AgentTurnResult = "continue" | "stop" | "terminal";
 export type AgentTurnOptions = Omit<
 	AgentLoopOptions,
 	| "prompt"
+	| "steeringQueue"
 	| "maxTurns"
 	| "streamFn"
 	| "tools"

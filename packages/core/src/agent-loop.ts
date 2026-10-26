@@ -41,15 +41,29 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 	await emit({ type: "message_start", message: userMessage });
 	await emit({ type: "message_end", message: userMessage });
 
-	// 单层循环（双层 follow-up 是阶段 13）：每轮 = 一次 streamFn 往返 + 一批工具执行。
-	// 收敛条件只有一个——模型返回的消息里没有 toolCall。
+	// 内层 steering 循环：完整 turn 结束后、下一次 provider 请求前注入。
+	// state.turn 是所有请求共享的预算；terminal 不消费队列，stop 仅在无 steering 时收敛。
+	let steeringMessages: Message[] = [];
 	while (state.turn < maxTurns) {
 		if (state.turn > 0) await emit({ type: "turn_start" });
+		for (const message of steeringMessages) {
+			options.messages.push(message);
+			state.newMessages.push(message);
+			await emit({ type: "message_start", message });
+			await emit({ type: "message_end", message });
+		}
+		steeringMessages = [];
 		const result = await runAgentTurn(turnOptions);
 		state.turn++;
-		if (result === "continue") continue;
-		await emit({ type: "agent_end", messages: state.newMessages });
-		return options.messages;
+		if (result === "terminal") {
+			await emit({ type: "agent_end", messages: state.newMessages });
+			return options.messages;
+		}
+		steeringMessages = options.steeringQueue?.drain() ?? [];
+		if (result === "stop" && steeringMessages.length === 0) {
+			await emit({ type: "agent_end", messages: state.newMessages });
+			return options.messages;
+		}
 	}
 
 	// 错误信息带最后一轮的工具名：否则使用者看到 hit maxTurns 还得自己去翻历史

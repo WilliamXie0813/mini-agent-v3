@@ -6,6 +6,8 @@ export { AgentInfrastructureFailure } from "./agent-infrastructure-failure.ts";
 import type { AgentOptions } from "./agent-options.ts";
 import type { AfterToolCall, FinishTurn, PrepareNextTurn, PrepareRequest, RecoverContextOverflow, TransformContext } from "./agent-options.ts";
 import type { AgentEvent, AgentEventListener } from "./agent-event.ts";
+import { PendingMessageQueue } from "./pending-message-queue.ts";
+import type { QueueMode } from "./pending-message-queue.ts";
 import { appendSystemSections, createAgentState, reduceAgentState, replaceAgentTools } from "./agent-state.ts";
 import type { AgentState } from "./agent-state.ts";
 import type {
@@ -36,6 +38,8 @@ export class Agent {
 	public prepareNextTurnWithContext?: PrepareNextTurn;
 	public toolExecution: ToolExecutionMode;
 	private activeRun?: ActiveRun;
+	private readonly steeringQueue = new PendingMessageQueue();
+	private acceptingQueueMessages = false;
 	private runMessages: Message[] = [];
 	private turnOpen = false;
 	private messageOpen = false;
@@ -80,6 +84,16 @@ export class Agent {
 
 	abort(): void {
 		this.activeRun?.abortController.abort();
+	}
+
+	steer(prompt: string, mode: QueueMode = "one-at-a-time"): void {
+		if (!this.acceptingQueueMessages)
+			throw new Error("Cannot steer without an active run");
+		if (prompt.trim() === "") return;
+		this.steeringQueue.enqueue({
+			role: "user",
+			content: [{ type: "text", text: prompt }],
+		}, mode);
 	}
 
 	// 运行中禁止改 prompt/工具：单次 run 的 provider snapshot、执行表和历史不能中途分叉。
@@ -179,6 +193,7 @@ export class Agent {
 						}
 					}
 					: undefined,
+				steeringQueue: this.steeringQueue,
 				emit: (event) => this.processEvents(event),
 			});
 		});
@@ -193,6 +208,7 @@ export class Agent {
 			resolve = done;
 		});
 		this.activeRun = { promise, resolve, abortController };
+		this.acceptingQueueMessages = true;
 		this.runMessages = [];
 		this.turnOpen = false;
 		this.messageOpen = false;
@@ -218,6 +234,8 @@ export class Agent {
 				}
 			}
 		} finally {
+			this.acceptingQueueMessages = false;
+			this.steeringQueue.clear();
 			this._state.isStreaming = false;
 			this.activeRun.resolve();
 			this.activeRun = undefined;
@@ -280,6 +298,7 @@ export class Agent {
 				this.runMessages.push(event.message);
 				break;
 			case "agent_end":
+				this.acceptingQueueMessages = false;
 				this.turnOpen = false;
 				this.messageOpen = false;
 				break;
