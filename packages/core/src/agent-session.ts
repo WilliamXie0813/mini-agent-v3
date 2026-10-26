@@ -18,6 +18,7 @@ import type {
 	AgentEvent,
 	AgentEventListener,
 } from "./agent-event.ts";
+import type { QueueMode } from "./pending-message-queue.ts";
 import type { AgentState } from "./agent-state.ts";
 import {
 	estimateContextTokens,
@@ -95,6 +96,7 @@ export class AgentSession {
 		SessionEntryOf<"tool_intent">
 	>();
 	private activeSubmission?: SessionEntryOf<"submission">;
+	private skipNextSubmissionUser = false;
 	private currentAssistantEntryId?: string;
 	private operation?: Promise<void>;
 	// threshold/overflow 压缩发生在 active run 内，不能当场替换 this.agent；
@@ -255,6 +257,14 @@ export class AgentSession {
 		});
 	}
 
+	steer(prompt: string, mode: QueueMode = "one-at-a-time"): void {
+		this.agent.steer(prompt, mode);
+	}
+
+	followUp(prompt: string, mode: QueueMode = "one-at-a-time"): void {
+		this.agent.followUp(prompt, mode);
+	}
+
 	abort(): void {
 		this.agent.abort();
 	}
@@ -402,9 +412,11 @@ export class AgentSession {
 			this.submissions.set(input.requestId, submission);
 			this.activeSubmission = submission;
 			try {
+				this.skipNextSubmissionUser = true;
 				await this.agent.prompt(input.prompt);
 				return submission;
 			} finally {
+				this.skipNextSubmissionUser = false;
 				// run 内压缩只 append entry；旧 Agent 的 state 仍是压缩前 transcript，
 				// settle 后从 durable projection 重建，下一次操作看到压缩后的上下文。
 				if (this.compactionPendingRebuild) {
@@ -481,7 +493,10 @@ export class AgentSession {
 
 	private async persistEvent(event: AgentEvent): Promise<void> {
 		if (event.type === "message_end") {
-			if (event.message.role === "user") return;
+			if (event.message.role === "user" && this.skipNextSubmissionUser) {
+				this.skipNextSubmissionUser = false;
+				return;
+			}
 			const intentId = event.message.role === "toolResult"
 				? this.intents.get(event.message.toolCallId)?.id
 				: undefined;
