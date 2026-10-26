@@ -73,6 +73,8 @@ export type {
 } from "./agent-session.ts";
 export { PendingMessageQueue } from "./pending-message-queue.ts";
 export type { QueueMode } from "./pending-message-queue.ts";
+export { runToolCall } from "./run-tool-call.ts";
+export type { RunToolCallOptions } from "./run-tool-call.ts";
 export type {
 	CompactionReason,
 	SessionEntry,
