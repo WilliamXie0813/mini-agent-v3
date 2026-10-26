@@ -5,6 +5,7 @@ export type {
 	AfterToolCallContext,
 	AfterToolCallResult,
 	AgentOptions,
+	AgentLoopOptions,
 	FinishTurn,
 	FinishTurnContext,
 	FinishTurnResult,
@@ -18,7 +19,6 @@ export type {
 } from "./agent-options.ts";
 export type { AgentState } from "./agent-state.ts";
 export { agentLoop } from "./agent-loop.ts";
-export type { AgentLoopOptions } from "./agent-loop.ts";
 export type {
 	AgentEvent,
 	AgentEventListener,

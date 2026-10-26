@@ -8,6 +8,7 @@ import type {
 	Tool,
 	ToolResultMessage,
 } from "@mini-agent/ai";
+import type { AgentEventSink } from "./agent-event.ts";
 import type {
 	BeforeToolCall,
 	CommitToolIntent,
@@ -97,6 +98,25 @@ export interface SessionHooks {
 	afterToolCall?: AfterToolCall;
 	transformContext?: TransformContext;
 	prepareRequest?: PrepareRequest;
+	finishTurn?: FinishTurn;
+	prepareNextTurnWithContext?: PrepareNextTurn;
+}
+
+export interface AgentLoopOptions {
+	prompt: string;
+	messages: Message[]; // 完整 transcript（含 system entries），函数会就地追加
+	streamFn?: StreamFn; // 缺省 fallback 到 getDefaultStreamFn()
+	signal?: AbortSignal;
+	emit?: AgentEventSink;
+	tools?: ToolDef<any>[]; // 执行注册表；缺省 []：无工具的调用走一轮就收敛，与阶段 1 行为一致
+	maxTurns?: number; // 缺省 10：模型反复要工具时的熔断，防止无限烧 token
+	beforeToolCall?: BeforeToolCall;
+	afterToolCall?: AfterToolCall;
+	toolExecution?: ToolExecutionMode;
+	commitToolIntent?: CommitToolIntent;
+	prepareRequest?: PrepareRequest;
+	transformContext?: TransformContext;
+	recoverContextOverflow?: RecoverContextOverflow;
 	finishTurn?: FinishTurn;
 	prepareNextTurnWithContext?: PrepareNextTurn;
 }
