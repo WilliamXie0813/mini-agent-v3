@@ -71,6 +71,8 @@ export type {
 	AgentSessionOptions,
 	OpenAgentSessionOptions,
 } from "./agent-session.ts";
+export { PendingMessageQueue } from "./pending-message-queue.ts";
+export type { QueueMode } from "./pending-message-queue.ts";
 export type {
 	CompactionReason,
 	SessionEntry,
