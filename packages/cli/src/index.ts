@@ -27,7 +27,8 @@ setDefaultStreamFn(
 // 阶段 11：扩展系统挂在默认 StreamFn 之上——不碰上面的密钥处理，
 // 只把当前默认实现包进第二个 StreamFn（装饰/观测链路）。
 const bootstrapped = await bootstrapExtensions({
-	extensions: [createDemoExtension()],
+	// CLI 是真实执行入口；演示用的 bash guard 留在 createDemoExtension 默认值中。
+	extensions: [createDemoExtension({ blockBash: false })],
 });
 bootstrapped.installStreamFn();
 

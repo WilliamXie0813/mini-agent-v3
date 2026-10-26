@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ChangeEvent, FormEvent, JSX } from "react";
+import type { ChangeEvent, FormEvent, JSX, KeyboardEvent } from "react";
 
 export interface PromptComposerProps {
 	prompt: string;
@@ -28,32 +28,67 @@ export function PromptComposer(props: PromptComposerProps): JSX.Element {
 		setValidationError(undefined);
 		onPromptChange(event.target.value);
 	};
+	const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+		if (
+			event.key !== "Enter" ||
+			(!event.metaKey && !event.ctrlKey) ||
+			event.nativeEvent.isComposing
+		) {
+			return;
+		}
+		event.preventDefault();
+		event.currentTarget.form?.requestSubmit();
+	};
 	return (
 		<form className="prompt-composer" onSubmit={submit} noValidate>
-			<label htmlFor="prompt-input">Prompt</label>
-			<div className="prompt-row">
-				<textarea
-					id="prompt-input"
-					rows={3}
-					value={prompt}
-					disabled={disabled}
-					onChange={change}
-					placeholder="Ask the agent…"
-					aria-invalid={validationError !== undefined}
-					aria-describedby="composer-status"
-				/>
-				<button type="submit" disabled={disabled}>
-					Send
-				</button>
+			<div className="prompt-composer-inner">
+				<div className="composer-heading">
+					<label htmlFor="prompt-input">Prompt</label>
+					<span className="composer-shortcut" aria-hidden="true">
+						<kbd>Ctrl/⌘</kbd>
+						<span>+</span>
+						<kbd>Enter</kbd>
+					</span>
+				</div>
+				<div className="prompt-editor">
+					<textarea
+						id="prompt-input"
+						rows={2}
+						value={prompt}
+						disabled={disabled}
+						onChange={change}
+						onKeyDown={keyDown}
+						placeholder="Ask the agent…"
+						aria-invalid={validationError !== undefined}
+						aria-describedby="composer-status"
+					/>
+					<div className="composer-footer">
+						<p
+							id="composer-status"
+							className={
+								validationError ? "composer-note composer-error" : "composer-note"
+							}
+							role={validationError ? "alert" : "status"}
+							aria-live="polite"
+						>
+							{validationError ?? note}
+						</p>
+						<button type="submit" disabled={disabled}>
+							<span>Send</span>
+							<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+								<path
+									d="M3 8h9M8.5 4.5 12 8l-3.5 3.5"
+									fill="none"
+									stroke="currentColor"
+									strokeWidth="1.6"
+									strokeLinecap="round"
+									strokeLinejoin="round"
+								/>
+							</svg>
+						</button>
+					</div>
+				</div>
 			</div>
-			<p
-				id="composer-status"
-				className={validationError ? "composer-note composer-error" : "composer-note"}
-				role={validationError ? "alert" : "status"}
-				aria-live="polite"
-			>
-				{validationError ?? note}
-			</p>
 		</form>
 	);
 }

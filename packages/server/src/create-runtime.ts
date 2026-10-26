@@ -37,7 +37,9 @@ export async function createRuntime(
 		model: env.ANTHROPIC_MODEL,
 	}));
 	const bootstrapped = await bootstrapExtensions({
-		extensions: options.extensions ?? [createDemoExtension()],
+		// demo extension 仍提供示例工具/命令，但其教学用的 bash guard
+		// 不能泄漏到真实工作台，否则每次 shell 调用都会 fail-closed。
+		extensions: options.extensions ?? [createDemoExtension({ blockBash: false })],
 	});
 	bootstrapped.installStreamFn();
 	const contextWindow = parseContextWindow(env.ANTHROPIC_CONTEXT_WINDOW);

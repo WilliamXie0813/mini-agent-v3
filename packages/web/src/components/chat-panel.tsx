@@ -1,6 +1,7 @@
 import type { JSX } from "react";
 
 import type { AppState, ChatItem, ToolCardView } from "../state/types.ts";
+import { MarkdownMessage } from "./markdown-message.tsx";
 import { ToolCard } from "./tool-card.tsx";
 
 export interface ChatPanelProps {
@@ -56,7 +57,13 @@ export function ChatPanel(props: ChatPanelProps): JSX.Element {
 	const claimed = new Set<string>();
 	const rows: JSX.Element[] = [];
 	for (const item of items) {
-		rows.push(<ChatMessage key={item.id} item={item} />);
+		const emptyToolTurn =
+			item.role === "assistant" &&
+			item.text.trim() === "" &&
+			!item.streaming &&
+			item.stopReason !== "aborted" &&
+			item.stopReason !== "error";
+		if (!emptyToolTurn) rows.push(<ChatMessage key={item.id} item={item} />);
 		for (const toolCallId of item.toolCallIds) {
 			const card = cards.find((candidate) => candidate.toolCallId === toolCallId);
 			if (!card || claimed.has(toolCallId)) continue;
@@ -172,15 +179,35 @@ function ChatMessage({ item }: { item: ChatItem }): JSX.Element {
 			data-message-id={item.id}
 		>
 			<header className="chat-message-header">
-				<span className="chat-role">{ROLE_LABELS[item.role]}</span>
-				{item.streaming && <span className="chat-streaming">streaming</span>}
+				<span className="chat-role">
+					<span className="chat-role-mark" aria-hidden="true" />
+					{ROLE_LABELS[item.role]}
+				</span>
+				{item.streaming && (
+					<span className="chat-streaming">
+						<span className="chat-streaming-dot" aria-hidden="true" />
+						streaming
+					</span>
+				)}
 				{terminal && (
 					<span className={`chat-terminal chat-terminal-${terminal}`}>
 						{terminal}
 					</span>
 				)}
 			</header>
-			{item.text !== "" && <p className="chat-text">{item.text}</p>}
+			{item.text !== "" &&
+				(item.role === "toolResult" ? (
+					<p
+						className="chat-text"
+						role="group"
+						aria-label="Tool result text"
+						tabIndex={0}
+					>
+						{item.text}
+					</p>
+				) : (
+					<MarkdownMessage text={item.text} />
+				))}
 		</article>
 	);
 }

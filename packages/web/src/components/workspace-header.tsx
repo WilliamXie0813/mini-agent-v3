@@ -36,24 +36,51 @@ export function WorkspaceHeader(props: WorkspaceHeaderProps): JSX.Element {
 		onDismissError,
 		onAbort,
 	} = props;
+	const tokenMetrics = usage
+		? [
+				["input", usage.inputTokens],
+				["output", usage.outputTokens],
+				["cache read", usage.cacheReadTokens],
+				["cache write", usage.cacheWriteTokens],
+			] as const
+		: [];
 	return (
 		<header className="workspace-header">
-				<h1 className="visually-hidden">mini-agent Runtime Workbench</h1>
+			<h1 className="visually-hidden">mini-agent Runtime Workbench</h1>
 			<div className="brand">
 				<span className="brand-name">mini-agent</span>
 				<span className="brand-edition">Runtime workbench</span>
 			</div>
-			<span
-				role="status"
-				aria-label="Connection"
-				className={`connection connection-${connection}`}
-			>
-				<span className="status-dot" aria-hidden="true" />
-				{CONNECTION_TEXT[connection]}
-			</span>
-			<span role="status" aria-label="Run status" className="run-status">
-				{sessionStatus ?? "no session"}
-			</span>
+			<div className="header-signals">
+				<span
+					role="status"
+					aria-label="Connection"
+					className={`connection connection-${connection}`}
+				>
+					<span className="status-dot" aria-hidden="true" />
+					{CONNECTION_TEXT[connection]}
+				</span>
+				<span
+					role="status"
+					aria-label="Run status"
+					className={`run-status run-status-${sessionStatus ?? "none"}`}
+				>
+					<span className="run-status-dot" aria-hidden="true" />
+					{sessionStatus ?? "no session"}
+				</span>
+			</div>
+			{usage && (
+				<div className="usage" role="group" aria-label="Token usage">
+					<span className="usage-title">tokens</span>
+					{tokenMetrics.map(([label, value]) => (
+						<span key={label} className="usage-metric">
+							<span className="usage-label">{label}</span>{" "}
+							<span className="usage-value">{value.toLocaleString("en-US")}</span>
+						</span>
+					))}
+				</div>
+			)}
+			<div className="header-actions">
 				<button
 					type="button"
 					className="timeline-toggle"
@@ -63,29 +90,22 @@ export function WorkspaceHeader(props: WorkspaceHeaderProps): JSX.Element {
 				>
 					Timeline
 				</button>
-			{usage && (
-				<span className="usage" role="group" aria-label="Token usage">
-					<span>input {usage.inputTokens}</span>
-					<span>output {usage.outputTokens}</span>
-					<span>cache read {usage.cacheReadTokens}</span>
-					<span>cache write {usage.cacheWriteTokens}</span>
-				</span>
-			)}
-			{agentActive && (
-				<button type="button" className="stop-button" onClick={onAbort}>
-					Stop
-				</button>
-			)}
+				{agentActive && (
+					<button type="button" className="stop-button" onClick={onAbort}>
+						Stop
+					</button>
+				)}
+			</div>
 			{protocolError && (
-					<div role="alert" className="protocol-error">
-						<span>
-							<strong>Protocol error</strong> {protocolError.message}
-							<span className="mono"> ({protocolError.code})</span>
-						</span>
-						<button type="button" onClick={onDismissError}>
-							Dismiss
-						</button>
-					</div>
+				<div role="alert" className="protocol-error">
+					<span>
+						<strong>Protocol error</strong> {protocolError.message}
+						<span className="mono"> ({protocolError.code})</span>
+					</span>
+					<button type="button" onClick={onDismissError}>
+						Dismiss
+					</button>
+				</div>
 			)}
 		</header>
 	);

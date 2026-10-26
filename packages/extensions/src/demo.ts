@@ -4,6 +4,11 @@ import type { Extension } from "./types.ts";
 // demo 扩展：阶段 11 四个能力各给一个最小样例——自定义工具、权限规则、
 // context 剪枝、CLI 命令。它不是产品功能，是每个能力的「活文档」。
 
+export interface DemoExtensionOptions {
+	/** Keep the teaching example's fail-closed bash guard active by default. */
+	blockBash?: boolean;
+}
+
 const wordCountTool: ToolDef<{ text: string }> = {
 	name: "word_count",
 	description: "Count the words in a text",
@@ -22,14 +27,17 @@ const wordCountTool: ToolDef<{ text: string }> = {
 	}),
 };
 
-export function createDemoExtension(): Extension {
+export function createDemoExtension(
+	options: DemoExtensionOptions = {},
+): Extension {
+	const blockBash = options.blockBash ?? true;
 	return {
 		name: "demo",
 		factory(api) {
 			api.registerTool(wordCountTool);
-			// 权限规则：bash 永远 block（fail-closed，reason 进 tool_outcome 的 error 文本）。
+			// 教学默认 block bash；真实 runtime 可显式关闭这条示例规则。
 			api.on("tool_call", ({ toolCall }) => {
-				if (toolCall.name === "bash") {
+				if (blockBash && toolCall.name === "bash") {
 					return { block: true, reason: "demo extension: bash is disabled" };
 				}
 				return undefined;
@@ -48,7 +56,9 @@ export function createDemoExtension(): Extension {
 				description: "List the tools and rules registered by the demo extension",
 				run: ({ context }) => {
 					context.log("demo extension tools: word_count");
-					context.log("demo extension rules: bash is disabled");
+					context.log(
+						`demo extension rules: bash is ${blockBash ? "disabled" : "enabled"}`,
+					);
 				},
 			});
 		},

@@ -4,9 +4,12 @@
 :root {
 	--color-page: #f7f8fa;
 	--color-panel: #ffffff;
+	--color-panel-muted: #fbfcfe;
 	--color-border: #e4e7ec;
+	--color-border-strong: #d0d5dd;
 	--color-text: #172033;
 	--color-muted: #667085;
+	--color-muted-strong: #475467;
 	--color-primary: #175cd3;
 	--color-success: #027a48;
 	--color-danger: #b42318;
@@ -19,6 +22,10 @@
 	--font-ui:
 		-apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 	--font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+	--radius-control: 6px;
+	--radius-panel: 10px;
+	--shadow-overlay: 0 24px 72px rgba(23, 32, 51, 0.18);
+	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 * {
@@ -31,6 +38,9 @@ body {
 	color: var(--color-text);
 	background: var(--color-page);
 	caret-color: var(--color-primary);
+	font-synthesis: none;
+	text-rendering: optimizeLegibility;
+	-webkit-font-smoothing: antialiased;
 }
 
 button,
@@ -41,6 +51,7 @@ textarea {
 
 button {
 	min-width: 0;
+	cursor: pointer;
 }
 
 :focus-visible {
@@ -56,6 +67,38 @@ button {
 * {
 	scrollbar-color: #c7ced9 transparent;
 	scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+	border: 3px solid transparent;
+	border-radius: 999px;
+	background: #c7ced9;
+	background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+	background: #98a2b3;
+	background-clip: padding-box;
+}
+
+button:disabled {
+	cursor: not-allowed;
+}
+
+button:not(:disabled) {
+	transition:
+		background-color 140ms ease,
+		border-color 140ms ease,
+		color 140ms ease;
+}
+
+button:not(:disabled):active {
+	transform: translateY(1px);
 }
 
 .visually-hidden {

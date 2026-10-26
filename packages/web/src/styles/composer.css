@@ -1,64 +1,190 @@
-/* Prompt composer：固定在中央面板底部，running/compacting 时禁用。 */
+/* Prompt composer：输入、状态与发送动作共用一个编辑器表面。 */
 
 .prompt-composer {
 	flex: 0 0 auto;
 	border-top: 1px solid var(--color-border);
-	padding: 12px 20px;
+	padding: 14px 20px 12px;
+	background: var(--color-panel);
+}
+
+.prompt-composer-inner {
+	width: 100%;
+	max-width: 760px;
+	margin-inline: auto;
+}
+
+.composer-heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 7px;
 }
 
 .prompt-composer label {
 	display: block;
 	font-size: 11px;
-	font-weight: 600;
-	letter-spacing: 0.04em;
+	font-weight: 650;
+	line-height: 1.4;
+	letter-spacing: 0.065em;
 	text-transform: uppercase;
+	color: var(--color-muted-strong);
+}
+
+.composer-shortcut {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
 	color: var(--color-muted);
-	margin-bottom: 6px;
+	font-size: 9px;
+	line-height: 1;
 }
 
-.prompt-row {
-	display: flex;
-	gap: 8px;
-	align-items: flex-end;
-}
-
-.prompt-row textarea {
-	flex: 1;
-	resize: vertical;
+.composer-shortcut kbd {
+	padding: 3px 5px 2px;
 	border: 1px solid var(--color-border);
-	border-radius: 6px;
-	padding: 8px 10px;
+	border-bottom-color: var(--color-border-strong);
+	border-radius: 4px;
+	background: var(--color-panel-muted);
+	color: var(--color-muted-strong);
+	font-family: var(--font-mono);
+	font-size: 8.5px;
+	line-height: 1;
+	box-shadow: 0 1px 0 var(--color-border);
+}
+
+.prompt-editor {
+	overflow: hidden;
+	border: 1px solid var(--color-border-strong);
+	border-radius: 11px;
+	background: var(--color-panel);
+	transition:
+		border-color 160ms ease,
+		box-shadow 160ms ease;
+}
+
+.prompt-editor:focus-within {
+	border-color: var(--color-primary);
+	box-shadow: 0 0 0 3px rgba(23, 92, 211, 0.11);
+}
+
+.prompt-editor textarea {
+	display: block;
+	width: 100%;
+	min-height: 58px;
+	max-height: 156px;
+	resize: none;
+	field-sizing: content;
+	border: 0;
+	outline: 0;
+	padding: 11px 13px 7px;
+	background: transparent;
 	font-family: var(--font-ui);
 	font-size: 14px;
-	line-height: 1.5;
+	line-height: 1.55;
+	color: var(--color-text);
 }
 
-.prompt-row button {
+.prompt-editor textarea::placeholder {
+	color: var(--color-muted);
+}
+
+.composer-footer {
+	display: flex;
+	align-items: flex-end;
+	gap: 10px;
+	min-height: 43px;
+	padding: 3px 7px 7px 13px;
+}
+
+.prompt-editor button {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	gap: 5px;
 	border: 1px solid var(--color-primary);
+	border-radius: 7px;
 	background: var(--color-primary);
 	color: #ffffff;
-	border-radius: 6px;
-	padding: 8px 16px;
-	font-size: 13px;
-	cursor: pointer;
+	min-width: 68px;
+	min-height: 32px;
+	padding: 6px 10px;
+	font-size: 12px;
+	font-weight: 650;
 }
 
-.prompt-row textarea:disabled,
-.prompt-row button:disabled {
+.prompt-editor button:hover:not(:disabled) {
+	border-color: #124bad;
+	background: #124bad;
+}
+
+.prompt-editor button:disabled {
 	opacity: 0.55;
-	cursor: not-allowed;
 }
 
 .composer-note {
-	margin: 8px 0 0;
-	font-size: 11px;
+	display: -webkit-box;
+	flex: 1;
+	min-width: 0;
+	margin: 0;
+	overflow: hidden;
+	overflow-wrap: anywhere;
 	color: var(--color-muted);
+	font-size: 10.5px;
+	line-height: 1.45;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
 }
 
-.composer-error {
+.composer-note::before {
+	content: "";
+	display: inline-block;
+	width: 4px;
+	height: 4px;
+	margin: 0 5px 1px 0;
+	border-radius: 50%;
+	background: var(--color-border-strong);
+	vertical-align: middle;
+}
+
+.composer-error,
+.composer-error::before {
 	color: var(--color-danger);
 }
 
-.prompt-row textarea[aria-invalid="true"] {
+.composer-error::before {
+	background: currentColor;
+}
+
+.prompt-editor:has(textarea[aria-invalid="true"]) {
 	border-color: var(--color-danger);
+	box-shadow: 0 0 0 3px rgba(180, 35, 24, 0.1);
+}
+
+.prompt-editor:has(textarea:disabled) {
+	background: var(--color-panel-muted);
+}
+
+.prompt-editor textarea:disabled {
+	color: var(--color-muted-strong);
+	cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+	.prompt-composer {
+		padding: 10px 12px 8px;
+	}
+
+	.composer-shortcut {
+		display: none;
+	}
+
+	.prompt-editor textarea {
+		min-height: 54px;
+	}
+
+	.composer-footer {
+		padding-left: 11px;
+	}
 }

@@ -19,27 +19,37 @@ export function SessionSidebar(props: SessionSidebarProps): JSX.Element {
 	}, [compactDisabled]);
 	return (
 		<aside aria-label="Session" className="session-sidebar">
-			<h2 className="panel-title">Session</h2>
+			<div className="panel-heading">
+				<h2 className="panel-title">Session</h2>
+				{session && <span className="panel-state">current</span>}
+			</div>
 			{session ? (
 				<>
+					<p className="session-section-label">Identity</p>
 					<dl className="session-meta">
 						<div>
-								<dt>Session ID</dt>
-							<dd className="mono">{session.sessionId}</dd>
+							<dt>Session ID</dt>
+							<dd className="mono" title={session.sessionId}>
+								{session.sessionId}
+							</dd>
 						</div>
 						<div>
-								<dt>Leaf entry</dt>
-							<dd className="mono">{session.leafId ?? "—"}</dd>
+							<dt>Leaf entry</dt>
+							<dd className="mono" title={session.leafId ?? undefined}>
+								{session.leafId ?? "—"}
+							</dd>
 						</div>
 					</dl>
+					<p className="session-section-label">Storage</p>
 					<div className="session-badges">
-							<span className="badge" title="Stored in the durable journal">
-								persisted
-							</span>
-							<span className="badge" title="Entries restored from the journal">
-								journal replay
-							</span>
+						<span className="badge" title="Stored in the durable journal">
+							persisted
+						</span>
+						<span className="badge" title="Entries restored from the journal">
+							journal replay
+						</span>
 					</div>
+					<div className="session-actions">
 						{confirmingCompact ? (
 							<div
 								id="compact-confirmation"
@@ -83,6 +93,7 @@ export function SessionSidebar(props: SessionSidebarProps): JSX.Element {
 								Compact session
 							</button>
 						)}
+					</div>
 				</>
 			) : (
 				<p className="session-pending">waiting for session snapshot…</p>

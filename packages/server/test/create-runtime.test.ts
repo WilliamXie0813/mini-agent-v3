@@ -190,6 +190,36 @@ describe("createRuntime assembly", () => {
 			.toMatchObject({ type: "run_end", status: "completed" });
 	});
 
+	it("allows the assembled runtime to execute its default bash tool", async () => {
+		const runtime = await createRuntime({
+			directory: await temporaryDirectory(),
+			env: {},
+			streamFn: createFakeStreamFn([
+				[{
+					type: "toolCall",
+					id: "call-bash",
+					name: "bash",
+					arguments: { command: "printf agent-runtime-bash-ok" },
+				}],
+				"done",
+			]),
+		});
+		runtimes.push(runtime);
+		await runPrompt(runtime, "r1", "use the shell");
+
+		const result = runtime.snapshot().entries.flatMap((entry) =>
+			entry.type === "message" && entry.message.role === "toolResult"
+				? [entry.message]
+				: []
+		).find((message) => message.toolCallId === "call-bash");
+
+		expect(result?.isError).toBe(false);
+		expect(result?.content[0]).toMatchObject({
+			type: "text",
+			text: expect.stringContaining("agent-runtime-bash-ok"),
+		});
+	});
+
 	it("notifies extension observers via onEvent and survives their failures", async () => {
 		const observed: string[] = [];
 		const observers: Extension[] = [

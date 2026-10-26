@@ -410,6 +410,9 @@ describe("chat panel and tool cards", () => {
 		expect(within(chat).getByText("let me read")).toBeInTheDocument();
 		expect(within(chat).getAllByText("file a").length).toBeGreaterThan(0);
 		expect(within(chat).getByText("draft xy")).toBeInTheDocument();
+		expect(
+			within(chat).getAllByRole("group", { name: "Tool result text" }).length,
+		).toBeGreaterThan(0);
 	});
 
 	it("shows a streaming indicator for the in-flight assistant draft", () => {
@@ -436,6 +439,57 @@ describe("chat panel and tool cards", () => {
 		expect(within(chat).getByText(/streaming/i)).toBeInTheDocument();
 	});
 
+	it("renders fenced assistant code without exposing markdown fences", () => {
+		const session = sessionView(
+			[],
+			[
+				env(0, {
+					type: "message_end",
+					message: finalAssistant("Use this:\n\n```ts\nconst answer = 42;\n```", "stop"),
+				}),
+			],
+			"idle",
+		);
+		const { container } = renderWorkspace(appState({ session }));
+		expect(screen.getByText("Use this:")).toBeInTheDocument();
+		expect(screen.getByText("const answer = 42;")).toBeInTheDocument();
+		expect(screen.getByText("ts")).toHaveClass("chat-code-language");
+		expect(
+			screen.getByText("const answer = 42;").closest("pre"),
+		).toHaveAttribute("tabindex", "0");
+		expect(container.textContent).not.toContain("```");
+	});
+
+	it("renders common markdown and GFM content", () => {
+		const message = [
+			"## Result",
+			"",
+			"**Important** with `inline code` and [docs](https://example.com).",
+			"",
+			'<script>alert("unsafe")</script>',
+			"",
+			"| Key | Value |",
+			"| --- | --- |",
+			"| status | ready |",
+		].join("\n");
+		const session = sessionView(
+			[],
+			[env(0, { type: "message_end", message: finalAssistant(message, "stop") })],
+			"idle",
+		);
+		const { container } = renderWorkspace(appState({ session }));
+		expect(screen.getByRole("heading", { name: "Result" })).toBeInTheDocument();
+		expect(screen.getByText("Important").tagName).toBe("STRONG");
+		expect(screen.getByText("inline code").tagName).toBe("CODE");
+		expect(screen.getByRole("link", { name: "docs" })).toHaveAttribute(
+			"rel",
+			"noreferrer noopener",
+		);
+		expect(screen.getByRole("group", { name: "Markdown table" })).toBeInTheDocument();
+		expect(screen.getByRole("table")).toBeInTheDocument();
+		expect(container.querySelector("script")).toBeNull();
+	});
+
 	it("renders tool cards in source order with args, duration and error", () => {
 		renderWorkspace(fullState());
 		const readName = screen.getByText("read", { selector: ".tool-name" });
@@ -457,6 +511,30 @@ describe("chat panel and tool cards", () => {
 			within(writeCard as HTMLElement).getByText(/failed/i),
 		).toBeInTheDocument();
 		expect(within(writeCard as HTMLElement).getByText("7 ms")).toBeInTheDocument();
+	});
+
+	it("shows compact durations in cards, timeline rows and event details", async () => {
+		const user = userEvent.setup();
+		const entries = durableEntries();
+		const readOutcome = entries.find((entry) => entry.id === "out1");
+		if (readOutcome?.type !== "tool_outcome") throw new Error("out1 fixture missing");
+		readOutcome.durationMs = 12.3456789;
+		const state = appState({
+			session: sessionView(entries, liveEvents(), "idle"),
+		});
+		render(<Harness initial={state} />);
+
+		const readCard = screen
+			.getByText("read", { selector: ".tool-name" })
+			.closest("[data-tool-call-id]") as HTMLElement;
+		expect(within(readCard).getByText("12 ms")).toBeInTheDocument();
+
+		const turnRow = screen.getByRole("button", { name: /turn start/ });
+		expect(turnRow).toHaveTextContent("+5 ms");
+		expect(turnRow).not.toHaveTextContent("+5.000");
+
+		await user.click(turnRow);
+		expect(screen.getByRole("dialog")).toHaveTextContent("5 ms");
 	});
 
 	it("keeps tool results collapsed by default", () => {
@@ -521,6 +599,14 @@ describe("chat panel and tool cards", () => {
 		expect(props.onSubmit).not.toHaveBeenCalled();
 	});
 
+	it("submits a non-empty prompt with Ctrl+Enter", async () => {
+		const user = userEvent.setup();
+		const { props } = renderWorkspace(appState({ ...idleState(), prompt: "Refactor it" }));
+		await user.click(screen.getByRole("textbox", { name: "Prompt" }));
+		await user.keyboard("{Control>}{Enter}{/Control}");
+		expect(props.onSubmit).toHaveBeenCalledTimes(1);
+	});
+
 	it("shows partial results only while the tool is running", () => {
 		// running：live tool_execution_update 的 partial 可见。
 		const runningSession = sessionView(
@@ -565,6 +651,41 @@ describe("chat panel and tool cards", () => {
 		expect(within(bashCard).getByText(/half done/)).toBeInTheDocument();
 	});
 
+	it("omits completed assistant shells that contain only tool calls", () => {
+		const assistant = {
+			role: "assistant" as const,
+			content: [
+				{
+					type: "toolCall" as const,
+					id: "c10",
+					name: "bash",
+					arguments: { command: "pwd" },
+				},
+			],
+			stopReason: "toolUse" as const,
+		};
+		const session = sessionView(
+			[],
+			[
+				env(0, { type: "message_start", message: assistant }),
+				env(1, {
+					type: "tool_execution_start",
+					toolCallId: "c10",
+					toolName: "bash",
+					args: { command: "pwd" },
+				}),
+				env(2, { type: "message_end", message: assistant }),
+			],
+			"running",
+		);
+		renderWorkspace(appState({ session }));
+		const chat = screen.getByRole("main", { name: "Chat" });
+		expect(chat.querySelectorAll(".chat-message-assistant")).toHaveLength(0);
+		expect(
+			within(chat).getByText("bash", { selector: ".tool-name" }),
+		).toBeInTheDocument();
+	});
+
 	it("does not show stale partial results after completion", () => {
 		// Task 4 已知行为：partialResult 在完成后仍可能挂在 card 上，UI 不渲染它。
 		renderWorkspace(fullState());
@@ -599,10 +720,11 @@ describe("chat panel and tool cards", () => {
 describe("usage, compaction and timeline rows", () => {
 	it("shows token totals in the header without any cost text", () => {
 		renderWorkspace(fullState());
-		expect(screen.getByText(/input 14/)).toBeInTheDocument();
-		expect(screen.getByText(/output 6/)).toBeInTheDocument();
-		expect(screen.getByText(/cache read 6/)).toBeInTheDocument();
-		expect(screen.getByText(/cache write 2/)).toBeInTheDocument();
+		const usage = screen.getByRole("group", { name: "Token usage" });
+		expect(usage).toHaveTextContent("input 14");
+		expect(usage).toHaveTextContent("output 6");
+		expect(usage).toHaveTextContent("cache read 6");
+		expect(usage).toHaveTextContent("cache write 2");
 		expect(screen.queryByText(/\$|cost/i)).toBeNull();
 	});
 
@@ -644,6 +766,13 @@ describe("usage, compaction and timeline rows", () => {
 		renderWorkspace(fullState());
 		const filters = screen.getByRole("group", { name: "Filter timeline" });
 		await user.click(within(filters).getByRole("button", { name: "Tools" }));
+		const toolRows = document.querySelectorAll(".timeline-row").length;
+		expect(
+			within(filters).getByRole("button", { name: "Tools" }),
+		).toHaveTextContent(String(toolRows));
+		expect(document.querySelector(".timeline-count")).toHaveTextContent(
+			`${toolRows} events`,
+		);
 		expect(
 			screen.getByRole("button", { name: /tool intent: read/ }),
 		).toBeInTheDocument();
@@ -740,6 +869,7 @@ describe("event details modal", () => {
 		await user.click(screen.getByRole("button", { name: /turn start/ }));
 		const body = screen.getByRole("dialog").querySelector(".event-json");
 		expect(body).not.toBeNull();
+		expect(body).toHaveAttribute("tabindex", "0");
 		const keys = [...(body as HTMLElement).querySelectorAll(".json-key")].map(
 			(node) => node.textContent,
 		);

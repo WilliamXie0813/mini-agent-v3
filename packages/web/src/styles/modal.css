@@ -8,6 +8,7 @@
 	display: grid;
 	place-items: center;
 	z-index: 40;
+	animation: overlay-in 160ms ease-out;
 }
 
 .event-modal {
@@ -16,10 +17,12 @@
 	width: min(880px, calc(100vw - 64px));
 	height: min(760px, calc(100vh - 96px));
 	background: var(--color-panel);
-	border-radius: 10px;
+	border-radius: var(--radius-panel);
 	border: 1px solid var(--color-border);
+	box-shadow: var(--shadow-overlay);
 	outline: none;
 	overflow: hidden;
+	animation: modal-in 180ms var(--ease-out);
 }
 
 .event-modal-header {
@@ -59,15 +62,19 @@
 
 .modal-close {
 	margin-left: auto;
-	border: 1px solid var(--color-border);
+	border: 1px solid var(--color-border-strong);
 	background: var(--color-panel);
-	border-radius: 6px;
+	border-radius: var(--radius-control);
 	width: 44px;
 	height: 44px;
 	display: grid;
 	place-items: center;
-	cursor: pointer;
 	color: var(--color-muted);
+}
+
+.modal-close:hover {
+	border-color: var(--color-primary);
+	color: var(--color-primary);
 }
 
 .event-modal-toolbar {
@@ -88,11 +95,15 @@
 	margin-left: auto;
 	border: 1px solid var(--color-border);
 	background: var(--color-panel);
-	border-radius: 6px;
+	border-radius: var(--radius-control);
 	min-height: 36px;
 	padding: 6px 12px;
 	font-size: 12px;
-	cursor: pointer;
+}
+
+.copy-json:hover {
+	border-color: var(--color-primary);
+	color: var(--color-primary);
 }
 
 .copy-status {
@@ -110,6 +121,11 @@
 	font-size: 13px;
 	line-height: 1.55;
 	background: var(--color-page);
+}
+
+.event-json:focus-visible {
+	outline: 2px solid var(--color-primary);
+	outline-offset: -3px;
 }
 
 /* JSON 语法色彩：key/string 复用状态色，number 用暖色避免与 error 混淆。 */
@@ -139,10 +155,14 @@
 .event-modal-footer button {
 	border: 1px solid var(--color-border);
 	background: var(--color-panel);
-	border-radius: 6px;
+	border-radius: var(--radius-control);
 	padding: 6px 12px;
 	font-size: 13px;
-	cursor: pointer;
+}
+
+.event-modal-footer button:hover:not(:disabled) {
+	border-color: var(--color-primary);
+	color: var(--color-primary);
 }
 
 .event-modal-footer button:disabled {
@@ -162,5 +182,25 @@
 	.copy-json,
 	.event-modal-footer button {
 		min-height: 44px;
+	}
+}
+
+@keyframes overlay-in {
+	from {
+		opacity: 0;
+	}
+}
+
+@keyframes modal-in {
+	from {
+		opacity: 0;
+		transform: translateY(8px) scale(0.99);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.modal-overlay,
+	.event-modal {
+		animation: none;
 	}
 }

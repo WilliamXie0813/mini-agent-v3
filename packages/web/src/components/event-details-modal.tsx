@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { JSX, KeyboardEvent, ReactNode } from "react";
 
+import { formatDuration } from "../format.ts";
 import type { TimelineItem } from "../state/types.ts";
 import { formatJson } from "./tool-card.tsx";
 
@@ -112,7 +113,7 @@ export function EventDetailsModal(props: EventDetailsModalProps): JSX.Element {
 							{item.elapsedMs !== undefined && (
 								<div>
 									<dt>elapsedMs</dt>
-									<dd className="mono">{item.elapsedMs}</dd>
+									<dd className="mono">{formatDuration(item.elapsedMs)}</dd>
 								</div>
 							)}
 						</dl>
@@ -152,7 +153,12 @@ export function EventDetailsModal(props: EventDetailsModalProps): JSX.Element {
 								: ""}
 					</span>
 				</div>
-				<pre className="event-json">
+				<pre
+					className="event-json"
+					aria-label="Event JSON"
+					role="region"
+					tabIndex={0}
+				>
 					<code>{highlightJson(json)}</code>
 				</pre>
 				<footer className="event-modal-footer">

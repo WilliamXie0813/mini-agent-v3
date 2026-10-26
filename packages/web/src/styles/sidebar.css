@@ -1,57 +1,90 @@
 /* Session 侧栏：session/leaf 元数据、持久化 badge 与 Compact。 */
 
+.session-sidebar {
+	background: var(--color-panel-muted);
+}
+
+.session-section-label {
+	margin: 4px 14px 6px;
+	font-size: 9px;
+	font-weight: 650;
+	letter-spacing: 0.07em;
+	text-transform: uppercase;
+	color: var(--color-muted);
+}
+
 .session-meta {
 	margin: 0;
 	padding: 0 14px;
 	display: grid;
-	gap: 8px;
+	gap: 0;
+}
+
+.session-meta > div {
+	min-width: 0;
+	padding: 9px 0;
+	border-top: 1px solid var(--color-border);
 }
 
 .session-meta dt {
-	font-size: 11px;
+	font-size: 10px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
 	color: var(--color-muted);
 }
 
 .session-meta dd {
-	margin: 2px 0 0;
-	font-size: 12px;
+	margin: 4px 0 0;
+	color: var(--color-text);
+	font-size: 10.5px;
+	line-height: 1.55;
 	word-break: break-all;
 }
 
 .session-badges {
 	display: flex;
+	flex-wrap: wrap;
 	gap: 6px;
-	padding: 12px 14px;
+	padding: 2px 14px 14px;
 }
 
 .badge {
-	cursor: help;
-}
-
-.badge {
-	font-size: 11px;
-	padding: 2px 8px;
+	font-size: 10px;
+	padding: 3px 7px;
 	border-radius: 999px;
 	border: 1px solid var(--color-border);
 	color: var(--color-muted);
+	background: var(--color-panel);
+	cursor: help;
+}
+
+.session-actions {
+	padding: 0 14px;
 }
 
 .compact-button {
-	margin: 0 14px;
-	border: 1px solid var(--color-border);
+	margin: 0;
+	width: 100%;
+	min-height: 34px;
+	border: 1px solid var(--color-border-strong);
 	background: var(--color-panel);
-	border-radius: 6px;
+	border-radius: var(--radius-control);
 	padding: 6px 12px;
-	font-size: 13px;
-	cursor: pointer;
+	font-size: 12px;
+	color: var(--color-text);
+}
+
+.compact-button:hover:not(:disabled) {
+	border-color: var(--color-primary);
+	color: var(--color-primary);
 }
 
 .compact-confirmation {
-	margin: 0 14px;
+	margin: 0;
 	padding: 10px;
 	border: 1px solid var(--color-border);
-	border-radius: 8px;
-	background: var(--color-page);
+	border-radius: var(--radius-panel);
+	background: var(--color-panel);
 }
 
 .compact-confirmation p {
@@ -69,6 +102,7 @@
 
 .compact-confirmation .compact-button {
 	margin: 0;
+	width: auto;
 }
 
 .compact-confirm {
@@ -81,13 +115,15 @@
 	background: transparent;
 	color: var(--color-muted);
 	padding: 6px 8px;
-	font-size: 13px;
-	cursor: pointer;
+	font-size: 12px;
+}
+
+.compact-cancel:hover {
+	color: var(--color-text);
 }
 
 .compact-button:disabled {
 	opacity: 0.5;
-	cursor: not-allowed;
 }
 
 .session-pending {

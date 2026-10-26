@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 
+import { formatDuration } from "../format.ts";
 import type { ToolCardView } from "../state/types.ts";
 
 // UI 层的防御性 JSON 格式化：result/partialResult 是 unknown，
@@ -31,41 +32,65 @@ export function ToolCard({
 		(card.status === "pending" || card.status === "running");
 	return (
 		<section
-				className={`tool-card tool-card-${card.status}${isLinked ? " tool-card-linked" : ""}`}
+			className={`tool-card tool-card-${card.status}${isLinked ? " tool-card-linked" : ""}`}
 			data-tool-call-id={card.toolCallId}
 		>
 			<header className="tool-card-header">
-				<span className="tool-name">{card.toolName}</span>
+				<span className="tool-identity">
+					<span className="tool-state-dot" aria-hidden="true" />
+					<span className="tool-name">{card.toolName}</span>
+				</span>
 				<span className={`tool-status tool-status-${card.status}`}>
 					{card.status}
 				</span>
 				{card.durationMs !== undefined && (
-					<span className="tool-duration">{card.durationMs} ms</span>
+					<span className="tool-duration">{formatDuration(card.durationMs)}</span>
 				)}
-					{onFocusTimeline && (
-						<button
-							type="button"
-							className="tool-timeline-link"
-							onClick={() => onFocusTimeline(card.toolCallId)}
-						>
-							View Timeline
-						</button>
-					)}
+				{onFocusTimeline && (
+					<button
+						type="button"
+						className="tool-timeline-link"
+						onClick={() => onFocusTimeline(card.toolCallId)}
+					>
+						View Timeline
+					</button>
+				)}
 			</header>
-				<details className="tool-arguments">
-					<summary>arguments</summary>
-				<pre className="tool-json">{formatJson(card.args)}</pre>
-				</details>
+			<details className="tool-arguments">
+				<summary>arguments</summary>
+				<pre
+					className="tool-json"
+					aria-label="Tool arguments JSON"
+					role="region"
+					tabIndex={0}
+				>
+					{formatJson(card.args)}
+				</pre>
+			</details>
 			{showPartial && (
 				<div className="tool-field tool-partial">
 					<span className="tool-field-label">partial result</span>
-					<pre className="tool-json">{formatJson(card.partialResult)}</pre>
+					<pre
+						className="tool-json"
+						aria-label="Partial result JSON"
+						role="region"
+						tabIndex={0}
+					>
+						{formatJson(card.partialResult)}
+					</pre>
 				</div>
 			)}
 			{card.result !== undefined && (
 				<details className="tool-result">
 					<summary>result{card.isError ? " (error)" : ""}</summary>
-					<pre className="tool-json">{formatJson(card.result)}</pre>
+					<pre
+						className="tool-json"
+						aria-label="Tool result JSON"
+						role="region"
+						tabIndex={0}
+					>
+						{formatJson(card.result)}
+					</pre>
 				</details>
 			)}
 			{card.status === "error" && (
