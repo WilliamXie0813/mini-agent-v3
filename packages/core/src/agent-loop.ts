@@ -42,25 +42,42 @@ export async function agentLoop(options: AgentLoopOptions): Promise<Message[]> {
 	await emit({ type: "message_end", message: userMessage });
 
 	// 内层 steering 循环：完整 turn 结束后、下一次 provider 请求前注入。
-	// state.turn 是所有请求共享的预算；terminal 不消费队列，stop 仅在无 steering 时收敛。
-	let steeringMessages: Message[] = [];
-	while (state.turn < maxTurns) {
-		if (state.turn > 0) await emit({ type: "turn_start" });
-		for (const message of steeringMessages) {
-			options.messages.push(message);
-			state.newMessages.push(message);
-			await emit({ type: "message_start", message });
-			await emit({ type: "message_end", message });
+	// 外层 follow-up 循环只接续正常 stop；state.turn 与 overflowRecovered 跨段保留。
+	let followUpMessages: Message[] = [];
+	while (true) {
+		let steeringMessages: Message[] = [];
+		let normalStop = false;
+		while (state.turn < maxTurns) {
+			if (state.turn > 0) await emit({ type: "turn_start" });
+			for (const message of followUpMessages) {
+				options.messages.push(message);
+				state.newMessages.push(message);
+				await emit({ type: "message_start", message });
+				await emit({ type: "message_end", message });
+			}
+			followUpMessages = [];
+			for (const message of steeringMessages) {
+				options.messages.push(message);
+				state.newMessages.push(message);
+				await emit({ type: "message_start", message });
+				await emit({ type: "message_end", message });
+			}
+			steeringMessages = [];
+			const result = await runAgentTurn(turnOptions);
+			state.turn++;
+			if (result === "terminal") {
+				await emit({ type: "agent_end", messages: state.newMessages });
+				return options.messages;
+			}
+			steeringMessages = options.steeringQueue?.drain() ?? [];
+			if (result === "stop" && steeringMessages.length === 0) {
+				normalStop = true;
+				break;
+			}
 		}
-		steeringMessages = [];
-		const result = await runAgentTurn(turnOptions);
-		state.turn++;
-		if (result === "terminal") {
-			await emit({ type: "agent_end", messages: state.newMessages });
-			return options.messages;
-		}
-		steeringMessages = options.steeringQueue?.drain() ?? [];
-		if (result === "stop" && steeringMessages.length === 0) {
+		if (!normalStop) break;
+		followUpMessages = options.followUpQueue?.drain() ?? [];
+		if (followUpMessages.length === 0) {
 			await emit({ type: "agent_end", messages: state.newMessages });
 			return options.messages;
 		}

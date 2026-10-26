@@ -110,6 +110,7 @@ export interface AgentLoopOptions {
 	signal?: AbortSignal;
 	emit?: AgentEventSink;
 	steeringQueue?: PendingMessageQueue;
+	followUpQueue?: PendingMessageQueue;
 	tools?: ToolDef<any>[]; // 执行注册表；缺省 []：无工具的调用走一轮就收敛，与阶段 1 行为一致
 	maxTurns?: number; // 缺省 10：模型反复要工具时的熔断，防止无限烧 token
 	beforeToolCall?: BeforeToolCall;

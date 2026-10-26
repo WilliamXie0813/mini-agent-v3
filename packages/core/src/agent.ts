@@ -39,6 +39,7 @@ export class Agent {
 	public toolExecution: ToolExecutionMode;
 	private activeRun?: ActiveRun;
 	private readonly steeringQueue = new PendingMessageQueue();
+	private readonly followUpQueue = new PendingMessageQueue();
 	private acceptingQueueMessages = false;
 	private runMessages: Message[] = [];
 	private turnOpen = false;
@@ -91,6 +92,16 @@ export class Agent {
 			throw new Error("Cannot steer without an active run");
 		if (prompt.trim() === "") return;
 		this.steeringQueue.enqueue({
+			role: "user",
+			content: [{ type: "text", text: prompt }],
+		}, mode);
+	}
+
+	followUp(prompt: string, mode: QueueMode = "one-at-a-time"): void {
+		if (!this.acceptingQueueMessages)
+			throw new Error("Cannot followUp without an active run");
+		if (prompt.trim() === "") return;
+		this.followUpQueue.enqueue({
 			role: "user",
 			content: [{ type: "text", text: prompt }],
 		}, mode);
@@ -194,6 +205,7 @@ export class Agent {
 					}
 					: undefined,
 				steeringQueue: this.steeringQueue,
+				followUpQueue: this.followUpQueue,
 				emit: (event) => this.processEvents(event),
 			});
 		});
@@ -236,6 +248,7 @@ export class Agent {
 		} finally {
 			this.acceptingQueueMessages = false;
 			this.steeringQueue.clear();
+			this.followUpQueue.clear();
 			this._state.isStreaming = false;
 			this.activeRun.resolve();
 			this.activeRun = undefined;

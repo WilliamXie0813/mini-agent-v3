@@ -22,6 +22,7 @@ export type AgentTurnOptions = Omit<
 	AgentLoopOptions,
 	| "prompt"
 	| "steeringQueue"
+	| "followUpQueue"
 	| "maxTurns"
 	| "streamFn"
 	| "tools"
