@@ -25,8 +25,6 @@ export type AgentTurnOptions = Omit<
 	| "streamFn"
 	| "tools"
 	| "emit"
-	| "steeringQueue"
-	| "followUpQueue"
 > & {
 	streamFn: StreamFn;
 	tools: ToolDef<any>[];
